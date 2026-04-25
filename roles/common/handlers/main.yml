@@ -1,0 +1,4 @@
+---
+- name: grubを更新
+  ansible.builtin.command: update-grub
+  changed_when: true

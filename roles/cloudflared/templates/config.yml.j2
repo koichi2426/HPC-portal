@@ -1,0 +1,15 @@
+# tunnel token 利用時は Zero Trust の Public Hostname と転送先を揃えること
+# *.<base_domain> … <hub_subdomain>.<base_domain>（Hub）と job<N>.<base_domain>（各アプリ）の両方に一致
+tunnel: {{ cloudflared_tunnel_name }}
+ingress:
+{% set jport = jupyterhub_port | default(8000) %}
+{% if cloudflared_ingress is defined and cloudflared_ingress | length > 0 %}
+{% for rule in cloudflared_ingress %}
+  - hostname: {{ rule.hostname | to_json }}
+    service: http://127.0.0.1:{{ rule.port | default(jport) }}
+{% endfor %}
+{% else %}
+  - hostname: {{ cloudflared_hostname | to_json }}
+    service: http://127.0.0.1:{{ jport }}
+{% endif %}
+  - service: http_status:404

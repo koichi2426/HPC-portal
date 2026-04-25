@@ -1,0 +1,123 @@
+{% raw %}
+{% extends "page.html" %}
+
+{% block main %}
+<div style="max-width: 980px; margin: 24px auto; padding: 0 16px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <h2 style="margin:0;">Home</h2>
+    <a id="new-app-btn" href="/hub/new" style="display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#1f6feb; color:#fff; font-weight:600;">
+      + New Application
+    </a>
+  </div>
+
+  <div style="margin-bottom:10px; color:#8b949e;">起動中のアプリケーション</div>
+
+  {% if user and user.spawners %}
+    {% set has_any = false %}
+    {% for name, spawner in user.spawners.items() %}
+      {% if spawner.active or spawner.pending %}
+        {% set has_any = true %}
+        {% if name %}
+          {% set app_label = name %}
+        {% else %}
+          {% set app_label = 'default' %}
+        {% endif %}
+
+        {% set sp_public_url = spawner.public_url if spawner.public_url is defined else '' %}
+        {% set _uo = spawner.user_options if spawner.user_options is defined else {} %}
+        {% set is_openwebui = _uo.get('app_choice') == 'open-webui' if _uo else false %}
+        {# spawn 直後に public_url が古いまま残ることがあるため、起動済み+JOBID では job<JOBID> + ORM base_url を優先。
+           Hub/OAuth は gx10 のままだが、CHP に gx10 用エイリアスルートも載せるため job の JUMP でも整合する。 #}
+        {% if is_openwebui and spawner.job_id %}
+          {% set job_url = sp_public_url if sp_public_url else (hpc_public_scheme + '://job' + spawner.job_id|string + '.' + hpc_job_dns_domain + '/') %}
+        {% elif spawner.active and spawner.job_id %}
+          {% if spawner.server and spawner.server.base_url %}
+            {% set _raw = spawner.server.base_url|string %}
+            {% set _p = _raw if _raw.endswith('/') else (_raw ~ '/') %}
+            {% set job_url = hpc_public_scheme + '://job' + spawner.job_id|string + '.' + hpc_job_dns_domain + _p %}
+          {% elif name %}
+            {% set job_url = hpc_public_scheme + '://job' + spawner.job_id|string + '.' + hpc_job_dns_domain + '/user/' + user.escaped_name + '/' + name + '/' %}
+          {% else %}
+            {% set job_url = hpc_public_scheme + '://job' + spawner.job_id|string + '.' + hpc_job_dns_domain + '/user/' + user.escaped_name + '/' %}
+          {% endif %}
+        {% elif sp_public_url %}
+          {% set job_url = sp_public_url %}
+        {% elif spawner.job_id and spawner.pending %}
+          {% if name %}
+            {% set job_url = hpc_public_scheme + '://job' + spawner.job_id|string + '.' + hpc_job_dns_domain + '/user/' + user.escaped_name + '/' + name + '/' %}
+          {% else %}
+            {% set job_url = hpc_public_scheme + '://job' + spawner.job_id|string + '.' + hpc_job_dns_domain + '/user/' + user.escaped_name + '/' %}
+          {% endif %}
+        {% else %}
+          {% if name %}
+            {% set job_url = '/user/' + user.escaped_name + '/' + name + '/' %}
+          {% else %}
+            {% set job_url = '/user/' + user.escaped_name + '/' %}
+          {% endif %}
+        {% endif %}
+
+        <div class="gx10-app-card" style="border:1px solid #30363d; border-radius:10px; padding:12px; margin-bottom:10px; background:#0d1117;"
+             {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-weight:600; color:#c9d1d9;">{{ app_label }}{% if spawner.job_id %} <span style="color:#8b949e;font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
+              {% if spawner.pending %}
+                <div style="font-size:12px; color:#e3b341; margin-top:4px;">Pending / Starting… ({{ spawner.pending }})</div>
+                <div style="margin-top:8px; height:6px; background:#30363d; border-radius:999px;">
+                  <div style="width:55%; height:100%; background:#e3b341; border-radius:999px;"></div>
+                </div>
+              {% else %}
+                <div style="font-size:12px; color:#3fb950; margin-top:4px;">Running</div>
+              {% endif %}
+            </div>
+
+            {% if spawner.active %}
+              <a href="{{ job_url }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none; color:#58a6ff; font-weight:700;">
+                JUMP ↗
+              </a>
+            {% else %}
+              <span style="color:#8b949e; font-size:12px;">準備中</span>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+  {% else %}
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var pollMs = 4000;
+  var lastSig = null;
+  function readCookie(name) {
+    var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()\\[\\]\\\\/+^]/g, '\\$&') + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function tick() {
+    var xsrf = readCookie("_xsrf");
+    fetch("/hub/api/user", {
+      credentials: "same-origin",
+      headers: xsrf ? { "X-XSRFToken": xsrf } : {}
+    })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (data) {
+        var servers = data.servers || {};
+        var sig = JSON.stringify(servers);
+        if (lastSig === null) {
+          lastSig = sig;
+        } else if (lastSig !== sig) {
+          window.location.reload();
+          return;
+        }
+        lastSig = sig;
+      })
+      .catch(function () {});
+  }
+  tick();
+  setInterval(tick, pollMs);
+})();
+</script>
+{% endblock %}
+{% endraw %}

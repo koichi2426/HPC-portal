@@ -1,0 +1,10 @@
+---
+- name: HPC単一ノードポータルを構築
+  hosts: gx10
+  become: true
+  roles:
+    - common
+    - slurm
+    - jupyterhub
+    - apptainer
+    - cloudflared

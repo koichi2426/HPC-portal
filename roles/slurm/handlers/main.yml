@@ -1,0 +1,15 @@
+---
+- name: mungeを再起動
+  ansible.builtin.systemd:
+    name: munge
+    state: restarted
+  when: not (hpc_skip_service_restarts | default(false))
+
+- name: slurmサービスを再起動
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - slurmctld
+    - slurmd
+  when: not (hpc_skip_service_restarts | default(false))

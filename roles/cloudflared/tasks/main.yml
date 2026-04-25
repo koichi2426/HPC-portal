@@ -1,0 +1,53 @@
+---
+- name: cloudflaredトークンが設定済みか確認
+  ansible.builtin.assert:
+    that:
+      - cloudflared_token is defined
+      - cloudflared_token | length > 0
+    fail_msg: "cloudflared_token が未設定です。group_vars/all/secret.yml を作成してください。"
+
+- name: cloudflared用アーキテクチャを判定
+  ansible.builtin.set_fact:
+    cloudflared_arch: "{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
+
+- name: cloudflaredバイナリを取得
+  ansible.builtin.get_url:
+    url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{{ cloudflared_arch }}"
+    dest: /usr/local/bin/cloudflared
+    mode: "0755"
+
+- name: cloudflared設定ディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/cloudflared
+    state: directory
+    mode: "0755"
+
+- name: cloudflared設定ファイルを配置
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: /etc/cloudflared/config.yml
+    mode: "0644"
+  notify: cloudflaredを再起動
+
+- name: cloudflaredのsystemdユニットを配置
+  ansible.builtin.template:
+    src: cloudflared.service.j2
+    dest: /etc/systemd/system/cloudflared.service
+    mode: "0644"
+  notify: cloudflaredを再起動
+
+- name: systemdをリロード
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: cloudflaredを有効化して起動
+  ansible.builtin.systemd:
+    name: cloudflared
+    enabled: true
+    state: started
+  when: not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: 再起動抑止モード時は設定変更が未反映であることを通知
+  ansible.builtin.debug:
+    msg: "hpc_skip_service_restarts=true のため cloudflared は再起動していません。反映には通常デプロイ（site.yml）を実行してください。"
+  when: hpc_skip_service_restarts | default(false) | bool

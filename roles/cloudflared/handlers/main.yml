@@ -1,0 +1,6 @@
+---
+- name: cloudflaredを再起動
+  ansible.builtin.systemd:
+    name: cloudflared
+    state: restarted
+  when: not (hpc_skip_service_restarts | default(false))

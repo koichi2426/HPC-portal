@@ -1,0 +1,8 @@
+# Secrets
+group_vars/all/secret.yml
+inventory/*
+!inventory/production.ini.example
+
+# Ansible runtime artifacts
+.ansible/
+*.retry

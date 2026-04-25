@@ -1,0 +1,17 @@
+---
+- name: 基本パッケージをインストール
+  ansible.builtin.package:
+    name:
+      - curl
+      - git
+      - python3
+      - python3-pip
+    state: present
+
+- name: GRUBにcgroupオプションを設定
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT='
+    line: 'GRUB_CMDLINE_LINUX_DEFAULT="quiet cgroup_enable=memory swapaccount=1"'
+    backup: true
+  notify: grubを更新

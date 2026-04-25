@@ -1,0 +1,14 @@
+[Unit]
+Description=JupyterHub
+After=network.target slurmctld.service slurmd.service
+Wants=slurmctld.service slurmd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
+Restart=always
+User=root
+WorkingDirectory=/etc/jupyterhub
+
+[Install]
+WantedBy=multi-user.target

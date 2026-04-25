@@ -1,0 +1,200 @@
+# ==========================================
+# 0. 浄化セクション (不整合の芽を摘む)
+# ==========================================
+- name: 既存のSlurmジョブと残留プロセスを強制終了
+  ansible.builtin.shell: |
+    scancel -u {{ ansible_user }}
+    pkill -u {{ ansible_user }} -f batchspawner-singleuser || true
+    pkill -u {{ ansible_user }} -f jupyterhub-singleuser || true
+    pkill -u root -f jupyterhub
+  failed_when: false
+  changed_when: false
+  when: not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: JupyterHubサービスを一時停止
+  ansible.builtin.systemd:
+    name: jupyterhub
+    state: stopped
+  failed_when: false
+  when: not (hpc_skip_service_restarts | default(false) | bool)
+
+# ==========================================
+# 1. セットアップセクション
+# ==========================================
+- name: 必要なOSパッケージをインストール
+  ansible.builtin.package:
+    name:
+      - python3-full
+      - python3-venv
+      - python3-pip
+      - nodejs
+      - npm
+      - git
+    state: present
+
+- name: configurable-http-proxyをインストール
+  community.general.npm:
+    name: configurable-http-proxy
+    global: yes
+    state: present
+
+- name: JupyterHub用各ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /opt/jupyterhub
+    - /etc/jupyterhub
+    - /etc/jupyterhub/templates
+    - /var/lib/jupyterhub
+
+- name: Python仮想環境(venv)の作成とパッケージインストール
+  ansible.builtin.pip:
+    name:
+      - jupyterhub
+      - jupyterlab
+      - jupyter-server-proxy
+      - nest-asyncio
+      - psutil
+      - open-webui
+      - "git+https://github.com/jupyterhub/batchspawner.git"
+    virtualenv: /opt/jupyterhub/venv
+    virtualenv_command: python3 -m venv
+    state: latest
+
+- name: jupyterhub_config.pyを配置
+  ansible.builtin.template:
+    src: jupyterhub_config.py.j2
+    dest: /etc/jupyterhub/jupyterhub_config.py
+    owner: root
+    group: root
+    mode: '0644'
+  register: config_file
+
+- name: home.htmlを配置
+  ansible.builtin.template:
+    src: home.html.j2
+    dest: /etc/jupyterhub/templates/home.html
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: 設定更新時に負の遺産（DB・Cookie）を削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/jupyterhub/jupyterhub.sqlite
+    - /var/lib/jupyterhub/jupyterhub_cookie_secret
+  when: config_file.changed
+
+- name: JupyterHubのsystemdユニットを配置
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/jupyterhub.service
+    content: |
+      [Unit]
+      Description=JupyterHub
+      After=network.target
+
+      [Service]
+      User=root
+      WorkingDirectory=/etc/jupyterhub
+      Environment="PATH=/opt/jupyterhub/venv/bin:/usr/local/bin:/usr/bin:/bin"
+      ExecStart=/opt/jupyterhub/venv/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: systemdをリロード & 起動
+  ansible.builtin.systemd:
+    name: jupyterhub
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not (hpc_skip_service_restarts | default(false) | bool)
+
+# ==========================================
+# 2. AIモデル自動セットアップ (IaC化)
+# ==========================================
+- name: 対象LLMモデルの定義 (DRY原則・オープンモデル厳選)
+  ansible.builtin.set_fact:
+    target_models:
+      # --- 【Tier 1: 汎用・世界最高峰モデル】 ---
+      - { name: 'llama-3-8b', url: 'https://huggingface.co/QuantFactory/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf' }
+      - { name: 'gemma-2-9b', url: 'https://huggingface.co/bartowski/gemma-2-9b-it-GGUF/resolve/main/gemma-2-9b-it-Q4_K_M.gguf' }
+      - { name: 'mistral-v0.3', url: 'https://huggingface.co/MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf' }
+      - { name: 'qwen-2-7b', url: 'https://huggingface.co/Qwen/Qwen2-7B-Instruct-GGUF/resolve/main/qwen2-7b-instruct-q4_k_m.gguf' }
+      - { name: 'phi-3-mini', url: 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf' }
+
+      # --- 【コーディング特化: アーキテクチャ設計・リファクタリング用】 ---
+      - { name: 'deepseek-coder-v2', url: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf' }
+      - { name: 'codegemma-7b', url: 'https://huggingface.co/bartowski/codegemma-1.1-7b-it-GGUF/resolve/main/codegemma-1.1-7b-it-Q4_K_M.gguf' }
+
+      # --- 【自律型AIエージェント特化: 関数呼び出し(Function Calling)と推論能力】 ---
+      - { name: 'hermes-2-pro', url: 'https://huggingface.co/NousResearch/Hermes-2-Pro-Llama-3-8B-GGUF/resolve/main/Hermes-2-Pro-Llama-3-8B-Q4_K_M.gguf' }
+
+      # --- 【論理的推論・長文コンテキスト】 ---
+      - { name: 'wizardmath-7b', url: 'https://huggingface.co/TheBloke/WizardMath-7B-V1.1-GGUF/resolve/main/wizardmath-7b-v1.1.Q4_K_M.gguf' }
+      - { name: 'yi-1.5-9b', url: 'https://huggingface.co/bartowski/Yi-1.5-9B-Chat-GGUF/resolve/main/Yi-1.5-9B-Chat-Q4_K_M.gguf' }
+  tags: [models]
+
+- name: モデル保存用ディレクトリを作成
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/models"
+    state: directory
+    owner: "{{ ansible_user }}"
+    mode: '0755'
+  tags: [models]
+
+- name: モデルファイルの存在確認
+  ansible.builtin.stat:
+    path: "/home/{{ ansible_user }}/models/{{ item.name }}.gguf"
+  loop: "{{ target_models }}"
+  register: model_files
+  tags: [models]
+
+- name: LLMモデルファイルをダウンロード (未存在の場合のみ)
+  ansible.builtin.get_url:
+    url: "{{ item.item.url }}"
+    dest: "/home/{{ ansible_user }}/models/{{ item.item.name }}.gguf"
+    owner: "{{ ansible_user }}"
+    mode: '0644'
+  loop: "{{ model_files.results }}"
+  when: not item.stat.exists
+  tags: [models]
+
+- name: Modelfileを作成
+  ansible.builtin.copy:
+    content: "FROM /home/{{ ansible_user }}/models/{{ item.name }}.gguf"
+    dest: "/home/{{ ansible_user }}/models/Modelfile-{{ item.name }}"
+    owner: "{{ ansible_user }}"
+    mode: '0644'
+  loop: "{{ target_models }}"
+  tags: [models]
+
+- name: Ollamaにモデルを登録
+  ansible.builtin.shell: |
+    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
+      export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
+      ollama serve > /dev/null 2>&1 &
+      sleep 10
+      ollama create {{ item.name }}-hpc -f /home/{{ ansible_user }}/models/Modelfile-{{ item.name }}
+    "
+  loop: "{{ target_models }}"
+  register: model_creation
+  changed_when: "'success' in model_creation.stdout"
+  failed_when: "'Error' in model_creation.stderr and 'already exists' not in model_creation.stderr"
+  tags: [models]
+
+- name: 登録用のOllama一時プロセスを確実に掃除
+  ansible.builtin.shell: pkill -u {{ ansible_user }} -f "ollama serve"
+  failed_when: false
+  changed_when: false
+  tags: [models]

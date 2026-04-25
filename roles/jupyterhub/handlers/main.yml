@@ -1,0 +1,9 @@
+---
+- name: systemdをリロード
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: jupyterhubを再起動
+  ansible.builtin.systemd:
+    name: jupyterhub
+    state: restarted

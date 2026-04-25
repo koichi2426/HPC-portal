@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloudflare Tunnel for HPC
+After=network-online.target jupyterhub.service
+Wants=network-online.target
+# 502 回避: トンネルが先に立ち上がり origin に繋がらない状態を避ける（JupyterHub 未起動でも起動は許可）
+Wants=jupyterhub.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --config /etc/cloudflared/config.yml run --token {{ cloudflared_token }}
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

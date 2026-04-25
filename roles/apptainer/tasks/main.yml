@@ -1,0 +1,65 @@
+---
+- name: Apptainerをインストール
+  ansible.builtin.package:
+    name: apptainer
+    state: present
+
+- name: コンテナ定義とイメージの配置ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/apptainer
+    - /opt/images
+
+- name: Apptainer定義ファイルを配置
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/opt/apptainer/{{ item.src }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: jupyter-cpu.def }
+    - { src: openwebui-ollama.def }
+    - { src: ubuntu-22.04-ttyd.def }
+  register: apptainer_def_copy
+
+- name: 既存SIFの有無を確認
+  ansible.builtin.stat:
+    path: "{{ item.image }}"
+  loop:
+    - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
+    - { src: openwebui-ollama.def, image: /opt/images/openwebui-ollama.sif, def: /opt/apptainer/openwebui-ollama.def }
+  register: apptainer_image_stat
+
+- name: SIFイメージをビルド（定義更新時は再作成）
+  ansible.builtin.command: "apptainer build --force {{ item.image }} {{ item.def }}"
+  loop:
+    - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
+    - { src: openwebui-ollama.def, image: /opt/images/openwebui-ollama.sif, def: /opt/apptainer/openwebui-ollama.def }
+  when: >
+    (apptainer_def_copy.results
+      | selectattr('item.src', 'equalto', item.src)
+      | map(attribute='changed')
+      | first
+      | default(false))
+    or
+    not
+    (apptainer_image_stat.results
+      | selectattr('item.image', 'equalto', item.image)
+      | map(attribute='stat.exists')
+      | first
+      | default(false))
+
+- name: コンテナ内のsingleuser実行コマンドを確認
+  ansible.builtin.command: "apptainer exec {{ item.image }} which {{ item.cmd }}"
+  loop:
+    - { image: /opt/images/jupyter-cpu.sif, cmd: batchspawner-singleuser }
+    - { image: /opt/images/jupyter-cpu.sif, cmd: jupyterhub-singleuser }
+    - { image: /opt/images/openwebui-ollama.sif, cmd: python3 }
+    - { image: /opt/images/openwebui-ollama.sif, cmd: uvicorn }
+  changed_when: false

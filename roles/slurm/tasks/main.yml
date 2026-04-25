@@ -1,0 +1,68 @@
+---
+- name: universeリポジトリを有効化 (ARM用)
+  ansible.builtin.apt_repository:
+    repo: "deb http://ports.ubuntu.com/ubuntu-ports {{ ansible_distribution_release }} universe"
+    state: present
+  when: ansible_architecture == 'aarch64'
+
+- name: aptキャッシュを強制更新
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Slurm関連パッケージをインストール
+  ansible.builtin.package:
+    name:
+      - slurmctld
+      - slurmd
+      - slurm-client
+      - munge
+    state: present
+
+- name: Slurmの状態ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/slurm, owner: root, group: root, mode: "0755" }
+    - { path: /var/spool/slurmctld, owner: slurm, group: slurm, mode: "0755" }
+    - { path: /var/spool/slurmd, owner: root, group: root, mode: "0755" }
+    - { path: /var/log/slurm, owner: slurm, group: slurm, mode: "0755" }
+
+- name: mungeキーを作成
+  ansible.builtin.shell: |
+    dd if=/dev/urandom of=/etc/munge/munge.key bs=1 count=1024
+    chown munge:munge /etc/munge/munge.key
+    chmod 0400 /etc/munge/munge.key
+  args:
+    creates: /etc/munge/munge.key
+  notify: mungeを再起動
+
+- name: 単一ノード用slurm.confを配置
+  ansible.builtin.template:
+    src: slurm.conf.j2
+    dest: /etc/slurm/slurm.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: slurmサービスを再起動
+
+- name: mungeを有効化して起動
+  ansible.builtin.systemd:
+    name: munge
+    enabled: true
+    state: started
+
+- name: slurmctldを有効化して起動
+  ansible.builtin.systemd:
+    name: slurmctld
+    enabled: true
+    state: started
+
+- name: slurmdを有効化して起動
+  ansible.builtin.systemd:
+    name: slurmd
+    enabled: true
+    state: started

@@ -1,0 +1,56 @@
+---
+- name: HPC 環境クリーンアップ
+  hosts: gx10
+  become: true
+  tasks:
+    - name: 関連サービスの停止
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      failed_when: false
+      loop:
+        - jupyterhub
+        - slurmctld
+        - slurmd
+        - munge
+        - cloudflared
+
+    - name: パッケージの削除 (Purge)
+      ansible.builtin.apt:
+        name:
+          - slurmctld
+          - slurmd
+          - slurm-client
+          - munge
+        state: absent
+        purge: true
+
+    - name: 設定ディレクトリとログの物理削除
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/slurm
+        - /etc/munge
+        - /var/spool/slurmctld
+        - /var/spool/slurmd
+        - /var/log/slurm
+        - /etc/jupyterhub
+        - /var/lib/jupyterhub
+
+    - name: Cloudflare Tunnel関連の削除
+      ansible.builtin.file:
+        path: /etc/cloudflared
+        state: absent
+
+    - name: mungeユーザーの削除
+      ansible.builtin.user:
+        name: munge
+        state: absent
+        remove: true
+      failed_when: false
+
+    - name: 終了メッセージ
+      ansible.builtin.debug:
+        msg: "クリーンアップが完了しました。サーバーは更地に戻りました。"

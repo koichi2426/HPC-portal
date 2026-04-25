@@ -1,0 +1,29 @@
+---
+# configurable-http-proxy（図の Proxy）
+jupyterhub_port: 8000
+# Hub アプリ本体（図の JupyterHub / Tornado）
+jupyterhub_hub_port: 8081
+# Slurm（図の slurmctld / slurmd）
+slurmctld_port: 6817
+slurmd_port: 6818
+
+slurm_cluster_name: hpc
+slurm_control_host: 127.0.0.1
+slurm_node_name: localhost
+
+# DNS 設定（inventory 側で上書き可能）
+# 例: hpc_base_domain=example.com, hpc_hub_subdomain=hub
+# Hub / ダッシュボードの URL（例: https://hub.example.com）
+jupyterhub_public_domain: "{{ hpc_hub_subdomain | default('hub') }}.{{ hpc_base_domain | default('example.com') }}"
+# 各ジョブのサブドメイン接尾辞（例: https://job4.example.com）
+jupyterhub_job_dns_domain: "{{ hpc_base_domain | default('example.com') }}"
+
+cloudflared_tunnel_name: hpc
+# 後方互換: cloudflared_ingress 未指定時のみ使用
+cloudflared_hostname: "{{ jupyterhub_public_domain }}"
+# gx10.<domain> と job<N>.<domain> はどちらも *.<domain> に一致
+cloudflared_ingress:
+  - hostname: "*.{{ hpc_base_domain | default('example.com') }}"
+
+# true のとき設定反映のみ行い、サービス再起動を抑止（運用中の 502 瞬断を回避）
+hpc_skip_service_restarts: false

@@ -1,0 +1,2 @@
+[gx10]
+192.0.2.10 ansible_user=your_user hpc_base_domain=example.com hpc_hub_subdomain=hub

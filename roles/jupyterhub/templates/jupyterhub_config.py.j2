@@ -1,0 +1,1131 @@
+import asyncio
+import secrets
+import time
+
+from batchspawner import SlurmSpawner
+from jupyterhub.handlers.base import BaseHandler
+from jupyterhub.proxy import ConfigurableHTTPProxy, Proxy
+from jupyterhub.utils import url_escape_path, url_path_join
+from tornado import web
+
+try:
+    from jupyterhub.metrics import CHECK_ROUTES_DURATION_SECONDS
+except Exception:  # noqa: S110
+
+    class _DummyMetric:
+        def observe(self, _t):
+            pass
+
+    CHECK_ROUTES_DURATION_SECONDS = _DummyMetric()
+
+
+try:
+    from jupyterhub.proxy import _one_at_a_time
+except Exception:  # noqa: S110
+
+    def _one_at_a_time(method):
+        return method
+
+try:
+    from jupyterhub.utils import subdomain_hook_idna as _default_subdomain_hook
+except ImportError:
+    from jupyterhub.utils import subdomain_hook_legacy as _default_subdomain_hook
+import contextvars
+import nest_asyncio
+import psutil
+from urllib.parse import urlparse
+
+nest_asyncio.apply()
+
+c = get_config()  # noqa: F821
+
+# OAuth 登録直前の User.url 計算で job ホストを返す（spawn 中のみ ContextVar が入る）
+_oauth_job_host_ctx = contextvars.ContextVar("hpc_oauth_job_host", default=None)
+
+
+def hpc_subdomain_hook(name, domain, kind):
+    host = _oauth_job_host_ctx.get()
+    if kind == "user" and host:
+        return host
+    if kind == "user":
+        # spawn 中以外の user URL は hub ドメインへ固定し、kamlab.<zone> への遷移を防ぐ
+        return HPC_PUBLIC_DOMAIN
+    # public_url が gx10 のとき settings["domain"] が gx10 になり idna で kamlab.gx10... になるのを防ぐ
+    return _default_subdomain_hook(name, HPC_JOB_DNS_DOMAIN, kind)
+
+
+# Hub 用ホスト（例: hub.example.com）とジョブ用 DNS ゾーン接尾辞（例: example.com → job4.example.com）
+HPC_PUBLIC_DOMAIN = "{{ jupyterhub_public_domain }}"
+HPC_JOB_DNS_DOMAIN = "{{ jupyterhub_job_dns_domain }}"
+HPC_PUBLIC_SCHEME = "https"
+
+# ---------------------------------------------------------------------------
+# 想定フロー（sequence と対応）
+# フェーズ1: User→CF(<hub-subdomain>.<base-domain>)→Proxy(8000)→Hub ログイン/Spawn→Hub→Slurm sbatch→JOBID
+#           →slurmd→Apptainer（動的ポートで待ち）
+# フェーズ2: Hub が localhost:動的ポート へ疎通→JOBID で job<JOBID>.<base-domain> を決定
+#           →CHP に「そのホスト → 127.0.0.1:ポート」を登録（HPCSlurmSpawner + proxy_spec）
+# フェーズ3: User→job4.<base-domain>→CF(*.<base-domain>)→Proxy→CHP が Host でバックエンドへ転送
+# ---------------------------------------------------------------------------
+# 1. ネットワーク: Proxy=8000 / Hub=8081（図の gx10-ac12 上の役割分担）
+c.JupyterHub.bind_url = "http://0.0.0.0:{{ jupyterhub_port | default(8000) }}"
+c.JupyterHub.hub_bind_url = "http://127.0.0.1:{{ jupyterhub_hub_port | default(8081) }}/hub/"
+c.JupyterHub.hub_connect_url = "http://127.0.0.1:{{ jupyterhub_hub_port | default(8081) }}/hub/"
+c.JupyterHub.hub_ip = "127.0.0.1"
+c.JupyterHub.hub_connect_ip = "127.0.0.1"
+# cloudflared → 127.0.0.1:8000 経由の X-Forwarded-* を信頼しないと、Proto/Port がブレて
+# /hub/user/... ↔ https://gx10.../user/... のリダイレクトループになる（journal に Redirect loop が出る）
+c.JupyterHub.trusted_downstream_ips = ["127.0.0.1", "::1"]
+c.JupyterHub.default_url = "/hub/home"
+c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
+c.JupyterHub.allow_named_servers = True
+c.Authenticator.allow_all = True
+
+# サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
+c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
+# Hub のブラウザ向け URL（ログイン・ダッシュは <hub-subdomain>.<base-domain>）
+c.JupyterHub.public_url = f"{HPC_PUBLIC_SCHEME}://{HPC_PUBLIC_DOMAIN}/"
+c.JupyterHub.subdomain_hook = hpc_subdomain_hook
+# gx10.<zone> と job<id>.<zone> 間で認証/ XSRF cookie を共有
+# traitlets の LazyConfigValue では setdefault が使えないため dict を直接代入する
+c.JupyterHub.tornado_settings = {
+    "headers": {
+        "Content-Security-Policy": "frame-ancestors 'self' https://*.{{ jupyterhub_job_dns_domain }}",
+    },
+    "cookie_options": {
+        "domain": ".{{ jupyterhub_job_dns_domain }}",
+        "secure": True,
+        "samesite": "lax",
+    }
+}
+
+# テンプレートから参照（home.html 等）
+c.JupyterHub.template_vars = {
+    "hpc_public_domain": HPC_PUBLIC_DOMAIN,
+    "hpc_job_dns_domain": HPC_JOB_DNS_DOMAIN,
+    "hpc_public_scheme": HPC_PUBLIC_SCHEME,
+}
+
+
+class HpcNewApplicationHandler(BaseHandler):
+    """`/hub/new` を常に新規 named server の spawn 画面へ誘導する"""
+
+    @web.authenticated
+    async def get(self):
+        user = self.current_user
+        user_name = user.escaped_name
+        # 既存 server に吸われないよう、毎回ユニークな server 名を採番する
+        server_name = f"app-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+        target = url_path_join(
+            self.hub.base_url,
+            "spawn",
+            url_escape_path(user_name),
+            url_escape_path(server_name),
+        )
+        self.redirect(target)
+
+
+c.JupyterHub.extra_handlers = [(r"/new", HpcNewApplicationHandler)]
+
+
+def _job_host(job_id: str) -> str:
+    return f"job{job_id}.{HPC_JOB_DNS_DOMAIN}"
+
+
+def _spawner_job_id(spawner) -> str:
+    """実行中に job_id が属性から消えるケースがあるため複数ソースから回収する"""
+    jid = getattr(spawner, "job_id", "") or ""
+    if jid:
+        return str(jid)
+    jid = getattr(spawner, "_hpc_job_id", "") or ""
+    if jid:
+        return str(jid)
+    try:
+        st = spawner.get_state() or {}
+        jid = st.get("job_id", "") or st.get("jobid", "")
+        if jid:
+            return str(jid)
+    except Exception:
+        pass
+    return ""
+
+
+def _job_user_path(spawner) -> str:
+    """Hub が期待するプレフィックス: /user/<name>/ または named の場合はその配下"""
+    u = spawner.user
+    if spawner.name:
+        return url_path_join(u.base_url, url_escape_path(spawner.name), "/")
+    return u.base_url
+
+
+def _is_openwebui_spawner(spawner) -> bool:
+    """OpenWebUI テンプレート起動かどうかを判定する"""
+    try:
+        return str((spawner.user_options or {}).get("app_choice", "")) == "open-webui"
+    except Exception:
+        return False
+
+
+def _hpc_public_alias_routespec_for(spawner) -> str:
+    """User.url が gx10 のときでも CHP が転送できるよう、Hub 公開ホスト + 同一パスの routespec"""
+    if getattr(spawner, "server", None) and getattr(spawner.server, "base_url", None):
+        path = str(spawner.server.base_url)
+        if not path.endswith("/"):
+            path += "/"
+    else:
+        path = _job_user_path(spawner)
+    return f"{HPC_PUBLIC_DOMAIN}{path}"
+
+
+def _hpc_norm_routespec(rs: str) -> str:
+    """CHP の routes キーと spawner.proxy_spec の表記ゆれ（先頭 /・末尾 /）を吸収して比較用に正規化"""
+    s = (rs or "").strip()
+    if s.startswith("/"):
+        s = s[1:]
+    if s.endswith("/"):
+        s = s[:-1]
+    return s
+
+
+def _hpc_chp_target_ready(host_url):
+    """batchspawner が一瞬 http://nodename:0 を載せる間に CHP へ登録しない（503 防止）"""
+    if not host_url or not isinstance(host_url, str):
+        return False
+    u = host_url if "://" in host_url else f"http://{host_url}"
+    try:
+        p = urlparse(u)
+    except Exception:
+        return False
+    if not p.hostname:
+        return False
+    if p.port is None or p.port <= 0:
+        return False
+    return True
+
+
+def _hpc_spawner_target_host(spawner) -> str:
+    """CHP 転送先 URL を取得（server.host 優先、なければ port/JOBID から補完）"""
+    srv = getattr(spawner, "server", None)
+    h = getattr(srv, "host", None) if srv else None
+    if _hpc_chp_target_ready(h):
+        return h
+    p = getattr(spawner, "port", 0) or 0
+    try:
+        p = int(p)
+    except Exception:
+        p = 0
+    if p <= 0:
+        jid = _spawner_job_id(spawner)
+        if jid.isdigit():
+            p = 20000 + (int(jid) % 20000)
+    if p > 0:
+        return f"http://127.0.0.1:{p}"
+    return ""
+
+
+async def _wait_for_tcp_port(host: str, port: int, timeout: float = 120.0) -> bool:
+    import asyncio, time
+
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except Exception:
+            await asyncio.sleep(2.0)
+    return False
+
+
+async def _hpc_wait_chp_target(spawner, timeout: float = 30.0, step: float = 0.2):
+    """起動直後の一時的な :0 を避け、CHP へ登録可能な host:port を待つ"""
+    deadline = time.perf_counter() + timeout
+    last = None
+    while time.perf_counter() < deadline:
+        srv = getattr(spawner, "server", None)
+        h = getattr(srv, "host", None) if srv else None
+        last = h
+        if _hpc_chp_target_ready(h):
+            return h
+        await asyncio.sleep(step)
+    return last
+
+
+def _sync_job_proxy_and_public(spawner) -> None:
+    """JOBID 確定後: CHP の routespec を job<id>.domain/user/... にし、単一ユーザー公開 URL も同期"""
+    jid = _spawner_job_id(spawner)
+    if not jid:
+        return
+    host = _job_host(jid)
+    if _is_openwebui_spawner(spawner):
+        # OpenWebUI は job サブドメイン直下で公開
+        path = "/"
+    else:
+        # 実際に singleuser が掲げているパス（ORM）を優先し、spawn 時の古い public_url とズレないようにする
+        if getattr(spawner, "server", None) and getattr(spawner.server, "base_url", None):
+            path = str(spawner.server.base_url)
+            if not path.endswith("/"):
+                path += "/"
+        else:
+            path = _job_user_path(spawner)
+    # ホストルーティング時の routespec は「host/path/」（先頭に / を付けない）
+    spawner.proxy_spec = f"{host}{path}"
+    spawner.public_url = f"{HPC_PUBLIC_SCHEME}://{host}{path}"
+
+
+class HPCSlurmSpawner(SlurmSpawner):
+    """Slurm JOBID ごとに job<JOBID>.<domain> を CHP に登録する"""
+
+    def clear_state(self):
+        """spawn 前に一時状態を初期化"""
+        try:
+            _oauth_job_host_ctx.set(None)
+        except Exception:
+            pass
+        self._hpc_job_submitted = False
+        self._hpc_submit_out = ""
+        self._hpc_job_id = ""
+        self._hpc_public_alias_routespec = None
+        super().clear_state()
+        # ここでは sbatch しない。先行提出すると get_env が api_token 付与前に走り、
+        # ジョブ内の JUPYTERHUB_API_TOKEN が空のまま固定され Hub の ready 判定が進まない。
+
+    async def submit_batch_script(self):
+        if getattr(self, "_hpc_job_submitted", False):
+            if getattr(self, "_hpc_job_id", ""):
+                self.job_id = self._hpc_job_id
+            return getattr(self, "_hpc_submit_out", "") or ""
+        out = await super().submit_batch_script()
+        self._hpc_job_submitted = True
+        self._hpc_submit_out = out
+        self._hpc_job_id = getattr(self, "job_id", "") or ""
+        # super().start() 内の proxy 追加処理より前に job routespec を持たせる
+        _sync_job_proxy_and_public(self)
+        jid = _spawner_job_id(self)
+        if jid:
+            _oauth_job_host_ctx.set(_job_host(jid))
+        # super().start() が ready 待ちで戻る前に詰まるケースに備え、
+        # submit 時点で route を先行登録して spawn-pending から抜けられるようにする。
+        proxy = (getattr(self.user, "settings", {}) or {}).get("proxy") if hasattr(self, "user") else None
+        spec = str(getattr(self, "proxy_spec", "") or "")
+        target = _hpc_spawner_target_host(self)
+        if proxy is None:
+            self.log.warning(
+                "HPC: hub.proxy unavailable during submit sync (%s); defer to start/check_routes",
+                self.name or "",
+            )
+            return out
+        if not spec:
+            self.log.warning(
+                "HPC: empty proxy_spec during submit sync (%s); defer to start/check_routes",
+                self.name or "",
+            )
+            return out
+        if not _hpc_chp_target_ready(target):
+            self.log.warning(
+                "HPC: unresolved target during submit sync (%s -> %s); defer to start/check_routes",
+                spec,
+                target,
+            )
+            return out
+        try:
+            await proxy.add_route(
+                spec,
+                target,
+                {"user": self.user.name, "server_name": self.name or ""},
+            )
+            self.log.info(
+                "HPC: CHP primary route (submit sync) %s → %s",
+                spec,
+                target,
+            )
+            alias = _hpc_public_alias_routespec_for(self)
+            if alias and alias != spec:
+                self._hpc_public_alias_routespec = alias
+                await proxy.add_route(
+                    alias,
+                    target,
+                    {"user": self.user.name, "server_name": self.name or ""},
+                )
+                self.log.info(
+                    "HPC: CHP alias route (submit sync) %s → %s",
+                    alias,
+                    target,
+                )
+        except Exception:
+            self.log.exception(
+                "HPC: failed submit-time route sync (%s); defer to start/check_routes",
+                spec,
+            )
+        return out
+
+    def get_env(self):
+        env = super().get_env()
+        u = self.user
+        if _is_openwebui_spawner(self):
+            # OpenWebUI は job サブドメイン直下で公開
+            jid = _spawner_job_id(self)
+            if jid:
+                pub = f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}/"
+            else:
+                pub = getattr(self, "public_url", "") or u.url
+        elif self.name:
+            pub = url_path_join(u.url, url_escape_path(self.name), "/")
+        else:
+            pub = u.url
+        if not pub.endswith("/"):
+            pub += "/"
+        env["JUPYTERHUB_PUBLIC_URL"] = pub
+        tok = (env.get("JUPYTERHUB_API_TOKEN") or "").strip() or (env.get("JPY_API_TOKEN") or "").strip()
+        if getattr(self, "api_token", None):
+            tok = tok or str(self.api_token).strip()
+        if tok:
+            env["JUPYTERHUB_API_TOKEN"] = tok
+            env["JPY_API_TOKEN"] = tok
+        return env
+
+    def get_state(self):
+        state = super().get_state()
+        if getattr(self, "port", 0):
+            state["_hpc_port"] = self.port
+        return state
+
+    def load_state(self, state):
+        super().load_state(state)
+        if "_hpc_port" in state:
+            self.port = state["_hpc_port"]
+        if getattr(self, "job_id", None) and self.job_id:
+            _sync_job_proxy_and_public(self)
+            al = _hpc_public_alias_routespec_for(self)
+            if al and al != getattr(self, "proxy_spec", None):
+                self._hpc_public_alias_routespec = al
+
+    async def start(self):
+        try:
+            if _is_openwebui_spawner(self):
+                await self.submit_batch_script()
+                p = getattr(self, "port", 0) or 0
+                try:
+                    p = int(p)
+                except Exception:
+                    p = 0
+                if p <= 0:
+                    jid = _spawner_job_id(self)
+                    if jid.isdigit():
+                        p = 20000 + (int(jid) % 20000)
+                if p <= 0:
+                    raise RuntimeError(
+                        f"HPC: unresolved openwebui port for {self.name or ''}"
+                    )
+                self.port = p
+                self.ip = "127.0.0.1"
+                if not await _wait_for_tcp_port(self.ip, int(self.port), timeout=120.0):
+                    raise RuntimeError(
+                        f"HPC: OpenWebUI TCP not reachable on {self.ip}:{self.port}"
+                    )
+                _sync_job_proxy_and_public(self)
+                proxy = (getattr(self.user, "settings", {}) or {}).get("proxy") if hasattr(self, "user") else None
+                target = f"http://{self.ip}:{self.port}"
+                spec = str(getattr(self, "proxy_spec", "") or "")
+                if proxy is None:
+                    self.log.warning(
+                        "HPC: hub.proxy unavailable during openwebui start (%s); defer to check_routes",
+                        self.name or "",
+                    )
+                elif not spec:
+                    self.log.warning(
+                        "HPC: empty proxy_spec during openwebui start (%s); defer to check_routes",
+                        self.name or "",
+                    )
+                else:
+                    try:
+                        await proxy.add_route(
+                            spec,
+                            target,
+                            {"user": self.user.name, "server_name": self.name or ""},
+                        )
+                        self.log.info(
+                            "HPC: CHP primary route (openwebui ready) %s → %s",
+                            spec,
+                            target,
+                        )
+                        alias = _hpc_public_alias_routespec_for(self)
+                        if alias and alias != spec:
+                            self._hpc_public_alias_routespec = alias
+                            await proxy.add_route(
+                                alias,
+                                target,
+                                {"user": self.user.name, "server_name": self.name or ""},
+                            )
+                            self.log.info(
+                                "HPC: CHP alias route (openwebui ready) %s → %s",
+                                alias,
+                                target,
+                            )
+                    except Exception:
+                        self.log.exception(
+                            "HPC: failed to add route during openwebui start; defer to check_routes"
+                        )
+                if spec and not getattr(self, "_hpc_public_alias_routespec", None):
+                    alias = _hpc_public_alias_routespec_for(self)
+                    if alias and alias != spec:
+                        self._hpc_public_alias_routespec = alias
+                return (self.ip, self.port)
+
+            ret = await super().start()
+            _sync_job_proxy_and_public(self)
+            srv = getattr(self, "server", None)
+            h = getattr(srv, "host", None) if srv else None
+            if not _hpc_chp_target_ready(h):
+                h = await _hpc_wait_chp_target(self)
+            if not _hpc_chp_target_ready(h):
+                h = _hpc_spawner_target_host(self)
+            proxy = None
+            try:
+                proxy = (getattr(self.user, "settings", {}) or {}).get("proxy")
+            except Exception:
+                proxy = None
+            if proxy is None:
+                try:
+                    proxy = (getattr(self, "settings", {}) or {}).get("proxy")
+                except Exception:
+                    proxy = None
+            if proxy is None:
+                try:
+                    proxy = getattr(getattr(self, "hub", None), "proxy", None)
+                except Exception:
+                    proxy = None
+            if proxy is None:
+                self.log.warning(
+                    "HPC: proxy object unavailable during start (%s)",
+                    getattr(self, "name", ""),
+                )
+            if (
+                proxy is not None
+                and getattr(self, "proxy_spec", None)
+                and _hpc_chp_target_ready(h)
+            ):
+                try:
+                    routes = await proxy.get_all_routes()
+                    spec = str(self.proxy_spec)
+                    spec_key = spec if spec.startswith("/") else f"/{spec}"
+                    route = routes.get(spec) or routes.get(spec_key)
+                    if not route or route.get("target") != h:
+                        await proxy.add_route(
+                            self.proxy_spec,
+                            h,
+                            {"user": self.user.name, "server_name": self.name or ""},
+                        )
+                        self.log.info(
+                            "HPC: CHP primary route (start) %s → %s",
+                            self.proxy_spec,
+                            h,
+                        )
+                except Exception:
+                    self.log.exception(
+                        "HPC: failed to ensure primary route during start (%s)",
+                        self.proxy_spec,
+                    )
+            alias = _hpc_public_alias_routespec_for(self)
+            if (
+                alias
+                and getattr(self, "proxy_spec", None)
+                and alias != self.proxy_spec
+            ):
+                self._hpc_public_alias_routespec = alias
+                # 起動直後に alias ルートが無いと /user/.../oauth_callback が Hub 側へ戻されて
+                # Redirect loop になるため、有効な host:port が確定していれば即時に登録する。
+                if not _hpc_chp_target_ready(h):
+                    h = await _hpc_wait_chp_target(self)
+                if not _hpc_chp_target_ready(h):
+                    h = _hpc_spawner_target_host(self)
+                if not _hpc_chp_target_ready(h):
+                    # host が :0 のままでも、CHP に既に本ルートがあれば target を再利用して alias を張る
+                    try:
+                        if proxy is not None and getattr(self, "proxy_spec", None):
+                            routes = await proxy.get_all_routes()
+                            k1 = self.proxy_spec
+                            k2 = f"/{k1}" if not str(k1).startswith("/") else str(k1)
+                            r = routes.get(k1) or routes.get(k2) or {}
+                            t = r.get("target")
+                            if _hpc_chp_target_ready(t):
+                                h = t
+                                self.log.info(
+                                    "HPC: resolved alias target from CHP routes %s -> %s",
+                                    self.proxy_spec,
+                                    h,
+                                )
+                    except Exception:
+                        self.log.exception(
+                            "HPC: failed to resolve alias target from existing CHP routes"
+                        )
+                if not _hpc_chp_target_ready(h):
+                    h = _hpc_spawner_target_host(self)
+                if _hpc_chp_target_ready(h):
+                    try:
+                        proxy = self.user.settings.get("proxy")
+                        if proxy is not None:
+                            await proxy.add_route(
+                                alias,
+                                h,
+                                {"user": self.user.name, "server_name": self.name or ""},
+                            )
+                            self.log.info("HPC: CHP alias route (start) %s → %s", alias, h)
+                    except Exception:
+                        self.log.exception(
+                            "HPC: failed to add alias route during start (%s)", alias
+                        )
+                else:
+                    self.log.warning(
+                        "HPC: alias route defer until check_routes (host not ready): %s",
+                        h,
+                    )
+            # ready 判定前でも route が抜けるケースに備えて、短い遅延後に再同期を1回実施
+            # （OpenWebUI の起動タイミングで CHP 登録が取りこぼされるのを防ぐ）
+            if proxy is not None and _hpc_chp_target_ready(h):
+                try:
+                    await asyncio.sleep(0.5)
+                    routes = await proxy.get_all_routes()
+                    spec = str(getattr(self, "proxy_spec", "") or "")
+                    if spec:
+                        spec_key = spec if spec.startswith("/") else f"/{spec}"
+                        r = routes.get(spec) or routes.get(spec_key)
+                        if not r or r.get("target") != h:
+                            await proxy.add_route(
+                                spec,
+                                h,
+                                {"user": self.user.name, "server_name": self.name or ""},
+                            )
+                            self.log.info(
+                                "HPC: CHP primary route (post-start sync) %s → %s",
+                                spec,
+                                h,
+                            )
+                    alias2 = getattr(self, "_hpc_public_alias_routespec", None)
+                    if alias2:
+                        ak = alias2 if str(alias2).startswith("/") else f"/{alias2}"
+                        ar = routes.get(alias2) or routes.get(ak)
+                        if not ar or ar.get("target") != h:
+                            await proxy.add_route(
+                                alias2,
+                                h,
+                                {"user": self.user.name, "server_name": self.name or ""},
+                            )
+                            self.log.info(
+                                "HPC: CHP alias route (post-start sync) %s → %s",
+                                alias2,
+                                h,
+                            )
+                except Exception:
+                    self.log.exception(
+                        "HPC: failed post-start route sync (%s)",
+                        getattr(self, "proxy_spec", ""),
+                    )
+            return ret
+        finally:
+            try:
+                _oauth_job_host_ctx.set(None)
+            except Exception:
+                pass
+
+
+class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
+    """job<SLURM_ID> に加え、Hub 公開ホストでも同一 singleuser へ転送するルートを維持する"""
+
+    @_one_at_a_time
+    async def check_routes(self, user_dict, service_dict, routes=None):
+        try:
+            await self._hpc_check_routes_inner(user_dict, service_dict, routes)
+        except Exception:
+            self.log.exception(
+                "HPC: check_routes failed; falling back to default implementation"
+            )
+            await super().check_routes(user_dict, service_dict, routes)
+
+    async def _hpc_check_routes_inner(self, user_dict, service_dict, routes=None):
+        start = time.perf_counter()
+        if not routes:
+            self.log.debug("Fetching routes to check")
+            routes = await self.get_all_routes()
+
+        self.log.debug("Checking routes")
+
+        def _raw_routespec_key(norm_s: str):
+            for k in routes:
+                if _hpc_norm_routespec(k) == norm_s:
+                    return k
+            return None
+
+        user_routes = set()
+        for path, r in routes.items():
+            if not isinstance(r, dict):
+                continue
+            d = r.get("data")
+            if isinstance(d, dict) and "user" in d:
+                user_routes.add(_hpc_norm_routespec(path))
+        futures = []
+
+        good_routes = {self.app.hub.routespec}
+
+        hub = self.hub
+        hub_key = _raw_routespec_key(_hpc_norm_routespec(self.app.hub.routespec))
+        if hub_key is None:
+            futures.append(self.add_hub_route(hub))
+        else:
+            route = routes[hub_key]
+            if route["target"] != hub.host:
+                self.log.warning(
+                    "Updating Hub route %s → %s", route["target"], hub.host
+                )
+                futures.append(self.add_hub_route(hub))
+
+        for user in user_dict.values():
+            for name, spawner in user.spawners.items():
+                # check_routes 評価直前に、現在の JOBID で routespec/alias を同期する
+                _sync_job_proxy_and_public(spawner)
+                _alias_tmp = _hpc_public_alias_routespec_for(spawner)
+                if (
+                    _alias_tmp
+                    and getattr(spawner, "proxy_spec", None)
+                    and _alias_tmp != spawner.proxy_spec
+                ):
+                    spawner._hpc_public_alias_routespec = _alias_tmp
+                if spawner.ready:
+                    spec = spawner.proxy_spec
+                    if not spec:
+                        self.log.warning(
+                            "HPC: ready spawner %s has empty proxy_spec; skip",
+                            spawner._log_name,
+                        )
+                        continue
+                    good_routes.add(spec)
+                    alias = getattr(spawner, "_hpc_public_alias_routespec", None)
+                    if alias:
+                        good_routes.add(alias)
+                    spec_norm = _hpc_norm_routespec(spec)
+                    if spec_norm not in user_routes:
+                        self.log.warning(
+                            "Adding missing route for %s (%s)", spec, spawner.server
+                        )
+                        await self.add_user(user, name)
+                        routes = await self.get_all_routes()
+                        user_routes = set()
+                        for path, r in routes.items():
+                            if not isinstance(r, dict):
+                                continue
+                            d = r.get("data")
+                            if isinstance(d, dict) and "user" in d:
+                                user_routes.add(_hpc_norm_routespec(path))
+                        h = (
+                            getattr(spawner.server, "host", None)
+                            if spawner.server
+                            else None
+                        )
+                        if (
+                            alias
+                            and _hpc_chp_target_ready(h)
+                            and _raw_routespec_key(_hpc_norm_routespec(alias))
+                            is None
+                        ):
+                            await self.add_route(
+                                alias,
+                                h,
+                                {"user": user.name, "server_name": name},
+                            )
+                            self.log.info(
+                                "HPC: CHP alias route %s → %s", alias, h
+                            )
+                            routes = await self.get_all_routes()
+                    else:
+                        rk = _raw_routespec_key(spec_norm)
+                        if rk is None:
+                            self.log.warning(
+                                "HPC: CHP に %s が無いのに user_routes には存在; add_user で修復",
+                                spec,
+                            )
+                            await self.add_user(user, name)
+                            routes = await self.get_all_routes()
+                            rk = _raw_routespec_key(spec_norm)
+                        if rk is None:
+                            continue
+                        route = routes[rk]
+                        if route["target"] != spawner.server.host:
+                            self.log.warning(
+                                "Updating route for %s (%s → %s)",
+                                spec,
+                                route["target"],
+                                spawner.server,
+                            )
+                            await self.add_user(user, name)
+                            routes = await self.get_all_routes()
+                        h = (
+                            getattr(spawner.server, "host", None)
+                            if spawner.server
+                            else None
+                        )
+                        if alias and spawner.server and _hpc_chp_target_ready(h):
+                            ak = _raw_routespec_key(_hpc_norm_routespec(alias))
+                            a_route = routes.get(ak) if ak else None
+                            if not a_route or a_route.get("target") != h:
+                                await self.add_route(
+                                    alias,
+                                    h,
+                                    {"user": user.name, "server_name": name},
+                                )
+                                self.log.info(
+                                    "HPC: CHP alias route (sync) %s → %s",
+                                    alias,
+                                    h,
+                                )
+                                routes = await self.get_all_routes()
+                elif spawner.pending:
+                    if spawner.proxy_spec:
+                        good_routes.add(spawner.proxy_spec)
+                    alias = getattr(spawner, "_hpc_public_alias_routespec", None)
+                    if alias:
+                        good_routes.add(alias)
+                    h = _hpc_spawner_target_host(spawner)
+                    if spawner.proxy_spec and _hpc_chp_target_ready(h):
+                        sk = _raw_routespec_key(_hpc_norm_routespec(spawner.proxy_spec))
+                        s_route = routes.get(sk) if sk else None
+                        if not s_route or s_route.get("target") != h:
+                            await self.add_route(
+                                spawner.proxy_spec,
+                                h,
+                                {"user": user.name, "server_name": name},
+                            )
+                            self.log.info(
+                                "HPC: CHP primary route (pending sync) %s → %s",
+                                spawner.proxy_spec,
+                                h,
+                            )
+                            routes = await self.get_all_routes()
+                    if alias and _hpc_chp_target_ready(h):
+                        ak = _raw_routespec_key(_hpc_norm_routespec(alias))
+                        a_route = routes.get(ak) if ak else None
+                        if not a_route or a_route.get("target") != h:
+                            await self.add_route(
+                                alias,
+                                h,
+                                {"user": user.name, "server_name": name},
+                            )
+                            self.log.info(
+                                "HPC: CHP alias route (pending sync) %s → %s",
+                                alias,
+                                h,
+                            )
+                            routes = await self.get_all_routes()
+
+        service_routes = {}
+        for r in routes.values():
+            if not isinstance(r, dict):
+                continue
+            d = r.get("data")
+            if isinstance(d, dict) and "service" in d:
+                service_routes[d["service"]] = r
+        for service in service_dict.values():
+            if service.server is None:
+                continue
+            good_routes.add(service.proxy_spec)
+            if service.name not in service_routes:
+                self.log.warning(
+                    "Adding missing route for %s (%s)", service.name, service.server
+                )
+                futures.append(self.add_service(service))
+            else:
+                route = service_routes[service.name]
+                if route["target"] != service.server.host:
+                    self.log.warning(
+                        "Updating route for %s (%s → %s)",
+                        route.get("routespec", service.proxy_spec),
+                        route["target"],
+                        service.server.host,
+                    )
+                    futures.append(self.add_service(service))
+
+        extra = getattr(self, "extra_routes", None) or {}
+        for routespec, url in extra.items():
+            good_routes.add(routespec)
+            futures.append(self.add_route(routespec, url, {"extra": True}))
+
+        good_routes_norm = {_hpc_norm_routespec(g) for g in good_routes}
+        for routespec in routes:
+            if _hpc_norm_routespec(routespec) not in good_routes_norm:
+                self.log.warning("Deleting stale route %s", routespec)
+                futures.append(self.delete_route(routespec))
+
+        await asyncio.gather(*futures)
+        stop = time.perf_counter()
+        try:
+            CHECK_ROUTES_DURATION_SECONDS.observe(stop - start)
+        except Exception:
+            pass
+
+
+# 2. カスタムフォーム生成
+def make_options_form(spawner):
+    cpu = psutil.cpu_percent()
+    mem = psutil.virtual_memory()
+    m_used = round(mem.used / (1024 ** 3), 1)
+
+    active_sessions_html = ""
+    user = spawner.user
+    for name, s in user.spawners.items():
+        is_openwebui = _is_openwebui_spawner(s)
+        app_label = "Open WebUI" if is_openwebui else "JupyterLab"
+        jid = getattr(s, "job_id", "") or ""
+        public_url = getattr(s, "public_url", "") or ""
+        if is_openwebui and jid:
+            # OpenWebUI は job サブドメイン直下で開く
+            url = public_url or f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}/"
+        # spawn 時に渡された public_url が gx10 側のまま残ることがあるため active+JOBID では ORM の base_url を優先
+        elif s.active and jid:
+            srv = getattr(s, "server", None)
+            base = getattr(srv, "base_url", None) if srv else None
+            if base:
+                p = str(base)
+                if not p.endswith("/"):
+                    p += "/"
+                url = f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{p}"
+            elif name:
+                rel = url_path_join(user.base_url, url_escape_path(name), "/")
+                url = f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{rel}"
+            else:
+                url = f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{user.base_url}"
+        elif public_url:
+            url = public_url
+        elif jid:
+            if name:
+                rel = url_path_join(user.base_url, url_escape_path(name), "/")
+            else:
+                rel = user.base_url
+            url = f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{rel}"
+        else:
+            url = f"/user/{user.name}/{name}/" if name else f"/user/{user.name}/"
+
+        if getattr(s, "pending", None):
+            pending_state = str(getattr(s, "pending", "spawn"))
+            active_sessions_html += (
+                f'<div style="background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.35);'
+                f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
+                f'● {app_label} <span style="float:right;color:#ffc107;">起動中...</span>'
+                f'<div style="margin-top:8px;font-size:0.78rem;color:#ccc;">status: {pending_state}</div>'
+                f'<div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.12);border-radius:999px;overflow:hidden;">'
+                f'<div style="width:55%;height:100%;background:#ffc107;animation:gx10pulse 1.2s ease-in-out infinite alternate;"></div>'
+                f"</div></div>"
+            )
+        elif s.active:
+            active_sessions_html += (
+                f'<a href="{url}" target="_blank" style="text-decoration:none;display:block;margin-top:10px;">'
+                f'<div style="background:rgba(79,172,254,0.1);border:1px solid rgba(79,172,254,0.3);'
+                f'padding:12px;border-radius:10px;color:#fff;">'
+                f'● {app_label} <span style="float:right;color:#4facfe;">JUMP ↗</span></div></a>'
+            )
+
+    if not active_sessions_html:
+        active_sessions_html = '<div style="color:#555;font-size:0.8rem;font-style:italic;">No active sessions.</div>'
+
+    lb = "{{ '{' }}"
+    rb = "{{ '}' }}"
+
+    header_html = f"""
+    <style>
+        .gx10-card {lb} background: rgba(255, 255, 255, 0.03); border-radius: 16px; padding: 24px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 20px; color: #fff; {rb}
+        .label {lb} font-size: 0.75rem; color: #777; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: 600; {rb}
+        .input-dark {lb} background: rgba(0, 0, 0, 0.3) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; color: #fff !important; margin-bottom: 15px; border-radius: 8px !important; {rb}
+        @keyframes gx10pulse {lb} from {lb} opacity: 0.45; {rb} to {lb} opacity: 1; {rb} {rb}
+    </style>
+    <div id="resource-dashboard">
+        <div class="gx10-card">
+            <h3 style="margin-top:0; color:#fff;">🚀 gx10-ac12 Control Center</h3>
+            <div style="font-size:0.8rem;color:#777;">Node: gx10-ac12 | CPU: {cpu}% | MEM: {m_used}GB</div>
+            <div id="active-list">{active_sessions_html}</div>
+        </div>
+        <div class="gx10-card">
+            <div class="form-group">
+                <label class="label">App Template</label>
+                <select class="form-control input-dark" name="app_choice">
+                    <option value="ubuntu-cli">Ubuntu CLI (JupyterLab)</option>
+                    <option value="open-webui">Open WebUI (AI Chat)</option>
+                </select>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div><label class="label">vCPUs</label><input type="number" class="form-control input-dark" name="cpu" value="2" min="1"></div>
+                    <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div><label class="label">Hours</label><input type="number" class="form-control input-dark" name="hours" value="8" min="1"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
+    js_code = """
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const form = document.querySelector('form');
+        if (form) {
+            form.onsubmit = function() {
+                const inputs = document.querySelectorAll('input[name="_xsrf"]');
+                if (inputs.length > 1) {
+                    for (let i = 1; i < inputs.length; i++) inputs[i].remove();
+                }
+            };
+        }
+    });
+    </script>
+    """
+    return header_html + js_code
+
+
+# 3. データの受け取り
+def options_from_form(formdata):
+    h = formdata.get("hours", ["8"])[0]
+    return {
+        "nprocs": str(formdata.get("cpu", ["2"])[0]),
+        "memory": f"{formdata.get('mem', ['4'])[0]}G",
+        "runtime": f"{int(h):02d}:00:00",
+        "gres_line": "",
+        "app_choice": str(formdata.get("app_choice", ["ubuntu-cli"])[0]),
+    }
+
+
+def apply_user_options(spawner, user_options):
+    spawner.req_nprocs = str(user_options.get("nprocs", "2"))
+    spawner.req_memory = str(user_options.get("memory", "4G"))
+    spawner.req_runtime = str(user_options.get("runtime", "08:00:00"))
+    app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
+    spawner.user_options["app_choice"] = app_choice
+    if app_choice == "open-webui":
+        # BatchSpawner の service_url が :0 になると pending から進めないため、
+        # server_name ベースで Hub 側ポートを事前確定する
+        seed = str(getattr(spawner, "name", "") or "")
+        h = sum(ord(c) for c in seed) % 20000
+        spawner.port = 20000 + h
+
+
+# 4. Spawner / Hub クラス紐付け
+c.JupyterHub.proxy_class = HpcConfigurableHTTPProxy
+c.JupyterHub.spawner_class = HPCSlurmSpawner
+c.HPCSlurmSpawner.options_form = make_options_form
+c.HPCSlurmSpawner.options_from_form = options_from_form
+# batchspawner はジョブ RUNNING 後に self.ip = state_gethost() で上書きする（c.Spawner.ip は最終的に使われない）。
+# Slurm が返す短いノード名（例: gx10-ac12）を CHP の target にすると、Node からの外向き HTTP が
+# 名前解決・ヘアピン等で失敗し Cloudflare 経由で 502 になることがある。
+# Hub・CHP・ジョブが同一ホスト（group_vars の localhost 運用）では 127.0.0.1 に固定する。
+# 計算ノードが分かれる場合は FQDN や MultiSlurmSpawner.daemon_resolver 等に切り替えること。
+c.HPCSlurmSpawner.state_exechost_exp = "{{ jupyterhub_batch_exechost_exp | default('127.0.0.1') }}"
+c.HPCSlurmSpawner.ip = "127.0.0.1"
+c.HPCSlurmSpawner.req_nprocs = "2"
+c.HPCSlurmSpawner.req_memory = "4G"
+c.HPCSlurmSpawner.req_runtime = "08:00:00"
+c.HPCSlurmSpawner.req_partition = "debug"
+c.Spawner.start_timeout = 300
+c.Spawner.cmd = ["jupyterhub-singleuser"]
+c.Spawner.apply_user_options = apply_user_options
+
+# 5. 起動スクリプト (Apptainer版・多重エスケープ回避)
+# 文字列結合で波括弧を生成して、テンプレート干渉を防ぐ
+js = "{" + "{"
+je = "}" + "}"
+bs = js[0]
+be = je[0]
+
+# CHP の削除 API は既定で user.proxy_spec（ユーザー名サブドメイン）を使うため、
+# job<JOBID>.<domain> に差し替えた spawner.proxy_spec を確実に削除する
+_orig_proxy_delete_user = Proxy.delete_user
+
+
+async def _hpc_proxy_delete_user(self, user, server_name="", client=None):
+    sp = user.spawners.get(server_name)
+    if sp is not None:
+        alias = getattr(sp, "_hpc_public_alias_routespec", None)
+        if alias:
+            self.log.info("Removing user %s CHP public-alias (%s)", user.name, alias)
+            try:
+                await self.delete_route(alias)
+            except Exception:
+                self.log.exception("HPC: failed to delete alias route %s", alias)
+    if sp is not None and getattr(sp, "proxy_spec", None):
+        routespec = sp.proxy_spec
+    else:
+        routespec = user.proxy_spec
+        if server_name:
+            routespec = url_path_join(user.proxy_spec, url_escape_path(server_name), "/")
+    self.log.info("Removing user %s from proxy (%s)", user.name, routespec)
+    await self.delete_route(routespec)
+
+
+Proxy.delete_user = _hpc_proxy_delete_user
+
+
+c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
+#SBATCH --job-name=jhub-app
+#SBATCH --partition={bs}partition{be}
+#SBATCH --cpus-per-task={bs}nprocs{be}
+#SBATCH --mem={bs}memory{be}
+#SBATCH --time={bs}runtime{be}
+#SBATCH --chdir={bs}homedir{be}
+#SBATCH --output=/tmp/jupyterhub-%j.log
+{bs}gres_line{be}
+
+set -euo pipefail
+export PATH=/opt/jupyterhub/venv/bin:$PATH
+
+# 環境によっては JUPYTERHUB_API_TOKEN が空で JPY_API_TOKEN のみ渡るため補完する
+_hub_token="$(printenv JUPYTERHUB_API_TOKEN || true)"
+_jpy_token="$(printenv JPY_API_TOKEN || true)"
+if [ -z "$_hub_token" ] && [ -n "$_jpy_token" ]; then
+    export JUPYTERHUB_API_TOKEN="$_jpy_token"
+fi
+
+APP_CHOICE="{bs}app_choice{be}"
+if [ "$APP_CHOICE" = "open-webui" ]; then
+    OPENWEBUI_IMAGE="/opt/images/openwebui-ollama.sif"
+    SERVICE_PORT="$(printenv JUPYTERHUB_SERVICE_PORT || true)"
+    SERVICE_URL="$(printenv JUPYTERHUB_SERVICE_URL || true)"
+    CMDLINE="{bs}cmd{be}"
+    PORT="$SERVICE_PORT"
+    case "$PORT" in
+      ''|*[!0-9]*|0) PORT="" ;;
+    esac
+    if [ -z "$PORT" ]; then
+      PORT="$(printf '%s' "$SERVICE_URL" | sed -n 's#.*:\\([0-9]\\+\\)/.*#\\1#p')"
+      if [ "$PORT" = "0" ]; then
+        PORT=""
+      fi
+    fi
+    if [ -z "$PORT" ]; then
+      PORT="$(printf '%s' "$CMDLINE" | sed -n 's/.*--port=\\([0-9]\\+\\).*/\\1/p')"
+    fi
+    if [ -z "$PORT" ]; then
+      # 環境によっては起動直後の service_url が :0 のまま来るため、JOBID からフォールバックポートを決める
+      PORT="$((20000 + ($(printenv SLURM_JOB_ID || echo 0) % 20000)))"
+      echo "dynamic port unavailable, fallback to PORT=$PORT (service_port=$SERVICE_PORT service_url=$SERVICE_URL)" >&2
+    fi
+    # 以前の失敗ジョブの残骸で同一ポートが占有されると OpenWebUI が即終了するため、
+    # 同ユーザーの同一ポート open_webui プロセスを掃除してから起動する。
+    if ss -ltn "( sport = :$PORT )" | rg -q LISTEN; then
+      echo "PORT $PORT already in use; cleaning stale open_webui process" >&2
+      pkill -u "$USER" -f "open_webui.main:app --host 0.0.0.0 --port $PORT" || true
+      sleep 1
+    fi
+    if ss -ltn "( sport = :$PORT )" | rg -q LISTEN; then
+      echo "PORT $PORT still busy after cleanup; abort startup to avoid immediate crash" >&2
+      exit 1
+    fi
+    OPENWEBUI_DATA_DIR="$HOME/.open-webui-$JUPYTERHUB_SERVER_NAME"
+    HF_HOME_DIR="$OPENWEBUI_DATA_DIR/hf"
+    HF_HUB_CACHE_DIR="$HF_HOME_DIR/hub"
+    SENTENCE_TRANSFORMERS_HOME_DIR="$OPENWEBUI_DATA_DIR/sentence-transformers"
+    TRANSFORMERS_CACHE_DIR="$HF_HOME_DIR/transformers"
+    mkdir -p "$OPENWEBUI_DATA_DIR/static" "$HOME/.ollama" "$HF_HUB_CACHE_DIR" "$SENTENCE_TRANSFORMERS_HOME_DIR" "$TRANSFORMERS_CACHE_DIR"
+    JOB_HOST="job$(printenv SLURM_JOB_ID || echo 0).{{ jupyterhub_job_dns_domain }}"
+    WEBUI_EXTERNAL_URL="{{ hpc_public_scheme | default('https') }}://$JOB_HOST/"
+    exec apptainer exec --nv "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static OLLAMA_MODELS=$HOME/.ollama/models WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
+else
+    IMAGE_PATH="/opt/images/jupyter-cpu.sif"
+    exec apptainer exec --nv "$IMAGE_PATH" {bs}cmd{be} --ip=0.0.0.0
+fi
+"""
