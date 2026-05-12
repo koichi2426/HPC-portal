@@ -16,6 +16,10 @@ ReturnToService=2
 SchedulerType=sched/backfill
 SelectType=select/cons_tres
 SelectTypeParameters=CR_CPU_Memory
+{% set gpu_count = slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int %}
+{% if gpu_count > 0 %}
+GresTypes=gpu
+{% endif %}
 
 # 単一ノード簡易構成: アカウンティングDB連携を無効化
 AccountingStorageType=accounting_storage/none
@@ -24,5 +28,5 @@ AccountingStorageType=accounting_storage/none
 MailProg=/usr/bin/true
 
 # 単一ノード構成: NodeNameは実際のホスト名と完全に一致させる必要があります
-NodeName={{ ansible_hostname }} NodeAddr=127.0.0.1 CPUs={{ ansible_processor_vcpus | default(4) }} RealMemory={{ ansible_memtotal_mb | default(8192) }} State=UNKNOWN
+NodeName={{ ansible_hostname }} NodeAddr=127.0.0.1 CPUs={{ ansible_processor_vcpus | default(4) }} RealMemory={{ ansible_memtotal_mb | default(8192) }}{% if gpu_count > 0 %} Gres=gpu:{{ gpu_count }}{% endif %} State=UNKNOWN
 PartitionName=debug Nodes={{ ansible_hostname }} Default=YES MaxTime=INFINITE State=UP

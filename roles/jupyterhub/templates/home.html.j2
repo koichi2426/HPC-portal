@@ -10,6 +10,61 @@
     </a>
   </div>
 
+  {% set res = hpc_resource_snapshot %}
+  <style>
+    .gx10-resource-card { background:#0d1117; border:1px solid #30363d; border-radius:12px; padding:14px; margin-bottom:18px; }
+    .gx10-resource-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:12px; }
+    .gx10-resource-meter { background:rgba(255,255,255,0.035); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px; }
+    .gx10-meter-head { display:flex; justify-content:space-between; align-items:center; color:#8b949e; font-size:12px; margin-bottom:8px; }
+    .gx10-meter-status { color:#9be7c7; font-weight:700; }
+    .gx10-meter-track { height:10px; background:#30363d; border-radius:999px; overflow:hidden; }
+    .gx10-meter-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7); }
+    .gx10-meter-numbers { display:flex; justify-content:space-between; margin-top:7px; color:#8b949e; font-size:11px; }
+  </style>
+  <div class="gx10-resource-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+      <div>
+        <div style="font-weight:700; color:#c9d1d9;">現在使えるリソース</div>
+        <div style="font-size:12px; color:#8b949e; margin-top:3px;">Node: gx10-ac12</div>
+      </div>
+      <a href="/hub/new" style="text-decoration:none; color:#58a6ff; font-weight:700; font-size:12px;">新規起動へ →</a>
+    </div>
+    <div class="gx10-resource-grid" aria-label="現在使えるリソース">
+      <div class="gx10-resource-meter">
+        <div class="gx10-meter-head"><span>CPU 空き</span><span class="gx10-meter-status">{{ res.cpu_status }}</span></div>
+        <div class="gx10-meter-track"><div class="gx10-meter-fill" style="width:{{ "%.0f"|format(res.cpu_available) }}%;"></div></div>
+        <div class="gx10-meter-numbers">
+          <span>残り {{ "%.1f"|format(res.cpu_available_count) }} vCPU</span>
+          <span>最大 {{ res.cpu_total }} vCPU</span>
+        </div>
+      </div>
+      <div class="gx10-resource-meter">
+        <div class="gx10-meter-head"><span>RAM 空き</span><span class="gx10-meter-status">{{ res.mem_status }}</span></div>
+        <div class="gx10-meter-track"><div class="gx10-meter-fill" style="width:{{ "%.0f"|format(res.mem_available) }}%;"></div></div>
+        <div class="gx10-meter-numbers">
+          <span>残り {{ "%.1f"|format(res.mem_available_gb) }} GB</span>
+          <span>最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</span>
+        </div>
+      </div>
+      <div class="gx10-resource-meter">
+        <div class="gx10-meter-head"><span>Storage 空き</span><span class="gx10-meter-status">{{ res.disk_status }}</span></div>
+        <div class="gx10-meter-track"><div class="gx10-meter-fill" style="width:{{ "%.0f"|format(res.disk_available) }}%;"></div></div>
+        <div class="gx10-meter-numbers">
+          <span>残り {{ "%.1f"|format(res.disk_available_gb) }} GB</span>
+          <span>最大 {{ "%.1f"|format(res.disk_total_gb) }} GB</span>
+        </div>
+      </div>
+      <div class="gx10-resource-meter">
+        <div class="gx10-meter-head"><span>GPU 空き</span><span class="gx10-meter-status">{{ res.gpu_status }}</span></div>
+        <div class="gx10-meter-track"><div class="gx10-meter-fill" style="width:{{ "%.0f"|format(res.gpu_available) }}%;"></div></div>
+        <div class="gx10-meter-numbers">
+          <span>空き {{ res.gpu_available_count }}/{{ res.gpu_max }} GPU</span>
+          <span>VRAM {{ "%.1f"|format(res.gpu_vram_available_gb) }}/{{ "%.1f"|format(res.gpu_vram_total_gb) }} GB</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div style="margin-bottom:10px; color:#8b949e;">起動中のアプリケーション</div>
 
   {% if user and user.spawners %}

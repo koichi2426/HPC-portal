@@ -1,0 +1,6 @@
+{% set gpu_count = slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int %}
+{% if gpu_count == 1 %}
+NodeName={{ ansible_hostname }} Name=gpu File=/dev/nvidia0
+{% elif gpu_count > 1 %}
+NodeName={{ ansible_hostname }} Name=gpu File=/dev/nvidia[0-{{ gpu_count - 1 }}]
+{% endif %}
