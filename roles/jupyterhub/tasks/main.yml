@@ -60,7 +60,7 @@
       - nest-asyncio
       - psutil
       - open-webui
-      - "git+https://github.com/jupyterhub/batchspawner.git"
+      - batchspawner
     virtualenv: /opt/jupyterhub/venv
     virtualenv_command: python3 -m venv
     state: latest
