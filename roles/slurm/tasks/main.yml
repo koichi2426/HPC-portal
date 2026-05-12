@@ -31,6 +31,16 @@
     - { path: /var/spool/slurmd, owner: root, group: root, mode: "0755" }
     - { path: /var/log/slurm, owner: slurm, group: slurm, mode: "0755" }
 
+- name: NVIDIA GPU数を検出
+  ansible.builtin.command: nvidia-smi -L
+  register: slurm_nvidia_smi
+  failed_when: false
+  changed_when: false
+
+- name: Slurmで管理するGPU数を設定
+  ansible.builtin.set_fact:
+    slurm_effective_gpu_count: "{{ slurm_gpu_count | default(slurm_nvidia_smi.stdout_lines | select('match', '^GPU ') | list | length) | int }}"
+
 - name: mungeキーを作成
   ansible.builtin.shell: |
     dd if=/dev/urandom of=/etc/munge/munge.key bs=1 count=1024
@@ -39,6 +49,23 @@
   args:
     creates: /etc/munge/munge.key
   notify: mungeを再起動
+
+- name: GPU GRES設定を配置
+  ansible.builtin.template:
+    src: gres.conf.j2
+    dest: /etc/slurm/gres.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: slurm_effective_gpu_count | int > 0
+  notify: slurmサービスを再起動
+
+- name: GPU未検出時はGRES設定を削除
+  ansible.builtin.file:
+    path: /etc/slurm/gres.conf
+    state: absent
+  when: slurm_effective_gpu_count | int == 0
+  notify: slurmサービスを再起動
 
 - name: 単一ノード用slurm.confを配置
   ansible.builtin.template:

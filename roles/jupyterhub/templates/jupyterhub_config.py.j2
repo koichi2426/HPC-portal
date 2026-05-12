@@ -33,6 +33,7 @@ except ImportError:
 import contextvars
 import nest_asyncio
 import psutil
+import subprocess
 from urllib.parse import urlparse
 
 nest_asyncio.apply()
@@ -863,8 +864,15 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
             pass
 
 
-# 2. カスタムフォーム生成
-def make_options_form(spawner):
+def _hpc_resource_status(available_pct):
+    if available_pct >= 50:
+        return "余裕あり"
+    if available_pct >= 25:
+        return "やや混雑"
+    return "逼迫"
+
+
+def _hpc_resource_snapshot(disk_path="/home"):
     cpu = psutil.cpu_percent()
     mem = psutil.virtual_memory()
     cpu_total = psutil.cpu_count() or 0
@@ -873,22 +881,96 @@ def make_options_form(spawner):
     cpu_available_count = cpu_total * cpu_available / 100
     mem_available_gb = mem.available / (1024 ** 3)
     mem_total_gb = mem.total / (1024 ** 3)
-    disk_path = getattr(spawner, "notebook_dir", "") or getattr(spawner, "homedir", "") or "/home"
-    disk = psutil.disk_usage(disk_path)
+    try:
+        disk = psutil.disk_usage(disk_path)
+    except Exception:
+        disk = psutil.disk_usage("/")
     disk_available = max(0, min(100, disk.free / disk.total * 100))
     disk_available_gb = disk.free / (1024 ** 3)
     disk_total_gb = disk.total / (1024 ** 3)
+    gpu_max = {{ slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int }}
+    gpu_available = 0
+    gpu_available_count = 0
+    gpu_vram_available_gb = 0
+    gpu_vram_total_gb = 0
+    if gpu_max > 0:
+        try:
+            gpu_query = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.total,memory.used",
+                    "--format=csv,noheader,nounits",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            gpu_lines = [line.strip() for line in gpu_query.stdout.splitlines() if line.strip()]
+            gpu_total_mb = 0
+            gpu_used_mb = 0
+            gpu_free_count = 0
+            for line in gpu_lines:
+                total_mb, used_mb = [int(v.strip()) for v in line.split(",")[:2]]
+                gpu_total_mb += total_mb
+                gpu_used_mb += used_mb
+                if total_mb > 0 and used_mb / total_mb < 0.10:
+                    gpu_free_count += 1
+            if gpu_total_mb > 0:
+                gpu_vram_available_gb = (gpu_total_mb - gpu_used_mb) / 1024
+                gpu_vram_total_gb = gpu_total_mb / 1024
+                gpu_available = max(0, min(100, (gpu_total_mb - gpu_used_mb) / gpu_total_mb * 100))
+                gpu_available_count = gpu_free_count
+        except Exception:
+            pass
+    return {
+        "cpu_available": cpu_available,
+        "cpu_available_count": cpu_available_count,
+        "cpu_total": cpu_total,
+        "cpu_status": _hpc_resource_status(cpu_available),
+        "mem_available": mem_available,
+        "mem_available_gb": mem_available_gb,
+        "mem_total_gb": mem_total_gb,
+        "mem_status": _hpc_resource_status(mem_available),
+        "disk_available": disk_available,
+        "disk_available_gb": disk_available_gb,
+        "disk_total_gb": disk_total_gb,
+        "disk_status": _hpc_resource_status(disk_available),
+        "gpu_available": gpu_available,
+        "gpu_available_count": gpu_available_count,
+        "gpu_max": gpu_max,
+        "gpu_vram_available_gb": gpu_vram_available_gb,
+        "gpu_vram_total_gb": gpu_vram_total_gb,
+        "gpu_status": _hpc_resource_status(gpu_available) if gpu_max > 0 else "未検出",
+    }
 
-    def resource_status(available_pct):
-        if available_pct >= 50:
-            return "余裕あり"
-        if available_pct >= 25:
-            return "やや混雑"
-        return "逼迫"
 
-    cpu_status = resource_status(cpu_available)
-    mem_status = resource_status(mem_available)
-    disk_status = resource_status(disk_available)
+# テンプレートからホーム画面のリソースメーターを描画する
+c.JupyterHub.template_vars["hpc_resource_snapshot"] = _hpc_resource_snapshot
+
+
+# 2. カスタムフォーム生成
+def make_options_form(spawner):
+    disk_path = getattr(spawner, "notebook_dir", "") or getattr(spawner, "homedir", "") or "/home"
+    resource = _hpc_resource_snapshot(disk_path)
+    cpu_available = resource["cpu_available"]
+    cpu_available_count = resource["cpu_available_count"]
+    cpu_total = resource["cpu_total"]
+    cpu_status = resource["cpu_status"]
+    mem_available = resource["mem_available"]
+    mem_available_gb = resource["mem_available_gb"]
+    mem_total_gb = resource["mem_total_gb"]
+    mem_status = resource["mem_status"]
+    disk_available = resource["disk_available"]
+    disk_available_gb = resource["disk_available_gb"]
+    disk_total_gb = resource["disk_total_gb"]
+    disk_status = resource["disk_status"]
+    gpu_available = resource["gpu_available"]
+    gpu_available_count = resource["gpu_available_count"]
+    gpu_max = resource["gpu_max"]
+    gpu_vram_available_gb = resource["gpu_vram_available_gb"]
+    gpu_vram_total_gb = resource["gpu_vram_total_gb"]
+    gpu_status = resource["gpu_status"]
 
     active_sessions_html = ""
     user = spawner.user
@@ -1000,6 +1082,16 @@ def make_options_form(spawner):
                         <span>最大 {disk_total_gb:.1f} GB</span>
                     </div>
                 </div>
+                <div class="resource-meter">
+                    <div class="meter-head"><span>GPU 空き</span><span class="meter-status">{gpu_status}</span></div>
+                    <div class="meter-track" title="GPU VRAM 空きリソース">
+                        <div class="meter-fill" style="width:{gpu_available:.0f}%;"></div>
+                    </div>
+                    <div class="meter-numbers">
+                        <span>空き {gpu_available_count}/{gpu_max} GPU</span>
+                        <span>VRAM {gpu_vram_available_gb:.1f}/{gpu_vram_total_gb:.1f} GB</span>
+                    </div>
+                </div>
             </div>
             <div id="active-list">{active_sessions_html}</div>
         </div>
@@ -1015,8 +1107,10 @@ def make_options_form(spawner):
                     <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
                     <div><label class="label">Hours</label><input type="number" class="form-control input-dark" name="hours" value="8" min="1"></div>
                 </div>
+                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。</div>
             </div>
         </div>
     </div>
@@ -1026,6 +1120,17 @@ def make_options_form(spawner):
     <script>
     document.addEventListener("DOMContentLoaded", function() {
         const form = document.querySelector('form');
+        const appChoice = document.querySelector('select[name="app_choice"]');
+        const gpuInput = document.querySelector('input[name="gpu"]');
+        if (appChoice && gpuInput) {
+            appChoice.addEventListener("change", function() {
+                const gpuMax = parseInt(gpuInput.max || "0", 10);
+                const gpuCurrent = parseInt(gpuInput.value || "0", 10);
+                if (appChoice.value === "open-webui" && gpuMax > 0 && gpuCurrent === 0) {
+                    gpuInput.value = "1";
+                }
+            });
+        }
         if (form) {
             form.onsubmit = function() {
                 const inputs = document.querySelectorAll('input[name="_xsrf"]');
@@ -1043,11 +1148,18 @@ def make_options_form(spawner):
 # 3. データの受け取り
 def options_from_form(formdata):
     h = formdata.get("hours", ["8"])[0]
+    gpu_max = {{ slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int }}
+    try:
+        g = int(formdata.get("gpu", ["0"])[0] or 0)
+    except ValueError:
+        g = 0
+    g = max(0, min(gpu_max, g))
     return {
         "nprocs": str(formdata.get("cpu", ["2"])[0]),
         "memory": f"{formdata.get('mem', ['4'])[0]}G",
         "runtime": f"{int(h):02d}:00:00",
-        "gres_line": "",
+        "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
+        "gpu": str(g),
         "app_choice": str(formdata.get("app_choice", ["ubuntu-cli"])[0]),
     }
 
@@ -1056,6 +1168,7 @@ def apply_user_options(spawner, user_options):
     spawner.req_nprocs = str(user_options.get("nprocs", "2"))
     spawner.req_memory = str(user_options.get("memory", "4G"))
     spawner.req_runtime = str(user_options.get("runtime", "08:00:00"))
+    spawner.user_options["gpu"] = str(user_options.get("gpu", "0"))
     app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
     spawner.user_options["app_choice"] = app_choice
     if app_choice == "open-webui":
