@@ -143,6 +143,12 @@
       # --- 【論理的推論・長文コンテキスト】 ---
       - { name: 'wizardmath-7b', url: 'https://huggingface.co/TheBloke/WizardMath-7B-V1.1-GGUF/resolve/main/wizardmath-7b-v1.1.Q4_K_M.gguf' }
       - { name: 'yi-1.5-9b', url: 'https://huggingface.co/bartowski/Yi-1.5-9B-Chat-GGUF/resolve/main/Yi-1.5-9B-Chat-Q4_K_M.gguf' }
+
+      # --- 【HPC向け大型モデル: エージェント・推論・コーディング用】 ---
+      - { name: 'command-r-plus' }
+      - { name: 'llama3.1:70b' }
+      - { name: 'qwen2:72b' }
+      - { name: 'mixtral:8x22b' }
   tags: [models]
 
 - name: モデル保存用ディレクトリを作成
@@ -156,7 +162,7 @@
 - name: モデルファイルの存在確認
   ansible.builtin.stat:
     path: "/home/{{ ansible_user }}/models/{{ item.name }}.gguf"
-  loop: "{{ target_models }}"
+  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
   register: model_files
   tags: [models]
 
@@ -176,7 +182,7 @@
     dest: "/home/{{ ansible_user }}/models/Modelfile-{{ item.name }}"
     owner: "{{ ansible_user }}"
     mode: '0644'
-  loop: "{{ target_models }}"
+  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
   tags: [models]
 
 - name: Ollamaにモデルを登録
@@ -187,10 +193,28 @@
       sleep 10
       ollama create {{ item.name }}-hpc -f /home/{{ ansible_user }}/models/Modelfile-{{ item.name }}
     "
-  loop: "{{ target_models }}"
+  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
   register: model_creation
   changed_when: "'success' in model_creation.stdout"
   failed_when: "'Error' in model_creation.stderr and 'already exists' not in model_creation.stderr"
+  tags: [models]
+
+- name: Ollama公式ライブラリの大型モデルを取得
+  ansible.builtin.shell: |
+    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
+      export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
+      ollama serve > /dev/null 2>&1 &
+      sleep 10
+      if ollama show {{ item.name }} > /dev/null 2>&1; then
+        echo '{{ item.name }} already exists'
+        exit 0
+      fi
+      ollama pull {{ item.name }}
+    "
+  loop: "{{ target_models | rejectattr('url', 'defined') | list }}"
+  register: ollama_model_pull
+  changed_when: "'already exists' not in ollama_model_pull.stdout"
+  failed_when: "'Error' in ollama_model_pull.stderr"
   tags: [models]
 
 - name: 登録用のOllama一時プロセスを確実に掃除
