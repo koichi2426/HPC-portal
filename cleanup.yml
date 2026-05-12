@@ -16,6 +16,30 @@
         - munge
         - cloudflared
 
+    - name: 実行ユーザーのゾンビプロセス親を強制終了
+      ansible.builtin.shell: |
+        set -o pipefail
+        TARGET_USER="{{ ansible_user }}"
+        ps -u "$TARGET_USER" -o state=,ppid= \
+          | awk '$1 ~ /^Z/ && $2 > 1 {print $2}' \
+          | sort -u \
+          | while read -r ppid; do
+              parent_user="$(ps -o user= -p "$ppid" | awk '{print $1}')"
+              if [ "$parent_user" = "$TARGET_USER" ]; then
+                printf '%s\n' "$ppid"
+              fi
+            done \
+          | xargs -r kill -9
+      args:
+        executable: /bin/bash
+      failed_when: false
+
+    - name: 実行ユーザーのAI/コンテナ残存プロセスを強制終了
+      ansible.builtin.shell: |
+        pgrep -u "{{ ansible_user }}" -f '(ollama|apptainer|open-webui|open_webui)' \
+          | xargs -r kill -9
+      failed_when: false
+
     - name: パッケージの削除 (Purge)
       ansible.builtin.apt:
         name:
