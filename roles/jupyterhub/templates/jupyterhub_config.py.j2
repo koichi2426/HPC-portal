@@ -867,7 +867,28 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
 def make_options_form(spawner):
     cpu = psutil.cpu_percent()
     mem = psutil.virtual_memory()
-    m_used = round(mem.used / (1024 ** 3), 1)
+    cpu_total = psutil.cpu_count() or 0
+    cpu_available = max(0, min(100, 100 - cpu))
+    mem_available = max(0, min(100, mem.available / mem.total * 100))
+    cpu_available_count = cpu_total * cpu_available / 100
+    mem_available_gb = mem.available / (1024 ** 3)
+    mem_total_gb = mem.total / (1024 ** 3)
+    disk_path = getattr(spawner, "notebook_dir", "") or getattr(spawner, "homedir", "") or "/home"
+    disk = psutil.disk_usage(disk_path)
+    disk_available = max(0, min(100, disk.free / disk.total * 100))
+    disk_available_gb = disk.free / (1024 ** 3)
+    disk_total_gb = disk.total / (1024 ** 3)
+
+    def resource_status(available_pct):
+        if available_pct >= 50:
+            return "余裕あり"
+        if available_pct >= 25:
+            return "やや混雑"
+        return "逼迫"
+
+    cpu_status = resource_status(cpu_available)
+    mem_status = resource_status(mem_available)
+    disk_status = resource_status(disk_available)
 
     active_sessions_html = ""
     user = spawner.user
@@ -934,12 +955,52 @@ def make_options_form(spawner):
         .gx10-card {lb} background: rgba(255, 255, 255, 0.03); border-radius: 16px; padding: 24px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 20px; color: #fff; {rb}
         .label {lb} font-size: 0.75rem; color: #777; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: 600; {rb}
         .input-dark {lb} background: rgba(0, 0, 0, 0.3) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; color: #fff !important; margin-bottom: 15px; border-radius: 8px !important; {rb}
+        .resource-grid {lb} display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 16px 0 6px; {rb}
+        .resource-meter {lb} background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; {rb}
+        .meter-head {lb} display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px; font-size: 0.78rem; color: #bbb; {rb}
+        .meter-status {lb} color:#9be7c7; font-weight: 700; {rb}
+        .meter-track {lb} height: 12px; background: rgba(255, 255, 255, 0.10); border-radius: 999px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04); {rb}
+        .meter-fill {lb} height: 100%; border-radius: 999px; background: linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7); box-shadow: 0 0 18px rgba(79,172,254,0.35); {rb}
+        .meter-numbers {lb} display:flex; justify-content:space-between; margin-top:8px; color:#888; font-size:0.72rem; {rb}
+        @media (max-width: 720px) {lb} .resource-grid {lb} grid-template-columns: 1fr; {rb} {rb}
         @keyframes gx10pulse {lb} from {lb} opacity: 0.45; {rb} to {lb} opacity: 1; {rb} {rb}
     </style>
     <div id="resource-dashboard">
         <div class="gx10-card">
             <h3 style="margin-top:0; color:#fff;">🚀 gx10-ac12 Control Center</h3>
-            <div style="font-size:0.8rem;color:#777;">Node: gx10-ac12 | CPU: {cpu}% | MEM: {m_used}GB</div>
+            <div style="font-size:0.8rem;color:#777;">Node: gx10-ac12</div>
+            <div class="resource-grid" aria-label="現在使えるリソース">
+                <div class="resource-meter">
+                    <div class="meter-head"><span>CPU 空き</span><span class="meter-status">{cpu_status}</span></div>
+                    <div class="meter-track" title="CPU 空きリソース">
+                        <div class="meter-fill" style="width:{cpu_available:.0f}%;"></div>
+                    </div>
+                    <div class="meter-numbers">
+                        <span>残り {cpu_available_count:.1f} vCPU</span>
+                        <span>最大 {cpu_total} vCPU</span>
+                    </div>
+                </div>
+                <div class="resource-meter">
+                    <div class="meter-head"><span>RAM 空き</span><span class="meter-status">{mem_status}</span></div>
+                    <div class="meter-track" title="RAM 空きリソース">
+                        <div class="meter-fill" style="width:{mem_available:.0f}%;"></div>
+                    </div>
+                    <div class="meter-numbers">
+                        <span>残り {mem_available_gb:.1f} GB</span>
+                        <span>最大 {mem_total_gb:.1f} GB</span>
+                    </div>
+                </div>
+                <div class="resource-meter">
+                    <div class="meter-head"><span>Storage 空き</span><span class="meter-status">{disk_status}</span></div>
+                    <div class="meter-track" title="Storage 空きリソース">
+                        <div class="meter-fill" style="width:{disk_available:.0f}%;"></div>
+                    </div>
+                    <div class="meter-numbers">
+                        <span>残り {disk_available_gb:.1f} GB</span>
+                        <span>最大 {disk_total_gb:.1f} GB</span>
+                    </div>
+                </div>
+            </div>
             <div id="active-list">{active_sessions_html}</div>
         </div>
         <div class="gx10-card">
