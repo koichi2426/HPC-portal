@@ -82,6 +82,14 @@
     group: root
     mode: '0644'
 
+- name: app_detail.htmlを配置
+  ansible.builtin.template:
+    src: app_detail.html.j2
+    dest: /etc/jupyterhub/templates/app_detail.html
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: 設定更新時に負の遺産（DB・Cookie）を削除
   ansible.builtin.file:
     path: "{{ item }}"

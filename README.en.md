@@ -97,6 +97,30 @@ ansible-playbook -i inventory/production.ini site.yml
 ansible-playbook -i inventory/production.ini cleanup.yml
 ```
 
+#### 🔍 Remote diagnostics (Ansible)
+
+You can run commands on gx10 through the inventory without a full deploy—useful when tracking down issues.
+
+**Ad-hoc commands** (group name `gx10` must match your inventory):
+
+```bash
+ansible -i inventory/production.ini gx10 -m ping
+ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
+ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L"
+ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd"
+```
+
+Use `-b` when root is required. Replace `YOUR_USER` in process checks with `ansible_user`.
+
+**Partial playbook runs**:
+
+```bash
+ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
+ansible-playbook -i inventory/production.ini site.yml --tags slurm
+```
+
+Dry run: `ansible-playbook -i inventory/production.ini site.yml --check --diff`
+
 ---
 
 ### 4. License
