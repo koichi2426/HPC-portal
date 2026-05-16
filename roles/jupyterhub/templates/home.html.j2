@@ -25,8 +25,12 @@
     .gx10-app-card-link:hover { background:rgba(88,166,255,0.06); }
     .gx10-app-card-actions { display:flex; gap:8px; align-items:center; padding:0 12px 12px; justify-content:flex-end; }
     .gx10-detail-hint { font-size:11px; color:#58a6ff; margin-top:6px; }
+    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live { color:#3fb950; font-weight:600; }
+    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale { color:#f85149; font-weight:600; }
+    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading { color:#e3b341; }
+    [data-hpc-resource-meter].hpc-resource-refreshed .gx10-meter-fill { filter:brightness(1.15); transition:width 0.35s ease, filter 0.2s ease; }
   </style>
-  <div class="gx10-resource-card">
+  <div class="gx10-resource-card" data-hpc-resource-meter>
     <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
       <div>
         <div style="font-weight:700; color:#c9d1d9;">現在使えるリソース</div>
@@ -160,48 +164,14 @@
   {% else %}
   {% endif %}
 </div>
+{% endblock %}
 
+{% block script %}
+<script src="/hub/hpc-resource-meter.js?v=2"></script>
 <script>
 (function () {
   var pollMs = 4000;
   var lastSig = null;
-  function format1(value) {
-    return Number(value || 0).toFixed(1);
-  }
-  function applyResourceSnapshot(data) {
-    var text = {
-      cpu_status: data.cpu_status,
-      cpu_available_count: "残り " + format1(data.cpu_available_count) + " vCPU",
-      cpu_total: "最大 " + (data.cpu_total || 0) + " vCPU",
-      mem_status: data.mem_status,
-      mem_available_gb: "残り " + format1(data.mem_available_gb) + " GB",
-      mem_total_gb: "最大 " + format1(data.mem_total_gb) + " GB",
-      disk_status: data.disk_status,
-      disk_available_gb: "残り " + format1(data.disk_available_gb) + " GB",
-      disk_total_gb: "最大 " + format1(data.disk_total_gb) + " GB",
-      gpu_status: data.gpu_status,
-      gpu_available_count: "空き " + (data.gpu_available_count || 0) + "/" + (data.gpu_max || 0) + " GPU",
-      gpu_vram_available_gb: "VRAM " + format1(data.gpu_vram_available_gb) + "/" + format1(data.gpu_vram_total_gb) + " GB"
-    };
-    document.querySelectorAll("[data-resource-text]").forEach(function (el) {
-      var key = el.getAttribute("data-resource-text");
-      if (text[key] !== undefined) el.textContent = text[key];
-    });
-    document.querySelectorAll("[data-resource-width]").forEach(function (el) {
-      var key = el.getAttribute("data-resource-width");
-      var pct = Math.max(0, Math.min(100, Number(data[key] || 0)));
-      el.style.width = pct.toFixed(0) + "%";
-    });
-    document.querySelectorAll("[data-resource-updated-at]").forEach(function (el) {
-      el.textContent = "最終更新 " + new Date().toLocaleTimeString();
-    });
-  }
-  function refreshResourceSnapshot() {
-    fetch("/hub/hpc-resource-status", { credentials: "same-origin", cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-      .then(applyResourceSnapshot)
-      .catch(function () {});
-  }
   function readCookie(name) {
     var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()\\[\\]\\\\/+^]/g, '\\$&') + '=([^;]*)'));
     return m ? decodeURIComponent(m[1]) : '';
@@ -226,8 +196,6 @@
       })
       .catch(function () {});
   }
-  refreshResourceSnapshot();
-  setInterval(refreshResourceSnapshot, 5000);
   tick();
   setInterval(tick, pollMs);
 })();

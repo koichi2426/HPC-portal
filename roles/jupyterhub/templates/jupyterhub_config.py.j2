@@ -82,6 +82,8 @@ c.JupyterHub.trusted_downstream_ips = ["127.0.0.1", "::1"]
 c.JupyterHub.default_url = "/hub/home"
 c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
 c.JupyterHub.allow_named_servers = True
+
+HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
 c.Authenticator.allow_all = True
 
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
@@ -1346,9 +1348,27 @@ class HpcResourceStatusHandler(BaseHandler):
 
     @web.authenticated
     async def get(self):
-        self.write(_hpc_resource_snapshot())
+        self.set_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        payload = _hpc_resource_snapshot()
+        payload["updated_at"] = time.time()
+        self.write(payload)
 
 
+class HpcResourceMeterJsHandler(BaseHandler):
+    """リソースメーター自動更新スクリプト（/hub/static が使えない環境向け）"""
+
+    async def get(self):
+        self.set_header("Content-Type", "application/javascript; charset=UTF-8")
+        self.set_header("Cache-Control", "public, max-age=300")
+        try:
+            with open(HPC_RESOURCE_METER_JS, encoding="utf-8") as f:
+                self.write(f.read())
+        except OSError:
+            self.set_status(404)
+            self.write("/* hpc-resource-meter.js not found */")
+
+
+c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
 
@@ -1460,11 +1480,15 @@ def make_options_form(spawner):
         .meter-numbers {lb} display:flex; justify-content:space-between; margin-top:8px; color:#888; font-size:0.72rem; {rb}
         @media (max-width: 720px) {lb} .resource-grid {lb} grid-template-columns: 1fr; {rb} {rb}
         @keyframes gx10pulse {lb} from {lb} opacity: 0.45; {rb} to {lb} opacity: 1; {rb} {rb}
+        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live {lb} color:#3fb950; font-weight:600; {rb}
+        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale {lb} color:#f85149; font-weight:600; {rb}
+        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading {lb} color:#e3b341; {rb}
+        [data-hpc-resource-meter].hpc-resource-refreshed .meter-fill {lb} filter:brightness(1.2); transition:width 0.35s ease, filter 0.2s ease; {rb}
         .gx10-stop-btn {lb} background:transparent; border:1px solid #f85149; color:#f85149; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; {rb}
         .gx10-stop-btn:hover:not(:disabled) {lb} background:rgba(248,81,73,0.12); {rb}
         .gx10-stop-btn:disabled {lb} opacity:0.6; cursor:wait; {rb}
     </style>
-    <div id="resource-dashboard">
+    <div id="resource-dashboard" data-hpc-resource-meter>
         <div class="gx10-card">
             <h3 style="margin-top:0; color:#fff;">🚀 gx10-ac12 Control Center</h3>
             <div style="font-size:0.8rem;color:#777;">Node: gx10-ac12 <span data-resource-updated-at style="float:right;">5秒ごとに自動更新</span></div>
@@ -1542,45 +1566,6 @@ def make_options_form(spawner):
         + HPC_STOP_SERVER_JS
         + """
     document.addEventListener("DOMContentLoaded", function() {
-        function format1(value) {
-            return Number(value || 0).toFixed(1);
-        }
-        function applyResourceSnapshot(data) {
-            const text = {
-                cpu_status: data.cpu_status,
-                cpu_available_count: `残り ${format1(data.cpu_available_count)} vCPU`,
-                cpu_total: `最大 ${data.cpu_total || 0} vCPU`,
-                mem_status: data.mem_status,
-                mem_available_gb: `残り ${format1(data.mem_available_gb)} GB`,
-                mem_total_gb: `最大 ${format1(data.mem_total_gb)} GB`,
-                disk_status: data.disk_status,
-                disk_available_gb: `残り ${format1(data.disk_available_gb)} GB`,
-                disk_total_gb: `最大 ${format1(data.disk_total_gb)} GB`,
-                gpu_status: data.gpu_status,
-                gpu_available_count: `空き ${data.gpu_available_count || 0}/${data.gpu_max || 0} GPU`,
-                gpu_vram_available_gb: `VRAM ${format1(data.gpu_vram_available_gb)}/${format1(data.gpu_vram_total_gb)} GB`,
-            };
-            document.querySelectorAll("[data-resource-text]").forEach((el) => {
-                const key = el.getAttribute("data-resource-text");
-                if (text[key] !== undefined) el.textContent = text[key];
-            });
-            document.querySelectorAll("[data-resource-width]").forEach((el) => {
-                const key = el.getAttribute("data-resource-width");
-                const pct = Math.max(0, Math.min(100, Number(data[key] || 0)));
-                el.style.width = `${pct.toFixed(0)}%`;
-            });
-            document.querySelectorAll("[data-resource-updated-at]").forEach((el) => {
-                el.textContent = `最終更新 ${new Date().toLocaleTimeString()}`;
-            });
-        }
-        function refreshResourceSnapshot() {
-            fetch("/hub/hpc-resource-status", {credentials: "same-origin", cache: "no-store"})
-                .then((r) => r.ok ? r.json() : Promise.reject())
-                .then(applyResourceSnapshot)
-                .catch(() => {});
-        }
-        refreshResourceSnapshot();
-        setInterval(refreshResourceSnapshot, 5000);
         const form = document.querySelector('form');
         const appChoice = document.querySelector('select[name="app_choice"]');
         const gpuInput = document.querySelector('input[name="gpu"]');
@@ -1605,7 +1590,8 @@ def make_options_form(spawner):
     </script>
     """
     )
-    return header_html + js_code
+    static_js = '<script src="/hub/hpc-resource-meter.js?v=2"></script>'
+    return header_html + static_js + js_code
 
 
 # 3. データの受け取り

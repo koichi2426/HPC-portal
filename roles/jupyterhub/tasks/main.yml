@@ -49,6 +49,7 @@
     - /opt/jupyterhub
     - /etc/jupyterhub
     - /etc/jupyterhub/templates
+    - /etc/jupyterhub/static
     - /var/lib/jupyterhub
 
 - name: Python仮想環境(venv)の作成とパッケージインストール
@@ -86,6 +87,14 @@
   ansible.builtin.template:
     src: app_detail.html.j2
     dest: /etc/jupyterhub/templates/app_detail.html
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: リソースメーター用JSを配置
+  ansible.builtin.copy:
+    src: hpc-resource-meter.js
+    dest: /etc/jupyterhub/static/hpc-resource-meter.js
     owner: root
     group: root
     mode: '0644'
