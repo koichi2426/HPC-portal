@@ -204,14 +204,31 @@ def _is_openwebui_spawner(spawner) -> bool:
 
 
 def _hpc_runtime_hours_label(runtime: str) -> str:
-    """Slurm 形式の実行時間 (HH:MM:SS) を表示用に短縮する"""
+    """Slurm 形式の実行時間 (HH:MM:SS / UNLIMITED) を表示用に短縮する"""
+    rt = str(runtime or "").strip()
+    if rt.upper() in ("UNLIMITED", "INFINITE"):
+        return "無制限"
     try:
-        parts = str(runtime or "").strip().split(":")
+        parts = rt.split(":")
         if parts:
             return f"{int(parts[0])}h"
     except (TypeError, ValueError):
         pass
-    return str(runtime or "—")
+    return rt or "—"
+
+
+def _hpc_runtime_from_hours_choice(hours_value: str) -> tuple[str, str]:
+    """起動フォームの hours 値から (runtime, #SBATCH 行) を生成する"""
+    raw = str(hours_value or "").strip().lower()
+    if raw in ("unlimited", "infinite", "none", "0"):
+        return "UNLIMITED", "#SBATCH --time=UNLIMITED"
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        hours = 8
+    hours = max(1, min(hours, 9999))
+    runtime = f"{hours:02d}:00:00"
+    return runtime, f"#SBATCH --time={runtime}"
 
 
 def _hpc_allocation_summary(user_options) -> dict:
@@ -1549,9 +1566,20 @@ def make_options_form(spawner):
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                     <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
-                    <div><label class="label">Hours</label><input type="number" class="form-control input-dark" name="hours" value="8" min="1"></div>
+                    <div><label class="label">最大実行時間</label>
+                        <select class="form-control input-dark" name="hours">
+                            <option value="1">1 時間</option>
+                            <option value="2">2 時間</option>
+                            <option value="4">4 時間</option>
+                            <option value="8" selected>8 時間</option>
+                            <option value="12">12 時間</option>
+                            <option value="24">24 時間</option>
+                            <option value="48">48 時間</option>
+                            <option value="72">72 時間</option>
+                            <option value="unlimited">無制限</option>
+                        </select></div>
                 </div>
-                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。</div>
+                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。無制限は Slurm パーティション上限（INFINITE）まで実行できます。</div>
             </div>
         </div>
     </div>
@@ -1597,6 +1625,7 @@ def make_options_form(spawner):
 # 3. データの受け取り
 def options_from_form(formdata):
     h = formdata.get("hours", ["8"])[0]
+    runtime, runtime_line = _hpc_runtime_from_hours_choice(h)
     gpu_max = {{ slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int }}
     try:
         g = int(formdata.get("gpu", ["0"])[0] or 0)
@@ -1606,7 +1635,8 @@ def options_from_form(formdata):
     return {
         "nprocs": str(formdata.get("cpu", ["2"])[0]),
         "memory": f"{formdata.get('mem', ['4'])[0]}G",
-        "runtime": f"{int(h):02d}:00:00",
+        "runtime": runtime,
+        "runtime_line": runtime_line,
         "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
         "gpu": str(g),
         "app_choice": str(formdata.get("app_choice", ["ubuntu-cli"])[0]),
@@ -1691,7 +1721,7 @@ c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
 #SBATCH --partition={bs}partition{be}
 #SBATCH --cpus-per-task={bs}nprocs{be}
 #SBATCH --mem={bs}memory{be}
-#SBATCH --time={bs}runtime{be}
+{bs}runtime_line{be}
 #SBATCH --chdir={bs}homedir{be}
 #SBATCH --output=/tmp/jupyterhub-%j.log
 {bs}gres_line{be}

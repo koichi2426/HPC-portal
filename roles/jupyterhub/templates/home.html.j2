@@ -100,9 +100,15 @@
         {% set _mem = _uo.get('memory', '—') %}
         {% set _gpu = (_uo.get('gpu', '0') or '0')|int %}
         {% set _rt = _uo.get('runtime', '—') %}
-        {% set _hours = _rt.split(':')[0]|int if ':' in (_rt|string) else _rt %}
+        {% if (_rt|string)|upper in ['UNLIMITED', 'INFINITE'] %}
+        {% set _hours = '無制限' %}
+        {% elif ':' in (_rt|string) %}
+        {% set _hours = _rt.split(':')[0]|int ~ 'h' %}
+        {% else %}
+        {% set _hours = _rt %}
+        {% endif %}
         {% set _gpu_label = (_gpu|string ~ ' GPU') if _gpu > 0 else 'GPU なし' %}
-        {% set alloc_line = _cpu ~ ' vCPU · ' ~ _mem ~ ' RAM · ' ~ _gpu_label ~ ' · ' ~ _hours ~ 'h' %}
+        {% set alloc_line = _cpu ~ ' vCPU · ' ~ _mem ~ ' RAM · ' ~ _gpu_label ~ ' · ' ~ _hours %}
         {% set sn_path = name if name else '__default__' %}
         {# spawn 直後に public_url が古いまま残ることがあるため、起動済み+JOBID では job<JOBID> + ORM base_url を優先。
            Hub/OAuth は gx10 のままだが、CHP に gx10 用エイリアスルートも載せるため job の JUMP でも整合する。 #}
