@@ -97,6 +97,44 @@ ansible-playbook -i inventory/production.ini site.yml
 ansible-playbook -i inventory/production.ini cleanup.yml
 ```
 
+#### 🔍 リモートでの原因調査（Ansible）
+
+フルデプロイせず、**インベントリ経由で gx10 上にコマンドを流す**と SSH の手間が減ります。挙動がおかしいときはまずここから確認するのがおすすめです。
+
+**単発コマンド（ad-hoc）** — ホスト名 `gx10` は `inventory/production.ini` のグループ名に合わせてください。
+
+```bash
+# 接続確認
+ansible -i inventory/production.ini gx10 -m ping
+
+# Slurm ジョブ・ノード割当
+ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
+
+# GPU / VRAM
+ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
+
+# JupyterHub / Slurm サービス
+ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd; journalctl -u jupyterhub -n 30 --no-pager"
+
+# ユーザーの残存プロセス（Open WebUI / Ollama など）
+ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true"
+```
+
+`-b` は root 権限が必要なとき（`systemctl` や `/var/log` など）に付けます。`YOUR_USER` は `ansible_user` と同じ値に置き換えてください。
+
+**Playbook の部分実行** — 設定だけ直したい・サービス再起動だけしたいとき:
+
+```bash
+ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
+ansible-playbook -i inventory/production.ini site.yml --tags slurm
+```
+
+チェックモード（変更は行わず差分だけ見る）:
+
+```bash
+ansible-playbook -i inventory/production.ini site.yml --check --diff
+```
+
 ---
 
 ### 4. ライセンス

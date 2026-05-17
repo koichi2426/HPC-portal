@@ -1,4 +1,5 @@
 import asyncio
+import html
 import secrets
 import time
 
@@ -59,6 +60,7 @@ def hpc_subdomain_hook(name, domain, kind):
 HPC_PUBLIC_DOMAIN = "{{ jupyterhub_public_domain }}"
 HPC_JOB_DNS_DOMAIN = "{{ jupyterhub_job_dns_domain }}"
 HPC_PUBLIC_SCHEME = "https"
+SLURM_NODE_NAME = "{{ ansible_hostname }}"
 
 # ---------------------------------------------------------------------------
 # 想定フロー（sequence と対応）
@@ -80,6 +82,8 @@ c.JupyterHub.trusted_downstream_ips = ["127.0.0.1", "::1"]
 c.JupyterHub.default_url = "/hub/home"
 c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
 c.JupyterHub.allow_named_servers = True
+
+HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
 c.Authenticator.allow_all = True
 
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
@@ -129,6 +133,38 @@ class HpcNewApplicationHandler(BaseHandler):
 c.JupyterHub.extra_handlers = [(r"/new", HpcNewApplicationHandler)]
 
 
+class HpcAppDetailHandler(BaseHandler):
+    """起動中アプリの詳細（割り当てリソース・停止・JUMP）"""
+
+    @web.authenticated
+    async def get(self, server_name_path):
+        user = self.current_user
+        server_name = _hpc_server_name_from_path(server_name_path)
+        spawner = user.spawners.get(server_name)
+        if spawner is None or not (
+            getattr(spawner, "active", False) or getattr(spawner, "pending", None)
+        ):
+            self.redirect(url_path_join(self.hub.base_url, "home"))
+            return
+        detail = _hpc_spawner_detail_context(spawner, server_name, user)
+        try:
+            html = await self.render_template(
+                "app_detail.html",
+                user=user,
+                detail=detail,
+                # template_vars の hpc_resource_snapshot（関数）と名前が衝突しないよう別名で渡す
+                node_resources=_hpc_resource_snapshot(),
+                hpc_public_scheme=HPC_PUBLIC_SCHEME,
+                hpc_job_dns_domain=HPC_JOB_DNS_DOMAIN,
+            )
+        except Exception:
+            self.log.exception(
+                "HPC: app_detail render failed for %s", server_name
+            )
+            raise
+        self.finish(html)
+
+
 def _job_host(job_id: str) -> str:
     return f"job{job_id}.{HPC_JOB_DNS_DOMAIN}"
 
@@ -165,6 +201,202 @@ def _is_openwebui_spawner(spawner) -> bool:
         return str((spawner.user_options or {}).get("app_choice", "")) == "open-webui"
     except Exception:
         return False
+
+
+def _hpc_runtime_hours_label(runtime: str) -> str:
+    """Slurm 形式の実行時間 (HH:MM:SS / UNLIMITED) を表示用に短縮する"""
+    rt = str(runtime or "").strip()
+    if rt.upper() in ("UNLIMITED", "INFINITE"):
+        return "無制限"
+    try:
+        parts = rt.split(":")
+        if parts:
+            return f"{int(parts[0])}h"
+    except (TypeError, ValueError):
+        pass
+    return rt or "—"
+
+
+def _hpc_runtime_from_hours_choice(hours_value: str) -> tuple[str, str]:
+    """起動フォームの hours 値から (runtime, #SBATCH 行) を生成する"""
+    raw = str(hours_value or "").strip().lower()
+    if raw in ("unlimited", "infinite", "none", "0"):
+        return "UNLIMITED", "#SBATCH --time=UNLIMITED"
+    try:
+        hours = int(raw)
+    except (TypeError, ValueError):
+        hours = 8
+    hours = max(1, min(hours, 9999))
+    runtime = f"{hours:02d}:00:00"
+    return runtime, f"#SBATCH --time={runtime}"
+
+
+def _hpc_allocation_summary(user_options) -> dict:
+    """起動時に要求した Slurm リソース割り当てを表示用 dict にまとめる"""
+    uo = user_options or {}
+    app_choice = str(uo.get("app_choice", "ubuntu-cli"))
+    if app_choice == "open-webui":
+        app_label = "Open WebUI"
+    elif app_choice in ("jupyterlab", "jupyter"):
+        app_label = "JupyterLab"
+    else:
+        app_label = app_choice.replace("-", " ").title() or "Application"
+    try:
+        gpu_n = int(uo.get("gpu", "0") or 0)
+    except (TypeError, ValueError):
+        gpu_n = 0
+    cpu = str(uo.get("nprocs", "—"))
+    mem = str(uo.get("memory", "—"))
+    runtime = str(uo.get("runtime", "—"))
+    hours = _hpc_runtime_hours_label(runtime)
+    gpu_label = f"{gpu_n} GPU" if gpu_n > 0 else "GPU なし"
+    line = f"{cpu} vCPU · {mem} RAM · {gpu_label} · {hours}"
+    return {
+        "app_label": app_label,
+        "cpu": cpu,
+        "memory": mem,
+        "gpu": gpu_n,
+        "gpu_label": gpu_label,
+        "runtime": runtime,
+        "hours": hours,
+        "line": line,
+    }
+
+
+def _hpc_allocation_html(user_options) -> str:
+    """割り当てリソースの HTML 行（spawn フォーム・一覧用）"""
+    a = _hpc_allocation_summary(user_options)
+    return (
+        f'<span style="display:block;margin-top:6px;font-size:0.75rem;color:#8b949e;'
+        f'letter-spacing:0.02em;">割り当て: {a["line"]}</span>'
+    )
+
+
+def _hpc_stop_button_html(server_name: str) -> str:
+    """named server 停止ボタン（data-server-name 空 = デフォルト server）"""
+    sn = html.escape(str(server_name or ""), quote=True)
+    return (
+        f'<button type="button" class="gx10-stop-btn" data-server-name="{sn}" '
+        f'onclick="hpcStopServer(this)" '
+        f'title="Slurmジョブを終了し、このアプリを削除します">停止</button>'
+    )
+
+
+def _hpc_server_name_to_path(server_name: str) -> str:
+    """URL パス用（空名は __default__）"""
+    return str(server_name or "") or "__default__"
+
+
+def _hpc_server_name_from_path(path_segment: str) -> str:
+    return "" if path_segment == "__default__" else path_segment
+
+
+def _hpc_spawner_job_url(spawner, server_name: str, user) -> str:
+    """アプリへ JUMP する公開 URL（home.html と同じ優先順位）"""
+    uo = getattr(spawner, "user_options", None) or {}
+    is_openwebui = str(uo.get("app_choice", "")) == "open-webui"
+    jid = _spawner_job_id(spawner) or getattr(spawner, "job_id", "") or ""
+    public_url = getattr(spawner, "public_url", "") or ""
+    if is_openwebui and jid:
+        return public_url or f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}/"
+    if getattr(spawner, "active", False) and jid:
+        srv = getattr(spawner, "server", None)
+        base = getattr(srv, "base_url", None) if srv else None
+        if base:
+            p = str(base)
+            if not p.endswith("/"):
+                p += "/"
+            return f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{p}"
+        if server_name:
+            rel = url_path_join(user.base_url, url_escape_path(server_name), "/")
+            return f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{rel}"
+        return f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{user.base_url}"
+    if public_url:
+        return public_url
+    if jid and getattr(spawner, "pending", None):
+        if server_name:
+            rel = url_path_join(user.base_url, url_escape_path(server_name), "/")
+        else:
+            rel = user.base_url
+        return f"{HPC_PUBLIC_SCHEME}://{_job_host(jid)}{rel}"
+    if server_name:
+        return url_path_join(f"/user/{user.name}", url_escape_path(server_name), "/")
+    return url_path_join(f"/user/{user.name}", "/")
+
+
+def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
+    """アプリ詳細画面用の表示データ"""
+    uo = getattr(spawner, "user_options", None) or {}
+    alloc = _hpc_allocation_summary(uo)
+    jid = _spawner_job_id(spawner) or getattr(spawner, "job_id", "") or ""
+    pending = getattr(spawner, "pending", None)
+    active = bool(getattr(spawner, "active", False))
+    if pending:
+        status = "pending"
+        status_label = f"起動中 ({pending})"
+    elif active:
+        status = "running"
+        status_label = "実行中"
+    else:
+        status = "unknown"
+        status_label = "不明"
+    port = getattr(spawner, "port", None) or ""
+    app_choice = str(uo.get("app_choice", "ubuntu-cli"))
+    return {
+        "server_name": server_name,
+        "server_name_path": _hpc_server_name_to_path(server_name),
+        "app_label": alloc["app_label"],
+        "app_choice": app_choice,
+        "status": status,
+        "status_label": status_label,
+        "pending": pending,
+        "active": active,
+        "job_id": jid,
+        "job_url": _hpc_spawner_job_url(spawner, server_name, user),
+        "job_host": _job_host(jid) if jid else "",
+        "allocation": alloc,
+        "port": port,
+        "public_url": getattr(spawner, "public_url", "") or "",
+        "proxy_spec": getattr(spawner, "proxy_spec", "") or "",
+    }
+
+
+HPC_STOP_SERVER_JS = """
+function hpcReadXsrf() {
+    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : "";
+}
+function hpcStopServer(btn) {
+    if (!btn || btn.disabled) return;
+    var serverName = btn.getAttribute("data-server-name") || "";
+    if (!confirm("このアプリケーションを停止・削除しますか？\\n関連する Slurm ジョブも終了します。")) return;
+    var user = window.HPC_HUB_USER;
+    if (!user) {
+        alert("ユーザー情報を取得できません");
+        return;
+    }
+    var xsrf = hpcReadXsrf();
+    var api = serverName
+        ? "/hub/api/users/" + encodeURIComponent(user) + "/servers/" + encodeURIComponent(serverName)
+        : "/hub/api/users/" + encodeURIComponent(user) + "/server";
+    btn.disabled = true;
+    btn.textContent = "停止中…";
+    fetch(api, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: xsrf ? { "X-XSRFToken": xsrf } : {}
+    })
+        .then(function (r) {
+            if (!r.ok && r.status !== 202 && r.status !== 204) throw new Error("stop failed");
+            window.location.reload();
+        })
+        .catch(function () {
+            btn.disabled = false;
+            btn.textContent = "停止";
+            alert("停止に失敗しました。しばらくしてから再度お試しください。");
+        });
+}
+"""
 
 
 def _hpc_public_alias_routespec_for(spawner) -> str:
@@ -291,6 +523,27 @@ class HPCSlurmSpawner(SlurmSpawner):
         super().clear_state()
         # ここでは sbatch しない。先行提出すると get_env が api_token 付与前に走り、
         # ジョブ内の JUPYTERHUB_API_TOKEN が空のまま固定され Hub の ready 判定が進まない。
+
+    async def stop(self, now=False):
+        """Slurm ジョブ停止後、同一ポートの Open WebUI 残骸を掃除して GPU/ポートを解放する"""
+        port = getattr(self, "port", None) or 0
+        app_choice = str((self.user_options or {}).get("app_choice", ""))
+        user_name = self.user.name if getattr(self, "user", None) else ""
+        try:
+            return await super().stop(now)
+        finally:
+            if user_name and app_choice == "open-webui" and port:
+                subprocess.run(
+                    [
+                        "pkill",
+                        "-u",
+                        user_name,
+                        "-f",
+                        f"open_webui.main:app --host 0.0.0.0 --port {port}",
+                    ],
+                    check=False,
+                    timeout=5,
+                )
 
     async def submit_batch_script(self):
         if getattr(self, "_hpc_job_submitted", False):
@@ -872,15 +1125,168 @@ def _hpc_resource_status(available_pct):
     return "逼迫"
 
 
+def _parse_slurm_mem_to_mb(value: str) -> int:
+    """Slurm TRES の mem=4G / mem=8192M などを MB に変換する"""
+    s = str(value or "").strip().upper()
+    if not s:
+        return 0
+    if s.endswith("G"):
+        return int(float(s[:-1]) * 1024)
+    if s.endswith("M"):
+        return int(float(s[:-1]))
+    return int(float(s))
+
+
+def _parse_slurm_tres(tres: str) -> dict:
+    """CfgTRES / AllocTRES を cpu・mem_mb・gpu に分解する"""
+    out = {"cpu": 0, "mem_mb": 0, "gpu": 0}
+    if not tres:
+        return out
+    for part in str(tres).split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        key, _, val = part.partition("=")
+        key = key.strip().lower()
+        val = val.strip()
+        if key == "cpu":
+            out["cpu"] = int(float(val))
+        elif key == "mem":
+            out["mem_mb"] = _parse_slurm_mem_to_mb(val)
+        elif key in ("gres/gpu", "gpu"):
+            out["gpu"] = int(float(val))
+    return out
+
+
+def _slurm_field_map(line: str) -> dict:
+    """scontrol -o の key=value 列を dict にする"""
+    fields = {}
+    for token in str(line or "").split():
+        if "=" in token:
+            key, _, val = token.partition("=")
+            fields[key] = val
+    return fields
+
+
+def _parse_slurm_gres_count(gres: str) -> int:
+    """ノード行の Gres=gpu:1 などから GPU 総数を得る"""
+    for part in str(gres or "").split(","):
+        part = part.strip()
+        if part.startswith("gpu:"):
+            try:
+                return int(part.split(":", 1)[1])
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _hpc_slurm_free_resources():
+    """Slurm が管理している未割り当て CPU / RAM / GPU（ジョブ停止で増える）"""
+    gpu_default = {{ slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int }}
+    try:
+        proc = subprocess.run(
+            ["scontrol", "show", "node", SLURM_NODE_NAME, "-o"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        fields = _slurm_field_map(proc.stdout.strip())
+        cfg = _parse_slurm_tres(fields.get("CfgTRES", ""))
+        alloc = _parse_slurm_tres(fields.get("AllocTRES", ""))
+        # Slurm 23.x の -o 出力は CPUTot / CPUAlloc（旧形式は CPUs）
+        cpu_total = int(
+            fields.get("CPUTot") or fields.get("CPUs") or cfg["cpu"] or 0
+        )
+        cpu_alloc = int(fields.get("CPUAlloc") or alloc["cpu"] or 0)
+        mem_total_mb = int(fields.get("RealMemory", "0") or 0)
+        mem_alloc_mb = alloc["mem_mb"]
+        if not mem_alloc_mb and fields.get("AllocMem"):
+            mem_alloc_mb = int(fields["AllocMem"])
+        gpu_total = (
+            _parse_slurm_gres_count(fields.get("Gres", ""))
+            or cfg["gpu"]
+            or gpu_default
+        )
+        gpu_alloc = alloc["gpu"]
+        if cpu_total <= 0:
+            return None
+        cpu_free = max(0, cpu_total - cpu_alloc)
+        mem_free_mb = max(0, mem_total_mb - mem_alloc_mb)
+        gpu_free = max(0, gpu_total - gpu_alloc)
+        return {
+            "cpu_total": cpu_total,
+            "cpu_available_count": float(cpu_free),
+            "mem_total_mb": mem_total_mb,
+            "mem_available_mb": mem_free_mb,
+            "gpu_max": gpu_total,
+            "gpu_available_count": gpu_free,
+        }
+    except Exception:
+        return None
+
+
+def _hpc_nvidia_vram_snapshot():
+    """GPU VRAM の実使用量（Slurm 解放後もプロセス残りで減らないことがある）"""
+    gpu_vram_available_gb = 0.0
+    gpu_vram_total_gb = 0.0
+    try:
+        proc = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        gpu_total_mb = 0
+        gpu_used_mb = 0
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2:
+                continue
+            total_mb = int(float(parts[0].replace(" MiB", "").replace("MiB", "").strip()))
+            used_mb = int(float(parts[1].replace(" MiB", "").replace("MiB", "").strip()))
+            gpu_total_mb += total_mb
+            gpu_used_mb += used_mb
+        if gpu_total_mb > 0:
+            gpu_vram_available_gb = (gpu_total_mb - gpu_used_mb) / 1024
+            gpu_vram_total_gb = gpu_total_mb / 1024
+    except Exception:
+        pass
+    return gpu_vram_available_gb, gpu_vram_total_gb
+
+
 def _hpc_resource_snapshot(disk_path="/home"):
-    cpu = psutil.cpu_percent()
+    slurm_free = _hpc_slurm_free_resources()
     mem = psutil.virtual_memory()
-    cpu_total = psutil.cpu_count() or 0
-    cpu_available = max(0, min(100, 100 - cpu))
-    mem_available = max(0, min(100, mem.available / mem.total * 100))
-    cpu_available_count = cpu_total * cpu_available / 100
-    mem_available_gb = mem.available / (1024 ** 3)
-    mem_total_gb = mem.total / (1024 ** 3)
+    if slurm_free:
+        cpu_total = slurm_free["cpu_total"]
+        cpu_available_count = slurm_free["cpu_available_count"]
+        cpu_available = (
+            max(0, min(100, cpu_available_count / cpu_total * 100)) if cpu_total else 0
+        )
+        mem_total_gb = slurm_free["mem_total_mb"] / 1024
+        mem_available_gb = slurm_free["mem_available_mb"] / 1024
+        mem_available = (
+            max(0, min(100, mem_available_gb / mem_total_gb * 100)) if mem_total_gb else 0
+        )
+    else:
+        cpu_total = psutil.cpu_count() or 0
+        cpu = psutil.cpu_percent()
+        cpu_available = max(0, min(100, 100 - cpu))
+        cpu_available_count = cpu_total * cpu_available / 100
+        mem_available = max(0, min(100, mem.available / mem.total * 100))
+        mem_available_gb = mem.available / (1024 ** 3)
+        mem_total_gb = mem.total / (1024 ** 3)
     try:
         disk = psutil.disk_usage(disk_path)
     except Exception:
@@ -891,9 +1297,13 @@ def _hpc_resource_snapshot(disk_path="/home"):
     gpu_max = {{ slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int }}
     gpu_available = 0
     gpu_available_count = 0
-    gpu_vram_available_gb = 0
-    gpu_vram_total_gb = 0
-    if gpu_max > 0:
+    if slurm_free:
+        gpu_max = slurm_free["gpu_max"] or gpu_max
+        gpu_available_count = slurm_free["gpu_available_count"]
+        gpu_available = (
+            max(0, min(100, gpu_available_count / gpu_max * 100)) if gpu_max else 0
+        )
+    elif gpu_max > 0:
         try:
             gpu_query = subprocess.run(
                 [
@@ -911,18 +1321,19 @@ def _hpc_resource_snapshot(disk_path="/home"):
             gpu_used_mb = 0
             gpu_free_count = 0
             for line in gpu_lines:
-                total_mb, used_mb = [int(v.strip()) for v in line.split(",")[:2]]
+                parts = [p.strip() for p in line.split(",")[:2]]
+                total_mb = int(float(parts[0].replace(" MiB", "").replace("MiB", "").strip()))
+                used_mb = int(float(parts[1].replace(" MiB", "").replace("MiB", "").strip()))
                 gpu_total_mb += total_mb
                 gpu_used_mb += used_mb
                 if total_mb > 0 and used_mb / total_mb < 0.10:
                     gpu_free_count += 1
             if gpu_total_mb > 0:
-                gpu_vram_available_gb = (gpu_total_mb - gpu_used_mb) / 1024
-                gpu_vram_total_gb = gpu_total_mb / 1024
                 gpu_available = max(0, min(100, (gpu_total_mb - gpu_used_mb) / gpu_total_mb * 100))
                 gpu_available_count = gpu_free_count
         except Exception:
             pass
+    gpu_vram_available_gb, gpu_vram_total_gb = _hpc_nvidia_vram_snapshot()
     return {
         "cpu_available": cpu_available,
         "cpu_available_count": cpu_available_count,
@@ -954,10 +1365,29 @@ class HpcResourceStatusHandler(BaseHandler):
 
     @web.authenticated
     async def get(self):
-        self.write(_hpc_resource_snapshot())
+        self.set_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        payload = _hpc_resource_snapshot()
+        payload["updated_at"] = time.time()
+        self.write(payload)
 
 
+class HpcResourceMeterJsHandler(BaseHandler):
+    """リソースメーター自動更新スクリプト（/hub/static が使えない環境向け）"""
+
+    async def get(self):
+        self.set_header("Content-Type", "application/javascript; charset=UTF-8")
+        self.set_header("Cache-Control", "public, max-age=300")
+        try:
+            with open(HPC_RESOURCE_METER_JS, encoding="utf-8") as f:
+                self.write(f.read())
+        except OSError:
+            self.set_status(404)
+            self.write("/* hpc-resource-meter.js not found */")
+
+
+c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
+c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
 
 
 # 2. カスタムフォーム生成
@@ -1018,12 +1448,18 @@ def make_options_form(spawner):
         else:
             url = f"/user/{user.name}/{name}/" if name else f"/user/{user.name}/"
 
+        alloc_html = _hpc_allocation_html(getattr(s, "user_options", None) or {})
+        stop_btn = _hpc_stop_button_html(name)
+
         if getattr(s, "pending", None):
             pending_state = str(getattr(s, "pending", "spawn"))
             active_sessions_html += (
                 f'<div style="background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.35);'
                 f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
-                f'● {app_label} <span style="float:right;color:#ffc107;">起動中...</span>'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
+                f'<div>● {app_label} <span style="color:#ffc107;">起動中...</span></div>'
+                f'<div>{stop_btn}</div></div>'
+                f'{alloc_html}'
                 f'<div style="margin-top:8px;font-size:0.78rem;color:#ccc;">status: {pending_state}</div>'
                 f'<div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.12);border-radius:999px;overflow:hidden;">'
                 f'<div style="width:55%;height:100%;background:#ffc107;animation:gx10pulse 1.2s ease-in-out infinite alternate;"></div>'
@@ -1031,10 +1467,14 @@ def make_options_form(spawner):
             )
         elif s.active:
             active_sessions_html += (
-                f'<a href="{url}" target="_blank" style="text-decoration:none;display:block;margin-top:10px;">'
                 f'<div style="background:rgba(79,172,254,0.1);border:1px solid rgba(79,172,254,0.3);'
-                f'padding:12px;border-radius:10px;color:#fff;">'
-                f'● {app_label} <span style="float:right;color:#4facfe;">JUMP ↗</span></div></a>'
+                f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
+                f'<div style="font-weight:600;">● {app_label}</div>'
+                f'<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">'
+                f'<a href="{url}" target="_blank" style="text-decoration:none;color:#4facfe;font-weight:700;">JUMP ↗</a>'
+                f'{stop_btn}</div></div>'
+                f'{alloc_html}</div>'
             )
 
     if not active_sessions_html:
@@ -1057,8 +1497,15 @@ def make_options_form(spawner):
         .meter-numbers {lb} display:flex; justify-content:space-between; margin-top:8px; color:#888; font-size:0.72rem; {rb}
         @media (max-width: 720px) {lb} .resource-grid {lb} grid-template-columns: 1fr; {rb} {rb}
         @keyframes gx10pulse {lb} from {lb} opacity: 0.45; {rb} to {lb} opacity: 1; {rb} {rb}
+        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live {lb} color:#3fb950; font-weight:600; {rb}
+        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale {lb} color:#f85149; font-weight:600; {rb}
+        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading {lb} color:#e3b341; {rb}
+        [data-hpc-resource-meter].hpc-resource-refreshed .meter-fill {lb} filter:brightness(1.2); transition:width 0.35s ease, filter 0.2s ease; {rb}
+        .gx10-stop-btn {lb} background:transparent; border:1px solid #f85149; color:#f85149; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; {rb}
+        .gx10-stop-btn:hover:not(:disabled) {lb} background:rgba(248,81,73,0.12); {rb}
+        .gx10-stop-btn:disabled {lb} opacity:0.6; cursor:wait; {rb}
     </style>
-    <div id="resource-dashboard">
+    <div id="resource-dashboard" data-hpc-resource-meter>
         <div class="gx10-card">
             <h3 style="margin-top:0; color:#fff;">🚀 gx10-ac12 Control Center</h3>
             <div style="font-size:0.8rem;color:#777;">Node: gx10-ac12 <span data-resource-updated-at style="float:right;">5秒ごとに自動更新</span></div>
@@ -1119,56 +1566,34 @@ def make_options_form(spawner):
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                     <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
-                    <div><label class="label">Hours</label><input type="number" class="form-control input-dark" name="hours" value="8" min="1"></div>
+                    <div><label class="label">最大実行時間</label>
+                        <select class="form-control input-dark" name="hours">
+                            <option value="1">1 時間</option>
+                            <option value="2">2 時間</option>
+                            <option value="4">4 時間</option>
+                            <option value="8" selected>8 時間</option>
+                            <option value="12">12 時間</option>
+                            <option value="24">24 時間</option>
+                            <option value="48">48 時間</option>
+                            <option value="72">72 時間</option>
+                            <option value="unlimited">無制限</option>
+                        </select></div>
                 </div>
-                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。</div>
+                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。無制限は Slurm パーティション上限（INFINITE）まで実行できます。</div>
             </div>
         </div>
     </div>
     """
 
-    js_code = """
+    hub_user_js = html.escape(user.name, quote=True)
+    js_code = (
+        f"""
     <script>
+    window.HPC_HUB_USER = "{hub_user_js}";
+"""
+        + HPC_STOP_SERVER_JS
+        + """
     document.addEventListener("DOMContentLoaded", function() {
-        function format1(value) {
-            return Number(value || 0).toFixed(1);
-        }
-        function applyResourceSnapshot(data) {
-            const text = {
-                cpu_status: data.cpu_status,
-                cpu_available_count: `残り ${format1(data.cpu_available_count)} vCPU`,
-                cpu_total: `最大 ${data.cpu_total || 0} vCPU`,
-                mem_status: data.mem_status,
-                mem_available_gb: `残り ${format1(data.mem_available_gb)} GB`,
-                mem_total_gb: `最大 ${format1(data.mem_total_gb)} GB`,
-                disk_status: data.disk_status,
-                disk_available_gb: `残り ${format1(data.disk_available_gb)} GB`,
-                disk_total_gb: `最大 ${format1(data.disk_total_gb)} GB`,
-                gpu_status: data.gpu_status,
-                gpu_available_count: `空き ${data.gpu_available_count || 0}/${data.gpu_max || 0} GPU`,
-                gpu_vram_available_gb: `VRAM ${format1(data.gpu_vram_available_gb)}/${format1(data.gpu_vram_total_gb)} GB`,
-            };
-            document.querySelectorAll("[data-resource-text]").forEach((el) => {
-                const key = el.getAttribute("data-resource-text");
-                if (text[key] !== undefined) el.textContent = text[key];
-            });
-            document.querySelectorAll("[data-resource-width]").forEach((el) => {
-                const key = el.getAttribute("data-resource-width");
-                const pct = Math.max(0, Math.min(100, Number(data[key] || 0)));
-                el.style.width = `${pct.toFixed(0)}%`;
-            });
-            document.querySelectorAll("[data-resource-updated-at]").forEach((el) => {
-                el.textContent = `最終更新 ${new Date().toLocaleTimeString()}`;
-            });
-        }
-        function refreshResourceSnapshot() {
-            fetch("/hub/hpc-resource-status", {credentials: "same-origin", cache: "no-store"})
-                .then((r) => r.ok ? r.json() : Promise.reject())
-                .then(applyResourceSnapshot)
-                .catch(() => {});
-        }
-        refreshResourceSnapshot();
-        setInterval(refreshResourceSnapshot, 5000);
         const form = document.querySelector('form');
         const appChoice = document.querySelector('select[name="app_choice"]');
         const gpuInput = document.querySelector('input[name="gpu"]');
@@ -1192,12 +1617,15 @@ def make_options_form(spawner):
     });
     </script>
     """
-    return header_html + js_code
+    )
+    static_js = '<script src="/hub/hpc-resource-meter.js?v=2"></script>'
+    return header_html + static_js + js_code
 
 
 # 3. データの受け取り
 def options_from_form(formdata):
     h = formdata.get("hours", ["8"])[0]
+    runtime, runtime_line = _hpc_runtime_from_hours_choice(h)
     gpu_max = {{ slurm_effective_gpu_count | default(slurm_gpu_count | default(0)) | int }}
     try:
         g = int(formdata.get("gpu", ["0"])[0] or 0)
@@ -1207,7 +1635,8 @@ def options_from_form(formdata):
     return {
         "nprocs": str(formdata.get("cpu", ["2"])[0]),
         "memory": f"{formdata.get('mem', ['4'])[0]}G",
-        "runtime": f"{int(h):02d}:00:00",
+        "runtime": runtime,
+        "runtime_line": runtime_line,
         "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
         "gpu": str(g),
         "app_choice": str(formdata.get("app_choice", ["ubuntu-cli"])[0]),
@@ -1218,6 +1647,9 @@ def apply_user_options(spawner, user_options):
     spawner.req_nprocs = str(user_options.get("nprocs", "2"))
     spawner.req_memory = str(user_options.get("memory", "4G"))
     spawner.req_runtime = str(user_options.get("runtime", "08:00:00"))
+    spawner.user_options["nprocs"] = str(user_options.get("nprocs", "2"))
+    spawner.user_options["memory"] = str(user_options.get("memory", "4G"))
+    spawner.user_options["runtime"] = str(user_options.get("runtime", "08:00:00"))
     spawner.user_options["gpu"] = str(user_options.get("gpu", "0"))
     app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
     spawner.user_options["app_choice"] = app_choice
@@ -1289,7 +1721,7 @@ c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
 #SBATCH --partition={bs}partition{be}
 #SBATCH --cpus-per-task={bs}nprocs{be}
 #SBATCH --mem={bs}memory{be}
-#SBATCH --time={bs}runtime{be}
+{bs}runtime_line{be}
 #SBATCH --chdir={bs}homedir{be}
 #SBATCH --output=/tmp/jupyterhub-%j.log
 {bs}gres_line{be}

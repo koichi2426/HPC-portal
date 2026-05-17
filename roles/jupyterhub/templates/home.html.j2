@@ -20,8 +20,17 @@
     .gx10-meter-track { height:10px; background:#30363d; border-radius:999px; overflow:hidden; }
     .gx10-meter-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7); }
     .gx10-meter-numbers { display:flex; justify-content:space-between; margin-top:7px; color:#8b949e; font-size:11px; }
+    .gx10-app-card { border:1px solid #30363d; border-radius:10px; margin-bottom:10px; background:#0d1117; overflow:hidden; }
+    .gx10-app-card-link { display:block; padding:12px; text-decoration:none; color:inherit; }
+    .gx10-app-card-link:hover { background:rgba(88,166,255,0.06); }
+    .gx10-app-card-actions { display:flex; gap:8px; align-items:center; padding:0 12px 12px; justify-content:flex-end; }
+    .gx10-detail-hint { font-size:11px; color:#58a6ff; margin-top:6px; }
+    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live { color:#3fb950; font-weight:600; }
+    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale { color:#f85149; font-weight:600; }
+    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading { color:#e3b341; }
+    [data-hpc-resource-meter].hpc-resource-refreshed .gx10-meter-fill { filter:brightness(1.15); transition:width 0.35s ease, filter 0.2s ease; }
   </style>
-  <div class="gx10-resource-card">
+  <div class="gx10-resource-card" data-hpc-resource-meter>
     <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
       <div>
         <div style="font-weight:700; color:#c9d1d9;">現在使えるリソース</div>
@@ -75,15 +84,32 @@
     {% for name, spawner in user.spawners.items() %}
       {% if spawner.active or spawner.pending %}
         {% set has_any = true %}
-        {% if name %}
+        {% set sp_public_url = spawner.public_url if spawner.public_url is defined else '' %}
+        {% set _uo = spawner.user_options if spawner.user_options is defined else {} %}
+        {% set is_openwebui = _uo.get('app_choice') == 'open-webui' if _uo else false %}
+        {% if is_openwebui %}
+          {% set app_label = 'Open WebUI' %}
+        {% elif _uo.get('app_choice') in ['jupyterlab', 'jupyter'] %}
+          {% set app_label = 'JupyterLab' %}
+        {% elif name %}
           {% set app_label = name %}
         {% else %}
           {% set app_label = 'default' %}
         {% endif %}
-
-        {% set sp_public_url = spawner.public_url if spawner.public_url is defined else '' %}
-        {% set _uo = spawner.user_options if spawner.user_options is defined else {} %}
-        {% set is_openwebui = _uo.get('app_choice') == 'open-webui' if _uo else false %}
+        {% set _cpu = _uo.get('nprocs', '—') %}
+        {% set _mem = _uo.get('memory', '—') %}
+        {% set _gpu = (_uo.get('gpu', '0') or '0')|int %}
+        {% set _rt = _uo.get('runtime', '—') %}
+        {% if (_rt|string)|upper in ['UNLIMITED', 'INFINITE'] %}
+        {% set _hours = '無制限' %}
+        {% elif ':' in (_rt|string) %}
+        {% set _hours = _rt.split(':')[0]|int ~ 'h' %}
+        {% else %}
+        {% set _hours = _rt %}
+        {% endif %}
+        {% set _gpu_label = (_gpu|string ~ ' GPU') if _gpu > 0 else 'GPU なし' %}
+        {% set alloc_line = _cpu ~ ' vCPU · ' ~ _mem ~ ' RAM · ' ~ _gpu_label ~ ' · ' ~ _hours %}
+        {% set sn_path = name if name else '__default__' %}
         {# spawn 直後に public_url が古いまま残ることがあるため、起動済み+JOBID では job<JOBID> + ORM base_url を優先。
            Hub/OAuth は gx10 のままだが、CHP に gx10 用エイリアスルートも載せるため job の JUMP でも整合する。 #}
         {% if is_openwebui and spawner.job_id %}
@@ -114,11 +140,11 @@
           {% endif %}
         {% endif %}
 
-        <div class="gx10-app-card" style="border:1px solid #30363d; border-radius:10px; padding:12px; margin-bottom:10px; background:#0d1117;"
-             {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
-          <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="gx10-app-card" {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
+          <a class="gx10-app-card-link" href="/hub/apps/{{ sn_path }}">
             <div>
               <div style="font-weight:600; color:#c9d1d9;">{{ app_label }}{% if spawner.job_id %} <span style="color:#8b949e;font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
+              <div style="font-size:11px; color:#8b949e; margin-top:6px;">割り当て: {{ alloc_line }}</div>
               {% if spawner.pending %}
                 <div style="font-size:12px; color:#e3b341; margin-top:4px;">Pending / Starting… ({{ spawner.pending }})</div>
                 <div style="margin-top:8px; height:6px; background:#30363d; border-radius:999px;">
@@ -127,16 +153,16 @@
               {% else %}
                 <div style="font-size:12px; color:#3fb950; margin-top:4px;">Running</div>
               {% endif %}
+              <div class="gx10-detail-hint">詳細を見る →</div>
             </div>
-
-            {% if spawner.active %}
-              <a href="{{ job_url }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none; color:#58a6ff; font-weight:700;">
-                JUMP ↗
-              </a>
-            {% else %}
-              <span style="color:#8b949e; font-size:12px;">準備中</span>
-            {% endif %}
+          </a>
+          {% if spawner.active %}
+          <div class="gx10-app-card-actions">
+            <a href="{{ job_url }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none; color:#58a6ff; font-weight:700; font-size:12px;" onclick="event.stopPropagation();">
+              JUMP ↗
+            </a>
           </div>
+          {% endif %}
         </div>
       {% endif %}
     {% endfor %}
@@ -144,48 +170,14 @@
   {% else %}
   {% endif %}
 </div>
+{% endblock %}
 
+{% block script %}
+<script src="/hub/hpc-resource-meter.js?v=2"></script>
 <script>
 (function () {
   var pollMs = 4000;
   var lastSig = null;
-  function format1(value) {
-    return Number(value || 0).toFixed(1);
-  }
-  function applyResourceSnapshot(data) {
-    var text = {
-      cpu_status: data.cpu_status,
-      cpu_available_count: "残り " + format1(data.cpu_available_count) + " vCPU",
-      cpu_total: "最大 " + (data.cpu_total || 0) + " vCPU",
-      mem_status: data.mem_status,
-      mem_available_gb: "残り " + format1(data.mem_available_gb) + " GB",
-      mem_total_gb: "最大 " + format1(data.mem_total_gb) + " GB",
-      disk_status: data.disk_status,
-      disk_available_gb: "残り " + format1(data.disk_available_gb) + " GB",
-      disk_total_gb: "最大 " + format1(data.disk_total_gb) + " GB",
-      gpu_status: data.gpu_status,
-      gpu_available_count: "空き " + (data.gpu_available_count || 0) + "/" + (data.gpu_max || 0) + " GPU",
-      gpu_vram_available_gb: "VRAM " + format1(data.gpu_vram_available_gb) + "/" + format1(data.gpu_vram_total_gb) + " GB"
-    };
-    document.querySelectorAll("[data-resource-text]").forEach(function (el) {
-      var key = el.getAttribute("data-resource-text");
-      if (text[key] !== undefined) el.textContent = text[key];
-    });
-    document.querySelectorAll("[data-resource-width]").forEach(function (el) {
-      var key = el.getAttribute("data-resource-width");
-      var pct = Math.max(0, Math.min(100, Number(data[key] || 0)));
-      el.style.width = pct.toFixed(0) + "%";
-    });
-    document.querySelectorAll("[data-resource-updated-at]").forEach(function (el) {
-      el.textContent = "最終更新 " + new Date().toLocaleTimeString();
-    });
-  }
-  function refreshResourceSnapshot() {
-    fetch("/hub/hpc-resource-status", { credentials: "same-origin", cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-      .then(applyResourceSnapshot)
-      .catch(function () {});
-  }
   function readCookie(name) {
     var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()\\[\\]\\\\/+^]/g, '\\$&') + '=([^;]*)'));
     return m ? decodeURIComponent(m[1]) : '';
@@ -210,8 +202,6 @@
       })
       .catch(function () {});
   }
-  refreshResourceSnapshot();
-  setInterval(refreshResourceSnapshot, 5000);
   tick();
   setInterval(tick, pollMs);
 })();

@@ -3,8 +3,13 @@
   hosts: gx10
   become: true
   roles:
-    - common
-    - slurm
-    - jupyterhub
-    - apptainer
-    - cloudflared
+    - role: common
+      tags: [common]
+    - role: slurm
+      tags: [slurm]
+    - role: jupyterhub
+      tags: [jupyterhub]
+    - role: apptainer
+      tags: [apptainer]
+    - role: cloudflared
+      tags: [cloudflared]
