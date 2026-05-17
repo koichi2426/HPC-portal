@@ -10,7 +10,7 @@
 - ブラウザから JupyterHub 経由で計算アプリを起動
 - Slurm 連携による CPU / メモリ / GPU のリソース制御
 - ジョブごとのサブドメイン経由で安全にアプリへアクセス
-- Ansible によるデプロイとクリーンアップの一括実行
+- Ansible によるデプロイとクリーンアップの一括実行（`make` で主要コマンドを短縮）
 
 ---
 
@@ -76,32 +76,55 @@ sequenceDiagram
    ```bash
    ssh your_user@<target-ip>
    ```
-3. **インベントリの設定**: サンプルをコピーして `inventory/production.ini` を作成します。
+3. **インベントリと秘密情報の設定**（雛形コピー）:
    ```bash
-   cp inventory/production.ini.example inventory/production.ini
-   # production.ini を編集して IP / ansible_user / ドメイン変数を設定
-   ```
-4. **変数の設定**: `group_vars/all/secret.yml` に Cloudflare Tunnel トークン等を記述します。
-   ```bash
-   cp group_vars/all/secret.yml.example group_vars/all/secret.yml
-   # secret.yml を編集して cloudflared_token を入力
+   make setup
+   # inventory/production.ini … IP / ansible_user / ドメイン変数
+   # group_vars/all/secret.yml … cloudflared_token など
    ```
 
+#### 📋 よく使う make コマンド
+
+プロジェクト直下の [Makefile](./Makefile) に、Ansible の定番操作をまとめています。一覧は `make help` で確認できます。
+
+| コマンド | 内容 |
+|----------|------|
+| `make ping` | 接続確認 |
+| `make check` | ドライラン（`--check --diff`） |
+| `make deploy` | フルデプロイ（`site.yml`） |
+| `make deploy-safe` | 再起動抑止デプロイ（`site_safe.yml`） |
+| `make cleanup` | クリーンアップ（`cleanup.yml`） |
+| `make jupyterhub` | JupyterHub ロールのみ |
+| `make slurm` | Slurm ロールのみ |
+| `make models` | LLM / Ollama モデル取得のみ |
+| `make apptainer` | Apptainer ロールのみ |
+| `make status` | Slurm ジョブ・ディスク空き |
+| `make gpu` | GPU / VRAM |
+| `make services` | サービス状態・JupyterHub ログ |
+| `make processes` | 残存プロセス確認 |
+
+別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
+
 #### 🚀 デプロイ実行
+
 ```bash
-ansible-playbook -i inventory/production.ini site.yml
+make deploy
 ```
 
 #### 🧹 クリーンアップ
+
 ```bash
-ansible-playbook -i inventory/production.ini cleanup.yml
+make cleanup
 ```
 
-#### 🔍 リモートでの原因調査（Ansible）
+#### 🔍 リモートでの原因調査
 
-フルデプロイせず、**インベントリ経由で gx10 上にコマンドを流す**と SSH の手間が減ります。挙動がおかしいときはまずここから確認するのがおすすめです。
+挙動がおかしいときは、まず `make status` / `make gpu` / `make services` / `make processes` を試してください。
 
-**単発コマンド（ad-hoc）** — ホスト名 `gx10` は `inventory/production.ini` のグループ名に合わせてください。
+<details>
+<summary>ansible コマンドを直接使う場合</summary>
+
+ホスト名 `gx10` は `inventory/production.ini` のグループ名に合わせてください。
 
 ```bash
 # 接続確認
@@ -113,27 +136,21 @@ ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node
 # GPU / VRAM
 ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
 
-# JupyterHub / Slurm サービス
+# JupyterHub / Slurm サービス（-b は root 権限が必要なとき）
 ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd; journalctl -u jupyterhub -n 30 --no-pager"
 
-# ユーザーの残存プロセス（Open WebUI / Ollama など）
+# 残存プロセス（YOUR_USER は ansible_user に置き換え）
 ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true"
-```
 
-`-b` は root 権限が必要なとき（`systemctl` や `/var/log` など）に付けます。`YOUR_USER` は `ansible_user` と同じ値に置き換えてください。
-
-**Playbook の部分実行** — 設定だけ直したい・サービス再起動だけしたいとき:
-
-```bash
+# 部分デプロイ
 ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
 ansible-playbook -i inventory/production.ini site.yml --tags slurm
-```
 
-チェックモード（変更は行わず差分だけ見る）:
-
-```bash
+# ドライラン
 ansible-playbook -i inventory/production.ini site.yml --check --diff
 ```
+
+</details>
 
 ---
 
