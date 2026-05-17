@@ -10,7 +10,7 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 - Launch compute applications from a browser via JupyterHub
 - Control CPU, memory, and GPU resources through Slurm integration
 - Access applications securely via per-job subdomains
-- Run deployment and cleanup workflows with Ansible
+- Run deployment and cleanup workflows with Ansible (`make` shortcuts for common tasks)
 
 ---
 
@@ -76,50 +76,54 @@ sequenceDiagram
    ```bash
    ssh your_user@<target-ip>
    ```
-3. **Configure inventory** by copying the sample file.
+3. **Copy inventory and secrets templates**:
    ```bash
-   cp inventory/production.ini.example inventory/production.ini
-   # Edit production.ini (IP / ansible_user / domain variables)
-   ```
-4. **Set required secrets** in `group_vars/all/secret.yml`.
-   ```bash
-   cp group_vars/all/secret.yml.example group_vars/all/secret.yml
-   # Edit secret.yml and set cloudflared_token
+   make setup
+   # Edit inventory/production.ini and group_vars/all/secret.yml
    ```
 
+#### 📋 Common make targets
+
+See [Makefile](./Makefile). Run `make help` for the full list.
+
+| Command | Description |
+|---------|-------------|
+| `make ping` | Connectivity check |
+| `make check` | Dry run (`--check --diff`) |
+| `make deploy` | Full deploy (`site.yml`) |
+| `make deploy-safe` | Deploy without service restarts (`site_safe.yml`) |
+| `make cleanup` | Cleanup playbook |
+| `make jupyterhub` / `make slurm` / `make models` | Single role or tag |
+| `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
+
+Override inventory: `make deploy INV=inventory/staging.ini`
+
 #### 🚀 Deploy
+
 ```bash
-ansible-playbook -i inventory/production.ini site.yml
+make deploy
 ```
 
 #### 🧹 Cleanup
+
 ```bash
-ansible-playbook -i inventory/production.ini cleanup.yml
+make cleanup
 ```
 
-#### 🔍 Remote diagnostics (Ansible)
+#### 🔍 Remote diagnostics
 
-You can run commands on gx10 through the inventory without a full deploy—useful when tracking down issues.
+Start with `make status`, `make gpu`, `make services`, or `make processes`.
 
-**Ad-hoc commands** (group name `gx10` must match your inventory):
+<details>
+<summary>Run ansible commands directly</summary>
 
 ```bash
 ansible -i inventory/production.ini gx10 -m ping
-ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
-ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L"
-ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd"
-```
-
-Use `-b` when root is required. Replace `YOUR_USER` in process checks with `ansible_user`.
-
-**Partial playbook runs**:
-
-```bash
 ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
-ansible-playbook -i inventory/production.ini site.yml --tags slurm
+ansible-playbook -i inventory/production.ini site.yml --check --diff
 ```
 
-Dry run: `ansible-playbook -i inventory/production.ini site.yml --check --diff`
+</details>
 
 ---
 
