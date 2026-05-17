@@ -72,11 +72,24 @@ sequenceDiagram
    # Ubuntu
    sudo apt update && sudo apt install ansible -y
    ```
-2. **Verify SSH connectivity** to the target host.
+2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `inventory/production.ini`.
+
+   - Models (`~/models`), Ollama (`~/.ollama`), and Slurm jobs run under that home directory
+   - **SSH public-key login** from your control machine
+   - **Passwordless sudo** is required (`site.yml` uses `become: true`)
+
    ```bash
-   ssh your_user@<target-ip>
+   # On the server (Ubuntu example)
+   sudo adduser kamlab
+   sudo usermod -aG sudo kamlab
+   # On your laptop: ssh-copy-id kamlab@<target-ip>
    ```
-3. **Copy inventory and secrets templates**:
+
+3. **Verify SSH connectivity** with that user:
+   ```bash
+   ssh <ansible_user>@<target-ip>
+   ```
+4. **Copy inventory and secrets templates**:
    ```bash
    make setup
    # Edit inventory/production.ini and group_vars/all/secret.yml

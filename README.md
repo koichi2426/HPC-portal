@@ -72,11 +72,24 @@ sequenceDiagram
    # Ubuntu
    sudo apt update && sudo apt install ansible -y
    ```
-2. **SSH接続の確認**: デプロイ前提として、対象IPへSSHでログインできることを確認します。
+2. **デプロイ先に運用ユーザーを作成**: Playbook は Unix ユーザーを自動作成しません。後述する `inventory/production.ini` の **`ansible_user` と同じ名前のユーザー**を、対象サーバー（gx10 等）にあらかじめ用意してください。
+
+   - **ホームディレクトリ**（`/home/<ansible_user>/`）に、LLM モデル（`~/models`）、Ollama（`~/.ollama`）、Slurm 経由で起動するアプリのデータが置かれます
+   - 手元の PC から、そのユーザーで **SSH 公開鍵認証**できること
+   - `site.yml` は `become: true` で root 昇格するため、**パスワードなし sudo**（`sudo` グループ等）が必要です
+
    ```bash
-   ssh your_user@<target-ip>
+   # サーバー側の例（Ubuntu）
+   sudo adduser kamlab
+   sudo usermod -aG sudo kamlab
+   # 手元: ssh-copy-id kamlab@<target-ip>
    ```
-3. **インベントリと秘密情報の設定**（雛形コピー）:
+
+3. **SSH接続の確認**: 上記ユーザーでログインできることを確認します。
+   ```bash
+   ssh <ansible_user>@<target-ip>
+   ```
+4. **インベントリと秘密情報の設定**（雛形コピー）:
    ```bash
    make setup
    # inventory/production.ini … IP / ansible_user / ドメイン変数
