@@ -151,10 +151,11 @@
       - { name: 'hermes-2-pro', url: 'https://huggingface.co/NousResearch/Hermes-2-Pro-Llama-3-8B-GGUF/resolve/main/Hermes-2-Pro-Llama-3-8B-Q4_K_M.gguf' }
 
       # --- 【HPC向け大型モデル: 128GB統合メモリ限界突破・超モンスター級】 ---
-      - { name: 'qwen3.6-max' }
-      - { name: 'mistral-large3' }
-      - { name: 'kimi-k2.6' }
-      - { name: 'deepseek-v3.2' }
+      - { name: 'kimi-k2.6:cloud' }
+      - { name: 'qwen3.6:35b' }
+      - { name: 'mistral-large:123b' }
+      - { name: 'command-r-plus' }
+      - { name: 'deepseek-r1:70b' }
       - { name: 'llama3.3:70b' }
   tags: [models]
 
