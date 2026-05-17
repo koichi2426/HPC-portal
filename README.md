@@ -79,10 +79,10 @@ sequenceDiagram
    - `site.yml` は `become: true` で root 昇格するため、**パスワードなし sudo**（`sudo` グループ等）が必要です
 
    ```bash
-   # サーバー側の例（Ubuntu）
-   sudo adduser kamlab
-   sudo usermod -aG sudo kamlab
-   # 手元: ssh-copy-id kamlab@<target-ip>
+   # サーバー側の例（Ubuntu）。your_user は production.ini の ansible_user と同じ名前にする
+   sudo adduser your_user
+   sudo usermod -aG sudo your_user
+   # 手元: ssh-copy-id your_user@<target-ip>
    ```
 
 3. **SSH接続の確認**: 上記ユーザーでログインできることを確認します。

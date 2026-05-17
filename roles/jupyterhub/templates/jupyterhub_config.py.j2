@@ -50,9 +50,9 @@ def hpc_subdomain_hook(name, domain, kind):
     if kind == "user" and host:
         return host
     if kind == "user":
-        # spawn 中以外の user URL は hub ドメインへ固定し、kamlab.<zone> への遷移を防ぐ
+        # spawn 中以外の user URL は hub ドメインへ固定し、<username>.<zone> への遷移を防ぐ
         return HPC_PUBLIC_DOMAIN
-    # public_url が gx10 のとき settings["domain"] が gx10 になり idna で kamlab.gx10... になるのを防ぐ
+    # public_url がホスト名のみのとき domain が短くなり <username>.<host>... になるのを防ぐ
     return _default_subdomain_hook(name, HPC_JOB_DNS_DOMAIN, kind)
 
 

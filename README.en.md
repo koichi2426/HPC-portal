@@ -79,10 +79,10 @@ sequenceDiagram
    - **Passwordless sudo** is required (`site.yml` uses `become: true`)
 
    ```bash
-   # On the server (Ubuntu example)
-   sudo adduser kamlab
-   sudo usermod -aG sudo kamlab
-   # On your laptop: ssh-copy-id kamlab@<target-ip>
+   # On the server (Ubuntu). Use the same name as ansible_user in production.ini
+   sudo adduser your_user
+   sudo usermod -aG sudo your_user
+   # On your laptop: ssh-copy-id your_user@<target-ip>
    ```
 
 3. **Verify SSH connectivity** with that user:
