@@ -27,3 +27,6 @@ cloudflared_ingress:
 
 # true のとき設定反映のみ行い、サービス再起動を抑止（運用中の 502 瞬断を回避）
 hpc_skip_service_restarts: false
+
+# true のとき make models / --tags models で target_models 外の Ollama・GGUF・partial を削除
+hpc_prune_stale_ollama_models: true

@@ -225,6 +225,100 @@
   failed_when: "'Error' in ollama_model_pull.stderr"
   tags: [models]
 
+- name: Ollamaに残すモデル名を算出 (pull / cloud)
+  ansible.builtin.set_fact:
+    ollama_keep_names: "{{ target_models | rejectattr('url', 'defined') | map(attribute='name') | list }}"
+  tags: [models]
+
+- name: Ollamaに残すモデル名を算出 (GGUF → *-hpc)
+  ansible.builtin.set_fact:
+    ollama_keep_names: "{{ ollama_keep_names + [item.name + '-hpc'] }}"
+  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
+  tags: [models]
+
+- name: リスト外のOllamaモデルを削除
+  ansible.builtin.shell: |
+    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
+      export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
+      ollama serve > /dev/null 2>&1 &
+      sleep 10
+      KEEP='{{ ollama_keep_names | join(' ') }}'
+      ollama list | awk 'NR>1 {print \$1}' | while read -r name; do
+        base=\"\${name%:latest}\"
+        keep=0
+        for k in \$KEEP; do
+          if [ \"\$name\" = \"\$k\" ] || [ \"\$base\" = \"\$k\" ]; then
+            keep=1
+            break
+          fi
+        done
+        if [ \"\$keep\" -eq 0 ]; then
+          echo \"removing \$name\"
+          ollama rm \"\$name\" || true
+        fi
+      done
+    "
+  register: ollama_prune
+  changed_when: "'removing' in ollama_prune.stdout"
+  failed_when: false
+  when: hpc_prune_stale_ollama_models | default(true) | bool
+  tags: [models]
+
+- name: 未完のOllama pull残骸 (*-partial) を検索
+  ansible.builtin.find:
+    paths: "/home/{{ ansible_user }}/.ollama/models/blobs"
+    patterns: "*-partial"
+    file_type: any
+  register: ollama_partial_blobs
+  when: hpc_prune_stale_ollama_models | default(true) | bool
+  tags: [models]
+
+- name: 未完のOllama pull残骸を削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ ollama_partial_blobs.files | default([]) }}"
+  when:
+    - hpc_prune_stale_ollama_models | default(true) | bool
+    - ollama_partial_blobs.files | default([]) | length > 0
+  tags: [models]
+
+- name: リスト外のGGUFを検索
+  ansible.builtin.find:
+    paths: "/home/{{ ansible_user }}/models"
+    patterns: "*.gguf"
+  register: gguf_on_disk
+  when: hpc_prune_stale_ollama_models | default(true) | bool
+  tags: [models]
+
+- name: リスト外のGGUFを削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ gguf_on_disk.files | default([]) }}"
+  when:
+    - hpc_prune_stale_ollama_models | default(true) | bool
+    - (item.path | basename | regex_replace('\\.gguf$', '')) not in (target_models | selectattr('url', 'defined') | map(attribute='name') | list)
+  tags: [models]
+
+- name: リスト外のModelfileを検索
+  ansible.builtin.find:
+    paths: "/home/{{ ansible_user }}/models"
+    patterns: "Modelfile-*"
+  register: modelfiles_on_disk
+  when: hpc_prune_stale_ollama_models | default(true) | bool
+  tags: [models]
+
+- name: リスト外のModelfileを削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ modelfiles_on_disk.files | default([]) }}"
+  when:
+    - hpc_prune_stale_ollama_models | default(true) | bool
+    - (item.path | basename | regex_replace('^Modelfile-', '')) not in (target_models | selectattr('url', 'defined') | map(attribute='name') | list)
+  tags: [models]
+
 - name: 登録用のOllama一時プロセスを確実に掃除
   ansible.builtin.shell: pkill -u {{ ansible_user }} -f "ollama serve"
   failed_when: false

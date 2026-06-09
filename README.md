@@ -109,7 +109,7 @@ sequenceDiagram
 | `make cleanup` | クリーンアップ（`cleanup.yml`） |
 | `make jupyterhub` | JupyterHub ロールのみ |
 | `make slurm` | Slurm ロールのみ |
-| `make models` | LLM / Ollama モデル取得のみ |
+| `make models` | LLM / Ollama モデル取得（`target_models` 外のモデル・GGUF・未完 pull も削除） |
 | `make apptainer` | Apptainer ロールのみ |
 | `make status` | Slurm ジョブ・ディスク空き |
 | `make gpu` | GPU / VRAM |
