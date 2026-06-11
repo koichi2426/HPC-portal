@@ -237,6 +237,8 @@ def _hpc_allocation_summary(user_options) -> dict:
     app_choice = str(uo.get("app_choice", "ubuntu-cli"))
     if app_choice == "open-webui":
         app_label = "Open WebUI"
+    elif app_choice == "matlab":
+        app_label = "MATLAB"
     elif app_choice in ("jupyterlab", "jupyter"):
         app_label = "JupyterLab"
     else:
@@ -1558,6 +1560,9 @@ def make_options_form(spawner):
                 <label class="label">App Template</label>
                 <select class="form-control input-dark" name="app_choice">
                     <option value="ubuntu-cli">Ubuntu CLI (JupyterLab)</option>
+{% if hpc_matlab_enabled | default(true) | bool %}
+                    <option value="matlab">MATLAB (Jupyter)</option>
+{% endif %}
                     <option value="open-webui">Open WebUI (AI Chat)</option>
                 </select>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -1579,7 +1584,7 @@ def make_options_form(spawner):
                             <option value="unlimited">無制限</option>
                         </select></div>
                 </div>
-                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。無制限は Slurm パーティション上限（INFINITE）まで実行できます。</div>
+                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。MATLAB は JupyterLab から「Open MATLAB」でブラウザ起動します（ホストへの MATLAB インストールとライセンスが必要）。無制限は Slurm パーティション上限（INFINITE）まで実行できます。</div>
             </div>
         </div>
     </div>
@@ -1834,6 +1839,27 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
     JOB_HOST="job$(printenv SLURM_JOB_ID || echo 0).{{ jupyterhub_job_dns_domain }}"
     WEBUI_EXTERNAL_URL="{{ hpc_public_scheme | default('https') }}://$JOB_HOST/"
     exec apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static OLLAMA_MODELS=$HOME/.ollama/models WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
+elif [ "$APP_CHOICE" = "matlab" ]; then
+    IMAGE_PATH="/opt/images/jupyter-cpu.sif"
+    export MW_CONTEXT_TAGS="MATLAB_PROXY:JUPYTER:V1"
+{% if hpc_matlab_license_file | default('') | length > 0 %}
+    export MLM_LICENSE_FILE="{{ hpc_matlab_license_file }}"
+{% endif %}
+    _hpc_matlab_root=""
+    for _m in {% for p in hpc_matlab_search_paths %}{{ p }} {% endfor %}; do
+        if [ -x "$_m/bin/matlab" ]; then
+            _hpc_matlab_root="$_m"
+            break
+        fi
+    done
+    HPC_MATLAB_BIND=""
+    if [ -n "$_hpc_matlab_root" ]; then
+        export PATH="$_hpc_matlab_root/bin:$PATH"
+        HPC_MATLAB_BIND="-B $_hpc_matlab_root:$_hpc_matlab_root"
+    else
+        echo "WARNING: MATLAB not found under search paths; Open MATLAB may fail until host install exists" >&2
+    fi
+    exec apptainer exec --nv $HPC_APPTAINER_BIND $HPC_MATLAB_BIND "$IMAGE_PATH" {bs}cmd{be} --ip=0.0.0.0
 else
     IMAGE_PATH="/opt/images/jupyter-cpu.sif"
     exec apptainer exec --nv $HPC_APPTAINER_BIND "$IMAGE_PATH" {bs}cmd{be} --ip=0.0.0.0

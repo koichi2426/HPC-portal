@@ -89,6 +89,8 @@
         {% set is_openwebui = _uo.get('app_choice') == 'open-webui' if _uo else false %}
         {% if is_openwebui %}
           {% set app_label = 'Open WebUI' %}
+        {% elif _uo.get('app_choice') == 'matlab' %}
+          {% set app_label = 'MATLAB' %}
         {% elif _uo.get('app_choice') in ['jupyterlab', 'jupyter'] %}
           {% set app_label = 'JupyterLab' %}
         {% elif name %}
