@@ -1,4 +1,7 @@
 ---
+- name: apt ロック解放待ち
+  ansible.builtin.import_tasks: ../../common/tasks/wait_for_apt.yml
+
 - name: universeリポジトリを有効化 (ARM用)
   ansible.builtin.apt_repository:
     repo: "deb http://ports.ubuntu.com/ubuntu-ports {{ ansible_distribution_release }} universe"
@@ -8,6 +11,10 @@
 - name: aptキャッシュを強制更新
   ansible.builtin.apt:
     update_cache: yes
+  register: slurm_apt_cache
+  until: slurm_apt_cache is succeeded
+  retries: 5
+  delay: 15
 
 - name: Slurm関連パッケージをインストール
   ansible.builtin.package:

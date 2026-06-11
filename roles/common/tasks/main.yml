@@ -1,4 +1,7 @@
 ---
+- name: apt ロック解放待ち
+  ansible.builtin.import_tasks: wait_for_apt.yml
+
 - name: 基本パッケージをインストール
   ansible.builtin.package:
     name:
@@ -15,3 +18,7 @@
     line: 'GRUB_CMDLINE_LINUX_DEFAULT="quiet cgroup_enable=memory swapaccount=1"'
     backup: true
   notify: grubを更新
+
+- name: CUDA Toolkit / nvcc を整備
+  ansible.builtin.import_tasks: cuda.yml
+  tags: [cuda]
