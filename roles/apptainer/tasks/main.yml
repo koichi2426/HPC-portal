@@ -1,4 +1,7 @@
 ---
+- name: apt ロック解放待ち
+  ansible.builtin.import_tasks: ../../common/tasks/wait_for_apt.yml
+
 - name: Apptainerをインストール
   ansible.builtin.package:
     name: apptainer

@@ -1,5 +1,6 @@
 Bootstrap: docker
-From: ubuntu:22.04
+# Ubuntu 24.04 (glibc 2.39): --nv で注入されるホスト GPU ライブラリ (GLIBC 2.38+) と整合させる
+From: ubuntu:24.04
 
 %environment
     export LC_ALL=C
@@ -7,14 +8,41 @@ From: ubuntu:22.04
     export PATH=/opt/venv/bin:$PATH
 
 %post
-    apt-get update && apt-get install -y \
-        python3 python3-venv python3-pip \
-        git curl ca-certificates \
-        build-essential \
-        libx11-dev libxext-dev libxrender-dev libxrandr-dev libxi-dev \
-        mesa-common-dev libgl1-mesa-dev libegl1-mesa-dev \
-        && rm -rf /var/lib/apt/lists/*
+    # python3.10: 既存ユーザ venv 互換（deadsnakes PPA を Launchpad から直接取得）
+    PYTHON310_VER=3.10.20-1+noble1
+    PYTHON310_BASE=https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa/+files
+    apt-get update && apt-get install -y wget ca-certificates
+    cd /tmp
+    for pkg in \
+        libpython3.10-minimal_${PYTHON310_VER}_arm64.deb \
+        python3.10-minimal_${PYTHON310_VER}_arm64.deb \
+        libpython3.10-stdlib_${PYTHON310_VER}_arm64.deb \
+        libpython3.10_${PYTHON310_VER}_arm64.deb \
+        python3.10_${PYTHON310_VER}_arm64.deb \
+        python3.10-lib2to3_${PYTHON310_VER}_all.deb \
+        python3.10-distutils_${PYTHON310_VER}_all.deb \
+        python3.10-venv_${PYTHON310_VER}_arm64.deb \
+        libpython3.10-dev_${PYTHON310_VER}_arm64.deb \
+        python3.10-dev_${PYTHON310_VER}_arm64.deb; do
+        wget -q "${PYTHON310_BASE}/${pkg}"
+    done
+    dpkg -i ./*.deb || true
+    apt-get install -y -f
 
-    python3 -m venv /opt/venv
+    apt-get update && apt-get install -y \
+        python3-pip \
+        git curl ca-certificates wget unzip rsync \
+        build-essential cmake ninja-build pkg-config \
+        autoconf automake libtool \
+        gfortran libopenblas-dev libeigen3-dev \
+        libffi-dev libssl-dev \
+        zlib1g-dev libjpeg-dev libpng-dev \
+        libx11-dev libxext-dev libxrender-dev libxrandr-dev libxi-dev \
+        libglew-dev libglfw3-dev \
+        mesa-common-dev libgl1-mesa-dev libegl1-mesa-dev \
+        ffmpeg \
+        && rm -rf /var/lib/apt/lists/* /tmp/*.deb
+
+    python3.10 -m venv /opt/venv
     /opt/venv/bin/pip install --upgrade pip
     /opt/venv/bin/pip install jupyterlab jupyterhub batchspawner jupyter-server-proxy

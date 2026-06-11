@@ -1,0 +1,93 @@
+---
+- name: ホストの nvcc を検出
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ -n "${CUDA_HOME:-}" ] && [ -x "${CUDA_HOME}/bin/nvcc" ]; then
+      printf '%s\n' "${CUDA_HOME}/bin/nvcc"
+      exit 0
+    fi
+    if command -v nvcc >/dev/null 2>&1; then
+      command -v nvcc
+      exit 0
+    fi
+    for d in /usr/local/cuda /usr/local/cuda-*; do
+      if [ -x "$d/bin/nvcc" ]; then
+        printf '%s\n' "$d/bin/nvcc"
+        exit 0
+      fi
+    done
+    exit 1
+  args:
+    executable: /bin/bash
+  register: hpc_nvcc_detect
+  changed_when: false
+  failed_when: false
+
+- name: CUDA Toolkit をインストール（nvcc 未検出時）
+  ansible.builtin.apt:
+    name: "{{ hpc_cuda_toolkit_packages }}"
+    state: present
+    update_cache: true
+  register: hpc_cuda_toolkit_install
+  until: hpc_cuda_toolkit_install is succeeded
+  retries: 5
+  delay: 15
+  when:
+    - hpc_install_cuda_toolkit | default(true) | bool
+    - hpc_nvcc_detect.rc != 0
+
+- name: インストール後に nvcc を再検出
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if command -v nvcc >/dev/null 2>&1; then
+      command -v nvcc
+      exit 0
+    fi
+    for d in /usr/local/cuda /usr/local/cuda-*; do
+      if [ -x "$d/bin/nvcc" ]; then
+        printf '%s\n' "$d/bin/nvcc"
+        exit 0
+      fi
+    done
+    exit 1
+  args:
+    executable: /bin/bash
+  register: hpc_nvcc_redetect
+  changed_when: false
+  failed_when: false
+  when:
+    - hpc_install_cuda_toolkit | default(true) | bool
+    - hpc_nvcc_detect.rc != 0
+
+- name: nvcc の検出結果を記録
+  ansible.builtin.set_fact:
+    hpc_nvcc_path: >-
+      {{
+        (
+          hpc_nvcc_redetect.stdout
+          if (
+            hpc_nvcc_detect.rc != 0
+            and hpc_nvcc_redetect is defined
+            and hpc_nvcc_redetect.rc == 0
+          )
+          else hpc_nvcc_detect.stdout
+        ) | default('', true) | trim
+      }}
+
+- name: nvcc が見つからない場合は警告
+  ansible.builtin.debug:
+    msg: >-
+      nvcc がホスト上で見つかりません。TRELLIS の nvdiffrast / kaolin ビルドには CUDA Toolkit が必要です。
+      GB10 等では NVIDIA 公式 CUDA の手動インストールが必要な場合があります（/usr/local/cuda）。
+  when: hpc_nvcc_path | length == 0
+
+- name: nvcc のバージョンを表示
+  ansible.builtin.command: "{{ hpc_nvcc_path }} --version"
+  register: hpc_nvcc_version
+  changed_when: false
+  when: hpc_nvcc_path | length > 0
+
+- name: nvcc バージョン確認結果
+  ansible.builtin.debug:
+    var: hpc_nvcc_version.stdout_lines
+  when: hpc_nvcc_path | length > 0

@@ -30,3 +30,8 @@ hpc_skip_service_restarts: false
 
 # true のとき make models / --tags models で target_models 外の Ollama・GGUF・partial を削除
 hpc_prune_stale_ollama_models: true
+
+# nvcc 未検出時に apt で CUDA Toolkit を入れる（GB10 等で別途 NVIDIA 公式 CUDA が必要な場合あり）
+hpc_install_cuda_toolkit: true
+hpc_cuda_toolkit_packages:
+  - nvidia-cuda-toolkit
