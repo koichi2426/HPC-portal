@@ -22,7 +22,3 @@
 - name: CUDA Toolkit / nvcc を整備
   ansible.builtin.import_tasks: cuda.yml
   tags: [cuda]
-
-- name: MATLAB インストールを検出
-  ansible.builtin.import_tasks: matlab.yml
-  tags: [matlab]

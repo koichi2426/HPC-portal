@@ -35,13 +35,3 @@ hpc_prune_stale_ollama_models: true
 hpc_install_cuda_toolkit: true
 hpc_cuda_toolkit_packages:
   - nvidia-cuda-toolkit
-
-# MATLAB アプリ（ホストへの MATLAB インストール + MathWorks ライセンスが必要）
-hpc_matlab_enabled: true
-# ネットワークライセンス例: "27000@license.example.com"（空なら初回起動時にブラウザで入力）
-hpc_matlab_license_file: ""
-hpc_matlab_search_paths:
-  - /usr/local/MATLAB/R2026a
-  - /usr/local/MATLAB/R2025b
-  - /usr/local/MATLAB/R2024b
-  - /usr/local/MATLAB/R2024a
