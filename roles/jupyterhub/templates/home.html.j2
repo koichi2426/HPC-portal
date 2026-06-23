@@ -5,9 +5,11 @@
 <div style="max-width: 980px; margin: 24px auto; padding: 0 16px;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
     <h2 style="margin:0;">Home</h2>
-    <a id="new-app-btn" href="/hub/new" style="display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#1f6feb; color:#fff; font-weight:600;">
-      + New Application
-    </a>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <a id="new-app-btn" href="/hub/new" style="display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#1f6feb; color:#fff; font-weight:600;">
+        + New Application
+      </a>
+    </div>
   </div>
 
   {% set res = hpc_resource_snapshot %}
@@ -178,12 +180,12 @@
 (function () {
   var pollMs = 4000;
   var lastSig = null;
-  function readCookie(name) {
-    var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()\\[\\]\\\\/+^]/g, '\\$&') + '=([^;]*)'));
-    return m ? decodeURIComponent(m[1]) : '';
+  function readXsrfCookie() {
+    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : "";
   }
   function tick() {
-    var xsrf = readCookie("_xsrf");
+    var xsrf = readXsrfCookie();
     fetch("/hub/api/user", {
       credentials: "same-origin",
       headers: xsrf ? { "X-XSRFToken": xsrf } : {}

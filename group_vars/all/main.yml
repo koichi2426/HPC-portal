@@ -35,3 +35,14 @@ hpc_prune_stale_ollama_models: true
 hpc_install_cuda_toolkit: true
 hpc_cuda_toolkit_packages:
   - nvidia-cuda-toolkit
+
+# ポータル管理者（Linux ユーザー管理ページ /hub/admin/users）
+# デフォルトは inventory の ansible_user。追加管理者は inventory 等で上書き可能
+hpc_portal_admin_users:
+  - "{{ ansible_user }}"
+hpc_portal_protected_users:
+  - "{{ ansible_user }}"
+  - root
+hpc_portal_user_min_uid: 1000
+hpc_portal_grant_sudo_on_create: true
+hpc_portal_user_sudo_group: sudo

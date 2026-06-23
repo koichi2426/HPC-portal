@@ -1,0 +1,22 @@
+{% raw %}
+{% extends "templates/page.html" %}
+
+{% block script %}
+{{ super() }}
+<script>
+(function () {
+  function isJupyterHubAdminHref(href) {
+    if (!href) return false;
+    var path = href.split("?")[0].split("#")[0];
+    return path === "/hub/admin" || path === "/hub/admin/";
+  }
+  document.querySelectorAll("a[href]").forEach(function (a) {
+    if (!isJupyterHubAdminHref(a.getAttribute("href"))) return;
+    var li = a.closest("li");
+    if (li) li.style.display = "none";
+    a.style.display = "none";
+  });
+})();
+</script>
+{% endblock %}
+{% endraw %}
