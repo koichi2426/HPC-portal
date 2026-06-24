@@ -91,6 +91,39 @@
     group: root
     mode: '0644'
 
+- name: admin_users.htmlを配置
+  ansible.builtin.template:
+    src: admin_users.html.j2
+    dest: /etc/jupyterhub/templates/admin_users.html
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: login.htmlを配置
+  ansible.builtin.template:
+    src: login.html.j2
+    dest: /etc/jupyterhub/templates/login.html
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: page.htmlを配置
+  ansible.builtin.template:
+    src: page.html.j2
+    dest: /etc/jupyterhub/templates/page.html
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: 廃止した管理画面テンプレートを削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/jupyterhub/templates/admin.html
+    - /etc/jupyterhub/templates/admin_nav.html
+    - /etc/jupyterhub/static/hpc-admin-nav.js
+
 - name: リソースメーター用JSを配置
   ansible.builtin.copy:
     src: hpc-resource-meter.js
@@ -119,7 +152,8 @@
       [Service]
       User=root
       WorkingDirectory=/etc/jupyterhub
-      Environment="PATH=/opt/jupyterhub/venv/bin:/usr/local/bin:/usr/bin:/bin"
+      Environment="PATH=/opt/jupyterhub/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      Environment="JUPYTERHUB_XSRF_ANONYMOUS_IP_CIDRS=127.0.0.0/8;10.0.0.0/8;172.16.0.0/12;::1/128"
       ExecStart=/opt/jupyterhub/venv/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
       Restart=always
 

@@ -5,6 +5,7 @@ Wants=slurmctld.service slurmd.service
 
 [Service]
 Type=simple
+Environment=JUPYTERHUB_XSRF_ANONYMOUS_IP_CIDRS=127.0.0.0/8;10.0.0.0/8;172.16.0.0/12;::1/128
 ExecStart=/usr/local/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
 Restart=always
 User=root

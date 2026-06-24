@@ -1,0 +1,33 @@
+{% raw %}
+{% extends "templates/login.html" %}
+
+{% block login_container %}
+<div style="max-width:420px; margin:0 auto 18px; padding:14px 16px; background:#161b22; border:1px solid #30363d; border-radius:10px; color:#8b949e; font-size:13px; line-height:1.55;">
+  <strong style="color:#c9d1d9; display:block; margin-bottom:6px;">Linux アカウントでログイン</strong>
+  サーバー OS のユーザー名とパスワードを入力してください。JupyterHub 専用のアカウントではなく、Linux ユーザーと同じです。
+</div>
+{{ super() }}
+{% endblock %}
+
+{% block username_input %}
+<label for="username_input">Linux ユーザー名:</label>
+<input id="username_input"
+       type="text"
+       autocapitalize="off"
+       autocorrect="off"
+       autocomplete="username"
+       class="form-control"
+       name="username"
+       value="{{ username }}"
+       autofocus="autofocus" />
+{% endblock username_input %}
+
+{% block password_input %}
+<label for="password_input">Linux パスワード:</label>
+<input id="password_input"
+       type="password"
+       class="form-control"
+       autocomplete="current-password"
+       name="password" />
+{% endblock password_input %}
+{% endraw %}

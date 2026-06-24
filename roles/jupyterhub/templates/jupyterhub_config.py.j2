@@ -1,13 +1,35 @@
 import asyncio
 import html
+import json
 import secrets
 import time
 
 from batchspawner import SlurmSpawner
 from jupyterhub.handlers.base import BaseHandler
+from jupyterhub.handlers.login import LoginHandler, LogoutHandler
 from jupyterhub.proxy import ConfigurableHTTPProxy, Proxy
 from jupyterhub.utils import url_escape_path, url_path_join
 from tornado import web
+from tornado.httputil import url_concat
+
+try:
+    from jupyterhub._xsrf_utils import (
+        _get_xsrf_token_cookie,
+        _needs_check_xsrf,
+        _set_xsrf_cookie,
+        check_xsrf_cookie as _jh_check_xsrf_cookie,
+    )
+except ImportError:
+    from jupyterhub.handlers.base import _set_xsrf_cookie
+
+    def _get_xsrf_token_cookie(handler):
+        return (None, None)
+
+    def _needs_check_xsrf(handler):
+        return True
+
+    def _jh_check_xsrf_cookie(handler):
+        return handler.check_xsrf_cookie()
 
 try:
     from jupyterhub.metrics import CHECK_ROUTES_DURATION_SECONDS
@@ -33,7 +55,10 @@ except ImportError:
     from jupyterhub.utils import subdomain_hook_legacy as _default_subdomain_hook
 import contextvars
 import nest_asyncio
+import os
+import pwd
 import psutil
+import re
 import subprocess
 from urllib.parse import urlparse
 
@@ -86,6 +111,22 @@ c.JupyterHub.allow_named_servers = True
 HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
 c.Authenticator.allow_all = True
 
+# ポータル管理者（Linux ユーザー管理）
+HPC_PORTAL_ADMIN_USERS = {
+{% for u in hpc_portal_admin_users | default([ansible_user]) %}
+    "{{ u }}",
+{% endfor %}
+}
+HPC_PORTAL_PROTECTED_USERS = {
+{% for u in hpc_portal_protected_users | default([ansible_user, 'root']) %}
+    "{{ u }}",
+{% endfor %}
+}
+HPC_PORTAL_USER_MIN_UID = {{ hpc_portal_user_min_uid | default(1000) | int }}
+HPC_PORTAL_GRANT_SUDO = {{ hpc_portal_grant_sudo_on_create | default(true) | bool }}
+HPC_PORTAL_SUDO_GROUP = "{{ hpc_portal_user_sudo_group | default('sudo') }}"
+c.Authenticator.admin_users = set(HPC_PORTAL_ADMIN_USERS)
+
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
 c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
 # Hub のブラウザ向け URL（ログイン・ダッシュは <hub-subdomain>.<base-domain>）
@@ -104,11 +145,145 @@ c.JupyterHub.tornado_settings = {
     }
 }
 
+# cookie_options.domain 付き hub cookie は既定の clear_login_cookie では消えず、
+# ログアウト直後に /hub/login → /hub/home へ戻る。
+def _hpc_clear_domain_auth_cookies(handler):
+    cookie_opts = dict(handler.settings.get("cookie_options") or {})
+    domains = [f".{HPC_JOB_DNS_DOMAIN}", HPC_JOB_DNS_DOMAIN, None]
+    paths = {handler.hub.base_url, handler.base_url, "/"}
+    names = {
+        handler.hub.cookie_name,
+        "jupyterhub-session-id",
+        "_xsrf",
+        "jupyterhub-services",
+    }
+    for path in paths:
+        for cookie_name in names:
+            for domain in domains:
+                kwargs = {"path": path, "httponly": True}
+                if cookie_opts.get("secure"):
+                    kwargs["secure"] = True
+                if cookie_opts.get("samesite"):
+                    kwargs["samesite"] = cookie_opts["samesite"]
+                if domain:
+                    kwargs["domain"] = domain
+                handler.clear_cookie(cookie_name, **kwargs)
+
+
+_hpc_original_clear_login_cookie = BaseHandler.clear_login_cookie
+
+
+def _hpc_clear_login_cookie(self, name=None):
+    _hpc_original_clear_login_cookie(self, name=name)
+    _hpc_clear_domain_auth_cookies(self)
+
+
+BaseHandler.clear_login_cookie = _hpc_clear_login_cookie
+
+_hpc_original_default_handle_logout = LogoutHandler.default_handle_logout
+
+
+async def _hpc_default_handle_logout(self):
+    await _hpc_original_default_handle_logout(self)
+    _hpc_clear_domain_auth_cookies(self)
+
+
+LogoutHandler.default_handle_logout = _hpc_default_handle_logout
+
+_hpc_original_render_logout_page = LogoutHandler.render_logout_page
+
+
+async def _hpc_render_logout_page(self):
+    if self.authenticator.auto_login:
+        return await _hpc_original_render_logout_page(self)
+    self.redirect(
+        url_concat(self.settings["login_url"], {"logout": "1"}),
+        permanent=False,
+    )
+
+
+LogoutHandler.render_logout_page = _hpc_render_logout_page
+
+_hpc_original_login_get = LoginHandler.get
+
+
+async def _hpc_login_get(self):
+    # ログアウト直後は残存 cookie を信用せず、再ログイン画面を必ず出す
+    if self.get_argument("logout", None) is not None:
+        self._jupyterhub_user = None
+        self.clear_login_cookie()
+        if hasattr(self, "_xsrf_token"):
+            del self._xsrf_token
+        if hasattr(self, "_session_id"):
+            del self._session_id
+        self.set_session_cookie()
+        username = self.get_argument("username", default="")
+        if self.request.headers.get("Sec-Fetch-Mode", "navigate") == "navigate":
+            _set_xsrf_cookie(
+                self,
+                self._xsrf_token_id,
+                cookie_path=self.hub.base_url,
+                xsrf_token=self.xsrf_token,
+            )
+        self.finish(await self._render(username=username))
+        return
+    if not self.current_user and not self.get_session_cookie():
+        self.set_session_cookie()
+        if hasattr(self, "_xsrf_token"):
+            del self._xsrf_token
+    await _hpc_original_login_get(self)
+
+
+
+def _hpc_login_xsrf_token_id(self):
+    # ログイン画面では IP 由来の anonymous id を使わない（Cloudflare 経由で変動する）。
+    # current_user も信用しない（ログアウト直後に古い hub cookie が残ることがある）。
+    session_id = self.get_session_cookie() or ""
+    return f"{session_id}:".encode("utf-8")
+
+
+_hpc_original_login_check_xsrf = LoginHandler.check_xsrf_cookie
+
+
+def _hpc_login_check_xsrf(self):
+    if not _needs_check_xsrf(self):
+        return None
+    token = (
+        self.get_argument("_xsrf", None)
+        or self.request.headers.get("X-Xsrftoken")
+        or self.request.headers.get("X-Csrftoken")
+    )
+    if not token:
+        raise web.HTTPError(403, f"'_xsrf' argument missing from {self.request.method}")
+    try:
+        token_b = token.encode("utf8")
+    except UnicodeEncodeError:
+        raise web.HTTPError(403, "'_xsrf' argument invalid")
+    cookie_token, _cookie_id = _get_xsrf_token_cookie(self)
+    if cookie_token and token_b == cookie_token:
+        self._xsrf_token = cookie_token
+        return None
+    try:
+        return _jh_check_xsrf_cookie(self)
+    except web.HTTPError as e:
+        self.log.error("XSRF error on login form: %s", e)
+        if self.request.headers.get("Sec-Fetch-Mode", "navigate") == "navigate":
+            raise web.HTTPError(
+                e.status_code, "Login form invalid or expired. Try again."
+            ) from e
+        raise
+
+
+LoginHandler.get = _hpc_login_get
+LoginHandler._xsrf_token_id = property(_hpc_login_xsrf_token_id)
+LoginHandler.check_xsrf_cookie = _hpc_login_check_xsrf
+
 # テンプレートから参照（home.html 等）
 c.JupyterHub.template_vars = {
     "hpc_public_domain": HPC_PUBLIC_DOMAIN,
     "hpc_job_dns_domain": HPC_JOB_DNS_DOMAIN,
     "hpc_public_scheme": HPC_PUBLIC_SCHEME,
+    "hpc_portal_admin_users": sorted(HPC_PORTAL_ADMIN_USERS),
 }
 
 
@@ -1385,9 +1560,258 @@ class HpcResourceMeterJsHandler(BaseHandler):
             self.write("/* hpc-resource-meter.js not found */")
 
 
+_HPC_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
+_HPC_NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/bin/false", "/sbin/nologin"}
+
+
+def _hpc_is_portal_admin(user) -> bool:
+    return bool(user and user.name in HPC_PORTAL_ADMIN_USERS)
+
+
+def _hpc_validate_username(username: str) -> str | None:
+    name = (username or "").strip().lower()
+    if not _HPC_USERNAME_RE.fullmatch(name):
+        return "ユーザー名は英数字で始まり、3〜32文字の英数字・_- のみ使用できます"
+    if name in HPC_PORTAL_PROTECTED_USERS:
+        return "このユーザー名は予約されています"
+    return None
+
+
+def _hpc_validate_password(password: str) -> str | None:
+    if not password or len(password) < 8:
+        return "パスワードは8文字以上にしてください"
+    return None
+
+
+def _hpc_linux_users_snapshot() -> list[dict]:
+    rows = []
+    for entry in pwd.getpwall():
+        if entry.pw_uid < HPC_PORTAL_USER_MIN_UID:
+            continue
+        if entry.pw_shell in _HPC_NOLOGIN_SHELLS:
+            continue
+        rows.append(
+            {
+                "username": entry.pw_name,
+                "uid": entry.pw_uid,
+                "home": entry.pw_dir,
+                "shell": entry.pw_shell,
+                "protected": entry.pw_name in HPC_PORTAL_PROTECTED_USERS,
+            }
+        )
+    rows.sort(key=lambda r: r["username"])
+    return rows
+
+
+_HPC_CMD_ENV = {
+    **os.environ,
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+}
+
+
+def _hpc_run_cmd(cmd: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd,
+        input=input_text,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=_HPC_CMD_ENV,
+    )
+
+
+def _hpc_ensure_user_home(username: str) -> str | None:
+    try:
+        ent = pwd.getpwnam(username)
+    except KeyError:
+        return "ユーザーが見つかりません"
+    home = ent.pw_dir
+    if os.path.isdir(home):
+        return None
+    result = _hpc_run_cmd(
+        ["install", "-d", "-m", "755", "-o", username, "-g", str(ent.pw_gid), home]
+    )
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or "ホームディレクトリの作成に失敗しました").strip()
+    return None
+
+
+def _hpc_create_linux_user(username: str, password: str, grant_sudo: bool) -> str | None:
+    try:
+        pwd.getpwnam(username)
+        return "ユーザーは既に存在します"
+    except KeyError:
+        pass
+    cmd = ["useradd", "-m", "-s", "/bin/bash", username]
+    if grant_sudo and HPC_PORTAL_GRANT_SUDO:
+        cmd[1:1] = ["-G", HPC_PORTAL_SUDO_GROUP]
+    result = _hpc_run_cmd(cmd)
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or "useradd failed").strip()
+    chpw = _hpc_run_cmd(["chpasswd"], input_text=f"{username}:{password}")
+    if chpw.returncode != 0:
+        _hpc_run_cmd(["userdel", "-r", username])
+        return (chpw.stderr or chpw.stdout or "chpasswd failed").strip()
+    err = _hpc_ensure_user_home(username)
+    if err:
+        return err
+    return None
+
+
+def _hpc_delete_linux_user(username: str, actor: str) -> str | None:
+    if username in HPC_PORTAL_PROTECTED_USERS:
+        return "保護されたユーザーは削除できません"
+    if username == actor:
+        return "ログイン中の自分自身は削除できません"
+    try:
+        pwd.getpwnam(username)
+    except KeyError:
+        return "ユーザーが見つかりません"
+    _hpc_run_cmd(["scancel", "-u", username])
+    _hpc_run_cmd(["pkill", "-u", username])
+    result = _hpc_run_cmd(["userdel", "-r", username])
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or "userdel failed").strip()
+    return None
+
+
+def _hpc_set_linux_password(username: str, password: str) -> str | None:
+    try:
+        pwd.getpwnam(username)
+    except KeyError:
+        return "ユーザーが見つかりません"
+    result = _hpc_run_cmd(["chpasswd"], input_text=f"{username}:{password}")
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or "chpasswd failed").strip()
+    return _hpc_ensure_user_home(username)
+
+
+class HpcAdminUsersPageHandler(BaseHandler):
+    """Linux ユーザー管理 UI（/hub/admin/users）"""
+
+    @web.authenticated
+    async def get(self):
+        if not _hpc_is_portal_admin(self.current_user):
+            raise web.HTTPError(403, "管理者のみアクセスできます")
+        # JS 無効時の form GET 送信でパスワードが URL に載るのを防ぐ
+        if self.get_argument("username", default=None) or self.get_argument(
+            "password", default=None
+        ):
+            self.redirect(url_path_join(self.hub.base_url, "admin", "users"))
+            return
+        users = _hpc_linux_users_snapshot()
+        xsrf_token = self.xsrf_token
+        if isinstance(xsrf_token, bytes):
+            xsrf_token = xsrf_token.decode("utf-8", errors="replace")
+        html_out = await self.render_template(
+            "admin_users.html",
+            users=users,
+            grant_sudo_default=HPC_PORTAL_GRANT_SUDO,
+            xsrf_token=xsrf_token,
+        )
+        self.finish(html_out)
+
+
+class HpcAdminUsersApiHandler(BaseHandler):
+    """Linux ユーザー管理 API"""
+
+    def get_json_body(self):
+        if not self.request.body:
+            return {}
+        try:
+            return json.loads(self.request.body.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise web.HTTPError(400, f"Invalid JSON: {exc}") from exc
+
+    def _require_admin(self):
+        if not _hpc_is_portal_admin(self.current_user):
+            raise web.HTTPError(403, "管理者のみ操作できます")
+
+    def _api_error(self, status: int, message: str):
+        self.set_status(status)
+        self.set_header("Content-Type", "application/json; charset=UTF-8")
+        self.finish({"error": message})
+
+    @web.authenticated
+    async def get(self):
+        self._require_admin()
+        self.set_header("Cache-Control", "no-store")
+        self.write({"users": _hpc_linux_users_snapshot()})
+
+    @web.authenticated
+    async def post(self):
+        self._require_admin()
+        body = self.get_json_body() or {}
+        action = str(body.get("action", "")).strip().lower()
+        username = str(body.get("username", "")).strip().lower()
+        password = str(body.get("password", ""))
+        actor = self.current_user.name
+
+        if action == "create":
+            err = _hpc_validate_username(username)
+            if err:
+                return self._api_error(400, err)
+            err = _hpc_validate_password(password)
+            if err:
+                return self._api_error(400, err)
+            grant_sudo = bool(body.get("sudo", HPC_PORTAL_GRANT_SUDO))
+            err = _hpc_create_linux_user(username, password, grant_sudo)
+            if err:
+                return self._api_error(400, err)
+            self.set_status(201)
+            self.write({"ok": True, "username": username})
+            return
+
+        if action == "delete":
+            if not username:
+                return self._api_error(400, "username が必要です")
+            err = _hpc_delete_linux_user(username, actor)
+            if err:
+                return self._api_error(400, err)
+            self.write({"ok": True})
+            return
+
+        if action == "password":
+            err = _hpc_validate_password(password)
+            if err:
+                return self._api_error(400, err)
+            if not username:
+                return self._api_error(400, "username が必要です")
+            err = _hpc_set_linux_password(username, password)
+            if err:
+                return self._api_error(400, err)
+            self.write({"ok": True})
+            return
+
+        self._api_error(400, "不明な action です")
+
+
+class HpcAdminRedirectHandler(BaseHandler):
+    """JupyterHub 標準 /hub/admin を Linux ユーザー管理へ転送する"""
+
+    @web.authenticated
+    async def get(self, *args, **kwargs):
+        if _hpc_is_portal_admin(self.current_user):
+            self.redirect(url_path_join(self.hub.base_url, "admin", "users"))
+        else:
+            self.redirect(url_path_join(self.hub.base_url, "home"))
+
+
+import jupyterhub.handlers as _jh_handlers
+import jupyterhub.handlers.pages as _jh_pages_handlers
+
+for _handlers in (_jh_pages_handlers.default_handlers, _jh_handlers.default_handlers):
+    for _idx, (_route, _handler_cls) in enumerate(_handlers):
+        if _route == "/admin":
+            _handlers[_idx] = (_route, HpcAdminRedirectHandler)
+            break
+
+
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
+c.JupyterHub.extra_handlers.append((r"/admin/users/api", HpcAdminUsersApiHandler))
+c.JupyterHub.extra_handlers.append((r"/admin/users", HpcAdminUsersPageHandler))
 
 
 # 2. カスタムフォーム生成
@@ -1723,7 +2147,7 @@ c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
 #SBATCH --mem={bs}memory{be}
 {bs}runtime_line{be}
 #SBATCH --chdir={bs}homedir{be}
-#SBATCH --output=/tmp/jupyterhub-%j.log
+#SBATCH --output={bs}homedir{be}/.jupyterhub-slurm-%j.log
 {bs}gres_line{be}
 
 set -euo pipefail
