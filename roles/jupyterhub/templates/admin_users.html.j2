@@ -5,7 +5,12 @@
 <div class="gx10-admin-users" style="max-width: 960px; margin: 24px auto; padding: 0 16px 32px; color:#c9d1d9;">
   <div style="margin-bottom:20px;">
     <a href="/hub/home" style="color:#8b949e; text-decoration:none; font-size:13px;">← Home</a>
-    <h2 style="margin:10px 0 4px; color:#c9d1d9;">Linux ユーザー管理</h2>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:10px;">
+      <h2 style="margin:0; color:#c9d1d9;">Linux ユーザー管理</h2>
+      {% if hpc_litellm_admin_url %}
+      <a href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" style="color:#58a6ff; text-decoration:none; font-size:13px; font-weight:700;">LiteLLM 管理画面 ↗</a>
+      {% endif %}
+    </div>
     <div style="font-size:12px; color:#8b949e;">ポータルへのログインに使う OS アカウントの作成・削除・パスワード変更</div>
   </div>
 
@@ -29,7 +34,12 @@
     .gx10-admin-msg { font-size:13px; margin-top:10px; padding:10px 12px; border-radius:8px; display:none; }
     .gx10-admin-msg.ok { display:block; background:rgba(63,185,80,0.12); border:1px solid rgba(63,185,80,0.35); color:#3fb950; }
     .gx10-admin-msg.err { display:block; background:rgba(248,81,73,0.12); border:1px solid rgba(248,81,73,0.35); color:#f85149; }
+    .gx10-admin-msg.warn { display:block; background:rgba(227,179,65,0.12); border:1px solid rgba(227,179,65,0.35); color:#e3b341; }
     .gx10-admin-badge { font-size:11px; padding:2px 8px; border-radius:999px; background:#30363d; color:#8b949e; }
+    .gx10-admin-keybox { display:none; margin-top:12px; background:#0d1117; border:1px solid #30363d; border-radius:10px; padding:12px; }
+    .gx10-admin-keybox.visible { display:block; }
+    .gx10-admin-keyline { display:flex; gap:8px; align-items:center; margin-top:8px; }
+    .gx10-admin-keyvalue { flex:1; min-width:0; overflow-wrap:anywhere; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; color:#c9d1d9; background:#010409; border:1px solid #30363d; border-radius:8px; padding:8px; }
     .gx10-admin-form-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end; }
     .gx10-admin-label { display:block; font-size:11px; color:#8b949e; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.04em; }
     .gx10-admin-modal { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:9999; }
@@ -60,6 +70,42 @@
       </div>
     </form>
     <div id="create-msg" class="gx10-admin-msg"></div>
+    <div id="create-keybox" class="gx10-admin-keybox" aria-live="polite">
+      <div style="font-weight:700; color:#c9d1d9;">API key（一度だけ表示）</div>
+      <div style="font-size:12px; color:#e3b341; margin-top:4px;">この key は保存されません。画面を閉じる前にユーザーへ安全な経路で共有してください。</div>
+      <div class="gx10-admin-keyline">
+        <div id="create-keyvalue" class="gx10-admin-keyvalue"></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="copy-key-btn">コピー</button>
+      </div>
+      {% if hpc_litellm_public_base_url %}
+      <div style="font-size:12px; color:#8b949e; margin-top:8px;">API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="gx10-admin-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+      <div>
+        <div style="font-weight:700;">共有 Ollama</div>
+        <div style="font-size:12px; color:#8b949e; margin-top:3px;">Slurm job shared-ollama の起動・停止・モデル管理</div>
+      </div>
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="ollama-status-btn">状態確認</button>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" id="ollama-start-btn">起動</button>
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-danger" id="ollama-stop-btn">停止</button>
+    </div>
+    <div class="gx10-admin-form-grid">
+      <div>
+        <label class="gx10-admin-label" for="ollama-model">Ollama モデル名</label>
+        <input class="gx10-admin-input" id="ollama-model" placeholder="例: qwen3:32b" autocomplete="off">
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" id="ollama-pull-btn">pull</button>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-danger" id="ollama-delete-btn">delete</button>
+      </div>
+    </div>
+    <div id="ollama-msg" class="gx10-admin-msg"></div>
   </div>
 
   <div class="gx10-admin-card">
@@ -150,6 +196,10 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     el.textContent = text;
     el.className = "gx10-admin-msg " + (ok ? "ok" : "err");
   }
+  function showWarn(el, text) {
+    el.textContent = text;
+    el.className = "gx10-admin-msg warn";
+  }
   function failOp(message) {
     alert(message);
   }
@@ -196,7 +246,13 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
         if (!confirm(name + " を削除しますか？ホームディレクトリも削除されます。")) return;
         btn.disabled = true;
         postAction({ action: "delete", username: name })
-          .then(function () { window.location.reload(); })
+          .then(function (body) {
+            if (body.warning) {
+              showWarn(document.getElementById("list-msg"), name + " を削除しました。" + body.warning);
+              return reloadUsers();
+            }
+            window.location.reload();
+          })
           .catch(function (e) {
             showMsg(document.getElementById("list-msg"), e.message, false);
             failOp(e.message);
@@ -223,6 +279,46 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
       });
     });
   }
+  function setBusy(buttons, busy) {
+    buttons.forEach(function (btn) { btn.disabled = busy; });
+  }
+  function runOllama(action, model) {
+    var msg = document.getElementById("ollama-msg");
+    var buttons = [
+      document.getElementById("ollama-start-btn"),
+      document.getElementById("ollama-stop-btn"),
+      document.getElementById("ollama-status-btn"),
+      document.getElementById("ollama-pull-btn"),
+      document.getElementById("ollama-delete-btn")
+    ];
+    setBusy(buttons, true);
+    var payload = { action: action };
+    if (model) payload.model = model;
+    return postAction(payload).then(function (body) {
+      var data = body.data || {};
+      var text = data.raw || data.output || JSON.stringify(data);
+      showMsg(msg, text || "OK", true);
+    }).catch(function (e) {
+      showMsg(msg, e.message, false);
+      failOp(e.message);
+    }).finally(function () {
+      setBusy(buttons, false);
+    });
+  }
+  document.getElementById("ollama-status-btn").onclick = function () { runOllama("ollama_status"); };
+  document.getElementById("ollama-start-btn").onclick = function () { runOllama("ollama_start"); };
+  document.getElementById("ollama-stop-btn").onclick = function () { runOllama("ollama_stop"); };
+  document.getElementById("ollama-pull-btn").onclick = function () {
+    var model = document.getElementById("ollama-model").value.trim();
+    if (!model) return showMsg(document.getElementById("ollama-msg"), "モデル名を入力してください", false);
+    runOllama("ollama_pull", model);
+  };
+  document.getElementById("ollama-delete-btn").onclick = function () {
+    var model = document.getElementById("ollama-model").value.trim();
+    if (!model) return showMsg(document.getElementById("ollama-msg"), "モデル名を入力してください", false);
+    if (!confirm(model + " を削除しますか？LiteLLM 側の公開モデル設定は自動削除されません。")) return;
+    runOllama("ollama_delete", model);
+  };
   function reloadUsers() {
     return fetch(apiUrl(), { credentials: "same-origin", headers: apiHeaders() })
       .then(function (r) { return r.json(); })
@@ -247,18 +343,43 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
       });
   }
   var createForm = document.getElementById("hpc-create-user-form");
+  var keyBox = document.getElementById("create-keybox");
+  var keyValue = document.getElementById("create-keyvalue");
+  document.getElementById("copy-key-btn").onclick = function () {
+    var key = keyValue.textContent || "";
+    if (!key) return;
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      window.prompt("API key をコピーしてください", key);
+      return;
+    }
+    navigator.clipboard.writeText(key).then(function () {
+      showMsg(document.getElementById("create-msg"), "API key をコピーしました", true);
+    }).catch(function () {
+      window.prompt("API key をコピーしてください", key);
+    });
+  };
   createForm.onsubmit = function (ev) {
     ev.preventDefault();
     var btn = document.getElementById("create-btn");
     var msg = document.getElementById("create-msg");
+    keyBox.className = "gx10-admin-keybox";
+    keyValue.textContent = "";
     btn.disabled = true;
     postAction({
       action: "create",
       username: document.getElementById("new-username").value.trim().toLowerCase(),
       password: document.getElementById("new-password").value,
       sudo: document.getElementById("new-sudo").checked
-    }).then(function () {
-      showMsg(msg, "ユーザーを作成しました", true);
+    }).then(function (body) {
+      if (body.api_key) {
+        keyValue.textContent = body.api_key;
+        keyBox.className = "gx10-admin-keybox visible";
+      }
+      if (body.warning) {
+        showWarn(msg, "ユーザーは作成しました。" + body.warning);
+      } else {
+        showMsg(msg, "ユーザーを作成しました", true);
+      }
       createForm.reset();
       if (createForm.getAttribute("data-default-sudo") === "true") {
         document.getElementById("new-sudo").checked = true;

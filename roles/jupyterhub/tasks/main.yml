@@ -75,6 +75,15 @@
     mode: '0644'
   register: config_file
 
+- name: JupyterHub 環境ファイルを配置
+  ansible.builtin.template:
+    src: jupyterhub.env.j2
+    dest: /etc/jupyterhub/jupyterhub.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
 - name: home.htmlを配置
   ansible.builtin.template:
     src: home.html.j2
@@ -154,6 +163,7 @@
       WorkingDirectory=/etc/jupyterhub
       Environment="PATH=/opt/jupyterhub/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       Environment="JUPYTERHUB_XSRF_ANONYMOUS_IP_CIDRS=127.0.0.0/8;10.0.0.0/8;172.16.0.0/12;::1/128"
+      EnvironmentFile=/etc/jupyterhub/jupyterhub.env
       ExecStart=/opt/jupyterhub/venv/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
       Restart=always
 

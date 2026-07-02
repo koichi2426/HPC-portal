@@ -60,6 +60,9 @@ import pwd
 import psutil
 import re
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from urllib.parse import urlparse
 
 nest_asyncio.apply()
@@ -126,6 +129,13 @@ HPC_PORTAL_USER_MIN_UID = {{ hpc_portal_user_min_uid | default(1000) | int }}
 HPC_PORTAL_GRANT_SUDO = {{ hpc_portal_grant_sudo_on_create | default(true) | bool }}
 HPC_PORTAL_SUDO_GROUP = "{{ hpc_portal_user_sudo_group | default('sudo') }}"
 c.Authenticator.admin_users = set(HPC_PORTAL_ADMIN_USERS)
+
+HPC_LITELLM_INTERNAL_BASE_URL = os.environ.get("HPC_LITELLM_INTERNAL_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+HPC_LITELLM_PUBLIC_BASE_URL = os.environ.get("HPC_LITELLM_PUBLIC_BASE_URL", "")
+HPC_LITELLM_ADMIN_URL = os.environ.get("HPC_LITELLM_ADMIN_URL", "")
+HPC_LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+OPENWEBUI_LITELLM_BASE_URL = os.environ.get("OPENWEBUI_LITELLM_BASE_URL", "")
+OPENWEBUI_LITELLM_API_KEY = os.environ.get("OPENWEBUI_LITELLM_API_KEY", "")
 
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
 c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
@@ -284,6 +294,8 @@ c.JupyterHub.template_vars = {
     "hpc_job_dns_domain": HPC_JOB_DNS_DOMAIN,
     "hpc_public_scheme": HPC_PUBLIC_SCHEME,
     "hpc_portal_admin_users": sorted(HPC_PORTAL_ADMIN_USERS),
+    "hpc_litellm_public_base_url": HPC_LITELLM_PUBLIC_BASE_URL,
+    "hpc_litellm_admin_url": HPC_LITELLM_ADMIN_URL,
 }
 
 
@@ -1686,6 +1698,125 @@ def _hpc_set_linux_password(username: str, password: str) -> str | None:
     return _hpc_ensure_user_home(username)
 
 
+def _hpc_litellm_enabled() -> bool:
+    return bool(HPC_LITELLM_INTERNAL_BASE_URL and HPC_LITELLM_MASTER_KEY)
+
+
+def _hpc_litellm_request(path: str, payload: dict | None = None, method: str = "POST") -> dict:
+    if not _hpc_litellm_enabled():
+        raise RuntimeError("LiteLLM Admin API が未設定です")
+    url = HPC_LITELLM_INTERNAL_BASE_URL + path
+    data = None
+    headers = {
+        "Authorization": f"Bearer {HPC_LITELLM_MASTER_KEY}",
+        "Accept": "application/json",
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"LiteLLM API HTTP {exc.code}: {body[:300]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"LiteLLM API 接続失敗: {exc.reason}") from exc
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"raw": raw}
+
+
+def _hpc_litellm_ensure_user(username: str) -> str | None:
+    if not _hpc_litellm_enabled():
+        return "LiteLLM Admin API が未設定のため API key は未発行です"
+    payload = {
+        "user_id": username,
+        "user_email": f"{username}@hpc-portal.local",
+        "user_role": "internal_user",
+    }
+    try:
+        _hpc_litellm_request("/user/new", payload)
+        return None
+    except RuntimeError as exc:
+        # 既に存在する場合は key 発行に進める。LiteLLM の重複エラー文言はバージョンで揺れるため広めに許容する。
+        msg = str(exc)
+        if "already" in msg.lower() or "exists" in msg.lower() or "duplicate" in msg.lower():
+            return None
+        return msg
+
+
+def _hpc_litellm_generate_key(username: str) -> tuple[str | None, str | None]:
+    if not _hpc_litellm_enabled():
+        return None, "LiteLLM Admin API が未設定のため API key は未発行です"
+    user_err = _hpc_litellm_ensure_user(username)
+    if user_err:
+        return None, user_err
+    payload = {
+        "user_id": username,
+        "key_alias": username,
+        "metadata": {
+            "linux_username": username,
+            "source": "hpc-portal",
+        },
+    }
+    try:
+        data = _hpc_litellm_request("/key/generate", payload)
+    except RuntimeError as exc:
+        return None, str(exc)
+    key = data.get("key") or data.get("token")
+    if not key:
+        return None, "LiteLLM key 発行レスポンスに key が含まれていません"
+    return key, None
+
+
+def _hpc_litellm_delete_user_keys(username: str) -> str | None:
+    if not _hpc_litellm_enabled():
+        return "LiteLLM Admin API が未設定のため key 無効化は未確認です"
+    payload_candidates = (
+        {"user_ids": [username]},
+        {"user_id": username},
+    )
+    last_err = None
+    for payload in payload_candidates:
+        try:
+            _hpc_litellm_request("/user/delete", payload)
+            return None
+        except RuntimeError as exc:
+            last_err = str(exc)
+    return last_err or "LiteLLM user/key 無効化に失敗しました"
+
+
+_HPC_OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
+
+
+def _hpc_ollama_cmd(action: str, model: str | None = None) -> tuple[dict | None, str | None]:
+    cmd = ["/usr/local/sbin/hpc-ollama", action]
+    if model:
+        if not _HPC_OLLAMA_MODEL_RE.fullmatch(model):
+            return None, "モデル名に使用できない文字が含まれています"
+        cmd.append(model)
+    result = _hpc_run_cmd(cmd)
+    body = (result.stdout or "").strip()
+    if result.returncode != 0:
+        return None, (result.stderr or result.stdout or "hpc-ollama failed").strip()
+    if action == "status" and body:
+        try:
+            return json.loads(body), None
+        except json.JSONDecodeError:
+            return {"raw": body}, None
+    if action in {"tags", "ps"} and body:
+        try:
+            return json.loads(body), None
+        except json.JSONDecodeError:
+            return {"raw": body}, None
+    return {"ok": True, "output": body}, None
+
+
 class HpcAdminUsersPageHandler(BaseHandler):
     """Linux ユーザー管理 UI（/hub/admin/users）"""
 
@@ -1758,8 +1889,15 @@ class HpcAdminUsersApiHandler(BaseHandler):
             err = _hpc_create_linux_user(username, password, grant_sudo)
             if err:
                 return self._api_error(400, err)
+            api_key, key_warning = _hpc_litellm_generate_key(username)
             self.set_status(201)
-            self.write({"ok": True, "username": username})
+            body = {"ok": True, "username": username}
+            if api_key:
+                body["api_key"] = api_key
+                body["api_base_url"] = HPC_LITELLM_PUBLIC_BASE_URL
+            if key_warning:
+                body["warning"] = "API key 未発行: " + key_warning
+            self.write(body)
             return
 
         if action == "delete":
@@ -1768,7 +1906,11 @@ class HpcAdminUsersApiHandler(BaseHandler):
             err = _hpc_delete_linux_user(username, actor)
             if err:
                 return self._api_error(400, err)
-            self.write({"ok": True})
+            key_warning = _hpc_litellm_delete_user_keys(username)
+            body = {"ok": True}
+            if key_warning:
+                body["warning"] = "LiteLLM key 無効化未確認: " + key_warning
+            self.write(body)
             return
 
         if action == "password":
@@ -1781,6 +1923,22 @@ class HpcAdminUsersApiHandler(BaseHandler):
             if err:
                 return self._api_error(400, err)
             self.write({"ok": True})
+            return
+
+        if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_delete"}:
+            mapping = {
+                "ollama_start": "start",
+                "ollama_stop": "stop",
+                "ollama_status": "status",
+                "ollama_tags": "tags",
+                "ollama_pull": "pull",
+                "ollama_delete": "delete",
+            }
+            model = str(body.get("model", "")).strip()
+            data, err = _hpc_ollama_cmd(mapping[action], model if action in {"ollama_pull", "ollama_delete"} else None)
+            if err:
+                return self._api_error(400, err)
+            self.write({"ok": True, "data": data})
             return
 
         self._api_error(400, "不明な action です")
@@ -2254,10 +2412,12 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
     HF_HUB_CACHE_DIR="$HF_HOME_DIR/hub"
     SENTENCE_TRANSFORMERS_HOME_DIR="$OPENWEBUI_DATA_DIR/sentence-transformers"
     TRANSFORMERS_CACHE_DIR="$HF_HOME_DIR/transformers"
+    LITELLM_BASE_URL="$(printenv OPENWEBUI_LITELLM_BASE_URL || true)"
+    LITELLM_API_KEY="$(printenv OPENWEBUI_LITELLM_API_KEY || true)"
     mkdir -p "$OPENWEBUI_DATA_DIR/static" "$HOME/.ollama" "$HF_HUB_CACHE_DIR" "$SENTENCE_TRANSFORMERS_HOME_DIR" "$TRANSFORMERS_CACHE_DIR"
     JOB_HOST="job$(printenv SLURM_JOB_ID || echo 0).{{ jupyterhub_job_dns_domain }}"
     WEBUI_EXTERNAL_URL="{{ hpc_public_scheme | default('https') }}://$JOB_HOST/"
-    exec apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static OLLAMA_MODELS=$HOME/.ollama/models WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
+    exec apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static ENABLE_OPENAI_API=True OPENAI_API_BASE_URL=$LITELLM_BASE_URL OPENAI_API_KEY=$LITELLM_API_KEY ENABLE_OLLAMA_API=False WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
 else
     IMAGE_PATH="/opt/images/jupyter-cpu.sif"
     exec apptainer exec --nv $HPC_APPTAINER_BIND "$IMAGE_PATH" {bs}cmd{be} --ip=0.0.0.0

@@ -79,6 +79,21 @@
     </div>
   </div>
 
+  {% if hpc_litellm_public_base_url %}
+  <div class="gx10-resource-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+      <div>
+        <div style="font-weight:700; color:#c9d1d9;">LiteLLM API</div>
+        <div style="font-size:12px; color:#8b949e; margin-top:3px;">OpenAI 互換 API Base URL</div>
+      </div>
+      <code style="color:#c9d1d9; background:#010409; border:1px solid #30363d; border-radius:8px; padding:8px; overflow-wrap:anywhere;">{{ hpc_litellm_public_base_url }}</code>
+    </div>
+    <pre style="margin:12px 0 0; white-space:pre-wrap; color:#8b949e; background:#010409; border:1px solid #30363d; border-radius:8px; padding:10px; font-size:12px;">curl {{ hpc_litellm_public_base_url }}/models \
+  -H "Authorization: Bearer sk-..."</pre>
+    <div style="font-size:12px; color:#8b949e; margin-top:8px;">API key は管理者から共有されたものを使用してください。紛失した場合は管理者に再発行を依頼してください。</div>
+  </div>
+  {% endif %}
+
   <div style="margin-bottom:10px; color:#8b949e;">起動中のアプリケーション</div>
 
   {% if user and user.spawners %}
