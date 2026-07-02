@@ -1,0 +1,53 @@
+---
+- name: PostgreSQL / LiteLLM DB secrets が設定済みか確認
+  ansible.builtin.assert:
+    that:
+      - litellm_database_password is defined
+      - litellm_database_password | length > 0
+    fail_msg: "litellm_database_password が未設定です。group_vars/all/secret.yml を作成してください。"
+
+- name: PostgreSQL パッケージをインストール
+  ansible.builtin.package:
+    name:
+      - postgresql
+      - postgresql-client
+    state: present
+
+- name: PostgreSQL を有効化して起動
+  ansible.builtin.systemd:
+    name: postgresql
+    enabled: true
+    state: started
+  when: not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: LiteLLM 用 database user を作成・更新
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ litellm_database_user }}'" | grep -q 1; then
+      sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER USER \"{{ litellm_database_user }}\" WITH PASSWORD '{{ litellm_database_password | replace("'", "''") }}';"
+    else
+      sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE USER \"{{ litellm_database_user }}\" WITH PASSWORD '{{ litellm_database_password | replace("'", "''") }}';"
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  no_log: true
+
+- name: LiteLLM 用 database を作成
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ litellm_database_name }}'" | grep -q 1; then
+      sudo -u postgres createdb -O "{{ litellm_database_user }}" "{{ litellm_database_name }}"
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: LiteLLM 用 database/schema 権限を付与
+  ansible.builtin.shell: |
+    set -euo pipefail
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "{{ litellm_database_name }}" -c "GRANT ALL PRIVILEGES ON DATABASE \"{{ litellm_database_name }}\" TO \"{{ litellm_database_user }}\";"
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "{{ litellm_database_name }}" -c "GRANT ALL ON SCHEMA public TO \"{{ litellm_database_user }}\";"
+  args:
+    executable: /bin/bash
+  changed_when: false

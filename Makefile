@@ -11,7 +11,7 @@ PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
 .PHONY: help setup check ping deploy deploy-safe cleanup \
-	common slurm jupyterhub apptainer cloudflared models \
+	common slurm postgres litellm ollama jupyterhub apptainer cloudflared models \
 	status gpu cuda services processes
 
 help: ## ターゲット一覧
@@ -49,6 +49,15 @@ common: check-inv ## common ロールのみ
 slurm: check-inv ## slurm ロールのみ
 	$(PB) site.yml --tags slurm
 
+postgres: check-inv ## postgres ロールのみ
+	$(PB) site.yml --tags postgres
+
+litellm: check-inv ## LiteLLM / PostgreSQL ロールのみ
+	$(PB) site.yml --tags litellm
+
+ollama: check-inv ## shared Ollama ロールのみ
+	$(PB) site.yml --tags ollama
+
 jupyterhub: check-inv ## jupyterhub ロールのみ
 	$(PB) site.yml --tags jupyterhub
 
@@ -71,7 +80,7 @@ cuda: check-inv ## CUDA Toolkit / nvcc 確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "set -e; echo '=== nvcc (PATH) ==='; (command -v nvcc && nvcc --version) || echo 'nvcc: not in PATH'; echo '=== cuda install roots ==='; ls -d /usr/local/cuda* 2>/dev/null || true; for d in /usr/local/cuda /usr/local/cuda-*; do [ -x \"$$d/bin/nvcc\" ] && echo \"found: $$d/bin/nvcc\" && $$d/bin/nvcc --version; done; echo '=== nvidia-smi ==='; nvidia-smi -L"
 
 services: check-inv ## JupyterHub / Slurm サービス状態
-	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared; journalctl -u jupyterhub -n 30 --no-pager"
+	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql; journalctl -u jupyterhub -n 30 --no-pager; journalctl -u litellm -n 20 --no-pager"
 
 processes: check-inv ## ユーザーの残存プロセス確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "pgrep -au \$$(whoami) -f 'open_webui|ollama|apptainer|jupyter' || true"

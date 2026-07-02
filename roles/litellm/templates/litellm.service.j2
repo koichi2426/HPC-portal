@@ -1,0 +1,16 @@
+[Unit]
+Description=LiteLLM Proxy
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User={{ litellm_user }}
+Group={{ litellm_user }}
+WorkingDirectory=/var/lib/litellm
+EnvironmentFile=/etc/litellm/litellm.env
+ExecStart=/opt/litellm/venv/bin/litellm --config /etc/litellm/config.yaml --host {{ litellm_host }} --port {{ litellm_port }}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

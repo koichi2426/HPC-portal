@@ -1,0 +1,83 @@
+---
+- name: LiteLLM secrets が設定済みか確認
+  ansible.builtin.assert:
+    that:
+      - litellm_master_key is defined
+      - litellm_master_key | length > 0
+      - litellm_salt_key is defined
+      - litellm_salt_key | length > 0
+      - litellm_database_password is defined
+      - litellm_database_password | length > 0
+    fail_msg: "LiteLLM secrets が未設定です。group_vars/all/secret.yml を作成してください。"
+
+- name: LiteLLM 用 OS ユーザーを作成
+  ansible.builtin.user:
+    name: "{{ litellm_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: LiteLLM 用ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(litellm_user) }}"
+    group: "{{ item.group | default(litellm_user) }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /opt/litellm, owner: root, group: root, mode: "0755" }
+    - { path: /etc/litellm, owner: root, group: "{{ litellm_user }}", mode: "0750" }
+    - { path: /var/lib/litellm, mode: "0750" }
+
+- name: LiteLLM Python venv とパッケージを用意
+  ansible.builtin.pip:
+    name:
+      - "litellm[proxy]"
+      - psycopg2-binary
+    virtualenv: /opt/litellm/venv
+    virtualenv_command: python3 -m venv
+    state: latest
+
+- name: LiteLLM 設定ファイルを配置
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/litellm/config.yaml
+    owner: root
+    group: "{{ litellm_user }}"
+    mode: "0640"
+  notify: LiteLLM を再起動
+
+- name: LiteLLM 環境ファイルを配置
+  ansible.builtin.template:
+    src: litellm.env.j2
+    dest: /etc/litellm/litellm.env
+    owner: root
+    group: "{{ litellm_user }}"
+    mode: "0640"
+  notify: LiteLLM を再起動
+  no_log: true
+
+- name: LiteLLM systemd ユニットを配置
+  ansible.builtin.template:
+    src: litellm.service.j2
+    dest: /etc/systemd/system/litellm.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: LiteLLM を再起動
+
+- name: systemd をリロード
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: LiteLLM を有効化して起動
+  ansible.builtin.systemd:
+    name: litellm
+    enabled: true
+    state: started
+  when: not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: 再起動抑止モード時は LiteLLM 設定変更が未反映であることを通知
+  ansible.builtin.debug:
+    msg: "hpc_skip_service_restarts=true のため litellm は再起動していません。反映には通常デプロイ（site.yml）を実行してください。"
+  when: hpc_skip_service_restarts | default(false) | bool

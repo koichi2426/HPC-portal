@@ -18,11 +18,23 @@ jupyterhub_public_domain: "{{ hpc_hub_subdomain | default('hub') }}.{{ hpc_base_
 # 各ジョブのサブドメイン接尾辞（例: https://job4.example.com）
 jupyterhub_job_dns_domain: "{{ hpc_base_domain | default('example.com') }}"
 
+# LiteLLM 公開ホスト
+hpc_llm_subdomain: llm
+hpc_llm_public_domain: "{{ hpc_llm_subdomain | default('llm') }}.{{ hpc_base_domain | default('example.com') }}"
+hpc_llm_admin_subdomain: llm-admin
+hpc_llm_admin_public_domain: "{{ hpc_llm_admin_subdomain | default('llm-admin') }}.{{ hpc_base_domain | default('example.com') }}"
+hpc_llm_public_base_url: "https://{{ hpc_llm_public_domain }}/v1"
+hpc_llm_admin_url: "https://{{ hpc_llm_admin_public_domain }}/ui"
+
 cloudflared_tunnel_name: hpc
 # 後方互換: cloudflared_ingress 未指定時のみ使用
 cloudflared_hostname: "{{ jupyterhub_public_domain }}"
-# gx10.<domain> と job<N>.<domain> はどちらも *.<domain> に一致
+# LiteLLM ホストは *.domain にも一致するため wildcard より前に置く
 cloudflared_ingress:
+  - hostname: "{{ hpc_llm_public_domain }}"
+    port: "{{ litellm_port | default(4000) }}"
+  - hostname: "{{ hpc_llm_admin_public_domain }}"
+    port: "{{ litellm_port | default(4000) }}"
   - hostname: "*.{{ hpc_base_domain | default('example.com') }}"
 
 # true のとき設定反映のみ行い、サービス再起動を抑止（運用中の 502 瞬断を回避）
@@ -46,3 +58,35 @@ hpc_portal_protected_users:
 hpc_portal_user_min_uid: 1000
 hpc_portal_grant_sudo_on_create: true
 hpc_portal_user_sudo_group: sudo
+
+# LiteLLM / PostgreSQL
+litellm_user: litellm
+litellm_host: "127.0.0.1"
+litellm_port: 4000
+litellm_database_host: "127.0.0.1"
+litellm_database_port: 5432
+litellm_database_name: litellm
+litellm_database_user: litellm
+litellm_public_base_url: "{{ hpc_llm_public_base_url }}"
+litellm_admin_url: "{{ hpc_llm_admin_url }}"
+litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
+litellm_initial_models:
+  - name: ollama-default
+    backend: ollama/llama3.1
+
+# shared Ollama
+ollama_service_user: hpc-ollama
+ollama_service_home: /var/lib/hpc-ollama
+ollama_host: "127.0.0.1"
+ollama_port: 11434
+ollama_models_dir: /srv/ollama/models
+ollama_manage_binary: true
+ollama_slurm_job_name: shared-ollama
+ollama_slurm_partition: debug
+ollama_slurm_cpus: 4
+ollama_slurm_memory: 16G
+ollama_slurm_gpus: 1
+ollama_slurm_time: "INFINITE"
+
+# Open WebUI -> LiteLLM
+openwebui_litellm_base_url: "{{ litellm_internal_base_url }}/v1"
