@@ -135,7 +135,14 @@ HPC_LITELLM_PUBLIC_BASE_URL = os.environ.get("HPC_LITELLM_PUBLIC_BASE_URL", "")
 HPC_LITELLM_ADMIN_URL = os.environ.get("HPC_LITELLM_ADMIN_URL", "")
 HPC_LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 OPENWEBUI_LITELLM_BASE_URL = os.environ.get("OPENWEBUI_LITELLM_BASE_URL", "")
+OPENWEBUI_LITELLM_API_KEY_FILE = os.environ.get("OPENWEBUI_LITELLM_API_KEY_FILE", "")
 OPENWEBUI_LITELLM_API_KEY = os.environ.get("OPENWEBUI_LITELLM_API_KEY", "")
+if not OPENWEBUI_LITELLM_API_KEY and OPENWEBUI_LITELLM_API_KEY_FILE:
+    try:
+        with open(OPENWEBUI_LITELLM_API_KEY_FILE, "r", encoding="utf-8") as _f:
+            OPENWEBUI_LITELLM_API_KEY = _f.read().strip()
+    except OSError:
+        OPENWEBUI_LITELLM_API_KEY = ""
 
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
 c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
@@ -2261,6 +2268,10 @@ c.HPCSlurmSpawner.req_runtime = "08:00:00"
 c.HPCSlurmSpawner.req_partition = "debug"
 c.Spawner.start_timeout = 300
 c.Spawner.cmd = ["jupyterhub-singleuser"]
+c.Spawner.environment = {
+    "OPENWEBUI_LITELLM_BASE_URL": OPENWEBUI_LITELLM_BASE_URL,
+    "OPENWEBUI_LITELLM_API_KEY": OPENWEBUI_LITELLM_API_KEY,
+}
 c.Spawner.apply_user_options = apply_user_options
 
 # 5. 起動スクリプト (Apptainer版・多重エスケープ回避)

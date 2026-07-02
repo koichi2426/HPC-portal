@@ -90,3 +90,5 @@ ollama_slurm_time: "INFINITE"
 
 # Open WebUI -> LiteLLM
 openwebui_litellm_base_url: "{{ litellm_internal_base_url }}/v1"
+openwebui_litellm_api_key_file: /etc/litellm/openwebui.key
+openwebui_litellm_key_alias: openwebui
