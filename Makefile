@@ -11,7 +11,7 @@ PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
 .PHONY: help setup check ping deploy deploy-safe cleanup \
-	common slurm postgres litellm ollama jupyterhub apptainer cloudflared models \
+	common slurm postgres litellm ollama jupyterhub apptainer cloudflared \
 	status gpu cuda services processes
 
 help: ## ターゲット一覧
@@ -66,9 +66,6 @@ apptainer: check-inv ## apptainer ロールのみ
 
 cloudflared: check-inv ## cloudflared ロールのみ
 	$(PB) site.yml --tags cloudflared
-
-models: check-inv ## LLM / Ollama モデル取得のみ
-	$(PB) site.yml --tags models
 
 status: check-inv ## Slurm ジョブ・ディスク空き
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "squeue; echo '---'; df -h /"

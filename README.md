@@ -74,7 +74,7 @@ sequenceDiagram
    ```
 2. **デプロイ先に運用ユーザーを作成**: Playbook は Unix ユーザーを自動作成しません。後述する `inventory/production.ini` の **`ansible_user` と同じ名前のユーザー**を、対象サーバー（gx10 等）にあらかじめ用意してください。
 
-   - **ホームディレクトリ**（`/home/<ansible_user>/`）に、LLM モデル（`~/models`）、Ollama（`~/.ollama`）、Slurm 経由で起動するアプリのデータが置かれます
+   - **ホームディレクトリ**（`/home/<ansible_user>/`）には、Slurm 経由で起動するアプリのデータが置かれます。共有 Ollama のモデルは `/srv/ollama/models` に置かれます
    - 手元の PC から、そのユーザーで **SSH 公開鍵認証**できること
    - `site.yml` は `become: true` で root 昇格するため、**パスワードなし sudo**（`sudo` グループ等）が必要です
 
@@ -109,7 +109,7 @@ sequenceDiagram
 | `make cleanup` | クリーンアップ（`cleanup.yml`） |
 | `make jupyterhub` | JupyterHub ロールのみ |
 | `make slurm` | Slurm ロールのみ |
-| `make models` | LLM / Ollama モデル取得（`target_models` 外のモデル・GGUF・未完 pull も削除） |
+| `make ollama` | shared Ollama ロールのみ |
 | `make apptainer` | Apptainer ロールのみ |
 | `make status` | Slurm ジョブ・ディスク空き |
 | `make gpu` | GPU / VRAM |

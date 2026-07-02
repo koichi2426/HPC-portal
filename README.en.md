@@ -74,7 +74,7 @@ sequenceDiagram
    ```
 2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `inventory/production.ini`.
 
-   - Models (`~/models`), Ollama (`~/.ollama`), and Slurm jobs run under that home directory
+   - Slurm-launched app data lives under that home directory. Shared Ollama models live in `/srv/ollama/models`
    - **SSH public-key login** from your control machine
    - **Passwordless sudo** is required (`site.yml` uses `become: true`)
 
@@ -106,7 +106,7 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make deploy` | Full deploy (`site.yml`) |
 | `make deploy-safe` | Deploy without service restarts (`site_safe.yml`) |
 | `make cleanup` | Cleanup playbook |
-| `make jupyterhub` / `make slurm` / `make models` | Single role or tag |
+| `make jupyterhub` / `make slurm` / `make ollama` | Single role or tag |
 | `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
 
 Override inventory: `make deploy INV=inventory/staging.ini`
