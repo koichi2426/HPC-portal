@@ -1,0 +1,76 @@
+#!/bin/bash
+set -euo pipefail
+
+JOB_NAME="{{ ollama_slurm_job_name }}"
+SERVICE_USER="{{ ollama_service_user }}"
+SBATCH_SCRIPT="/opt/hpc-portal/ollama/shared-ollama.sbatch"
+OLLAMA_URL="http://{{ ollama_host }}:{{ ollama_port }}"
+
+cmd="${1:-}"
+model="${2:-}"
+
+running_job_ids() {
+  squeue -h -u "$SERVICE_USER" -n "$JOB_NAME" -o '%A' || true
+}
+
+case "$cmd" in
+  start)
+    if [ -n "$(running_job_ids)" ]; then
+      echo "shared ollama already running"
+      exit 0
+    fi
+    exec sudo -u "$SERVICE_USER" sbatch "$SBATCH_SCRIPT"
+    ;;
+  stop)
+    ids="$(running_job_ids)"
+    if [ -z "$ids" ]; then
+      echo "shared ollama is not running"
+      exit 0
+    fi
+    exec scancel $ids
+    ;;
+  status)
+    ids="$(running_job_ids)"
+    if [ -z "$ids" ]; then
+      echo '{"running":false,"api":false}'
+      exit 0
+    fi
+    ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
+    if curl -fsS "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
+      printf '{"running":true,"api":true,"job_ids":"%s"}\n' "$ids_csv"
+    else
+      printf '{"running":true,"api":false,"job_ids":"%s"}\n' "$ids_csv"
+    fi
+    ;;
+  tags)
+    exec curl -fsS "$OLLAMA_URL/api/tags"
+    ;;
+  ps)
+    exec curl -fsS "$OLLAMA_URL/api/ps"
+    ;;
+  pull)
+    if [ -z "$model" ]; then
+      echo "model required" >&2
+      exit 2
+    fi
+    safe_model="$(printf '%s' "$model" | tr '/:' '__')"
+    log="/var/log/hpc-ollama/pull-${safe_model}.log"
+    sudo -u "$SERVICE_USER" nohup curl -fsS "$OLLAMA_URL/api/pull" \
+      -H 'Content-Type: application/json' \
+      -d "{\"name\":\"$model\"}" >"$log" 2>&1 &
+    echo "{\"status\":\"pulling\",\"model\":\"$model\",\"log\":\"$log\"}"
+    ;;
+  delete)
+    if [ -z "$model" ]; then
+      echo "model required" >&2
+      exit 2
+    fi
+    exec sudo -u "$SERVICE_USER" curl -fsS -X DELETE "$OLLAMA_URL/api/delete" \
+      -H 'Content-Type: application/json' \
+      -d "{\"name\":\"$model\"}"
+    ;;
+  *)
+    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|delete <model>" >&2
+    exit 2
+    ;;
+esac
