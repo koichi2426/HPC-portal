@@ -2385,7 +2385,7 @@ fi
 
 APP_CHOICE="{bs}app_choice{be}"
 if [ "$APP_CHOICE" = "open-webui" ]; then
-    OPENWEBUI_IMAGE="/opt/images/openwebui-ollama.sif"
+    OPENWEBUI_IMAGE="/opt/images/openwebui.sif"
     SERVICE_PORT="$(printenv JUPYTERHUB_SERVICE_PORT || true)"
     SERVICE_URL="$(printenv JUPYTERHUB_SERVICE_URL || true)"
     CMDLINE="{bs}cmd{be}"

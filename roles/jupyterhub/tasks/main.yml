@@ -239,7 +239,7 @@
 
 - name: Ollamaにモデルを登録
   ansible.builtin.shell: |
-    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
+    apptainer exec --nv /opt/images/openwebui.sif bash -c "
       export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
       ollama serve > /dev/null 2>&1 &
       sleep 10
@@ -253,7 +253,7 @@
 
 - name: Ollama公式ライブラリの大型モデルを取得
   ansible.builtin.shell: |
-    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
+    apptainer exec --nv /opt/images/openwebui.sif bash -c "
       export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
       ollama serve > /dev/null 2>&1 &
       sleep 10
@@ -282,7 +282,7 @@
 
 - name: リスト外のOllamaモデルを削除
   ansible.builtin.shell: |
-    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
+    apptainer exec --nv /opt/images/openwebui.sif bash -c "
       export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
       ollama serve > /dev/null 2>&1 &
       sleep 10

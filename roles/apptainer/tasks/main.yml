@@ -27,7 +27,7 @@
     mode: "0644"
   loop:
     - { src: jupyter-cpu.def }
-    - { src: openwebui-ollama.def }
+    - { src: openwebui.def }
     - { src: ubuntu-22.04-ttyd.def }
   register: apptainer_def_copy
 
@@ -36,14 +36,14 @@
     path: "{{ item.image }}"
   loop:
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
-    - { src: openwebui-ollama.def, image: /opt/images/openwebui-ollama.sif, def: /opt/apptainer/openwebui-ollama.def }
+    - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
   register: apptainer_image_stat
 
 - name: SIFイメージをビルド（定義更新時は再作成）
   ansible.builtin.command: "apptainer build --force {{ item.image }} {{ item.def }}"
   loop:
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
-    - { src: openwebui-ollama.def, image: /opt/images/openwebui-ollama.sif, def: /opt/apptainer/openwebui-ollama.def }
+    - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
   when: >
     (apptainer_def_copy.results
       | selectattr('item.src', 'equalto', item.src)
@@ -63,6 +63,6 @@
   loop:
     - { image: /opt/images/jupyter-cpu.sif, cmd: batchspawner-singleuser }
     - { image: /opt/images/jupyter-cpu.sif, cmd: jupyterhub-singleuser }
-    - { image: /opt/images/openwebui-ollama.sif, cmd: python3 }
-    - { image: /opt/images/openwebui-ollama.sif, cmd: uvicorn }
+    - { image: /opt/images/openwebui.sif, cmd: python3 }
+    - { image: /opt/images/openwebui.sif, cmd: uvicorn }
   changed_when: false
