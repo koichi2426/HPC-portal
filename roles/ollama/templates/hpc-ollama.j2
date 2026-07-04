@@ -5,6 +5,11 @@ JOB_NAME="{{ ollama_slurm_job_name }}"
 SERVICE_USER="{{ ollama_service_user }}"
 SBATCH_SCRIPT="/opt/hpc-portal/ollama/shared-ollama.sbatch"
 OLLAMA_URL="http://{{ ollama_host }}:{{ ollama_port }}"
+DEFAULT_CPUS="{{ ollama_slurm_default_cpus }}"
+DEFAULT_MEMORY="{{ ollama_slurm_default_memory }}"
+GPUS="{{ ollama_slurm_gpus | default(1) }}"
+ALLOWED_CPUS="{{ ollama_slurm_allowed_cpus | default([4, 8, 12, 16, 20]) | join(' ') }}"
+ALLOWED_MEMORY="{{ ollama_slurm_allowed_memory | default(['16G', '32G', '64G', '96G', '112G']) | join(' ') }}"
 
 cmd="${1:-}"
 model="${2:-}"
@@ -13,13 +18,67 @@ running_job_ids() {
   squeue -h -u "$SERVICE_USER" -n "$JOB_NAME" -o '%A' || true
 }
 
+contains_word() {
+  value="$1"
+  shift
+  for candidate in "$@"; do
+    if [ "$value" = "$candidate" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+parse_start_args() {
+  cpus="$DEFAULT_CPUS"
+  memory="$DEFAULT_MEMORY"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cpus)
+        cpus="${2:-}"
+        shift 2
+        ;;
+      --memory)
+        memory="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "unknown start option: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+  # shellcheck disable=SC2086
+  if ! contains_word "$cpus" $ALLOWED_CPUS; then
+    echo "invalid cpus: $cpus" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC2086
+  if ! contains_word "$memory" $ALLOWED_MEMORY; then
+    echo "invalid memory: $memory" >&2
+    exit 2
+  fi
+}
+
 case "$cmd" in
   start)
-    if [ -n "$(running_job_ids)" ]; then
-      echo "shared ollama already running"
+    shift || true
+    parse_start_args "$@"
+    ids="$(running_job_ids)"
+    if [ -n "$ids" ]; then
+      ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
+      printf '{"status":"already_running","job_ids":"%s"}\n' "$(json_escape "$ids_csv")"
       exit 0
     fi
-    exec sudo -u "$SERVICE_USER" sbatch "$SBATCH_SCRIPT"
+    exec sudo -u "$SERVICE_USER" sbatch \
+      --cpus-per-task="$cpus" \
+      --mem="$memory" \
+      --gres="gpu:$GPUS" \
+      "$SBATCH_SCRIPT"
     ;;
   stop)
     ids="$(running_job_ids)"
@@ -36,10 +95,20 @@ case "$cmd" in
       exit 0
     fi
     ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
-    if curl -fsS "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
-      printf '{"running":true,"api":true,"job_ids":"%s"}\n' "$ids_csv"
+    first_id="$(printf '%s\n' "$ids" | head -n 1)"
+    job_info="$(squeue -h -j "$first_id" -o '%C|%m|%b' 2>/dev/null | head -n 1 || true)"
+    job_cpus="$(printf '%s' "$job_info" | awk -F'|' '{print $1}')"
+    job_memory="$(printf '%s' "$job_info" | awk -F'|' '{print $2}')"
+    job_gres="$(printf '%s' "$job_info" | awk -F'|' '{print $3}')"
+    if printf '%s' "$job_gres" | grep -q 'gpu'; then
+      job_gpus="$GPUS"
     else
-      printf '{"running":true,"api":false,"job_ids":"%s"}\n' "$ids_csv"
+      job_gpus="$GPUS"
+    fi
+    if curl -fsS "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
+      printf '{"running":true,"api":true,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")"
+    else
+      printf '{"running":true,"api":false,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")"
     fi
     ;;
   tags)

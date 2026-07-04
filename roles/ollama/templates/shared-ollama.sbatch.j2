@@ -1,9 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name={{ ollama_slurm_job_name }}
 #SBATCH --partition={{ ollama_slurm_partition }}
-#SBATCH --cpus-per-task={{ ollama_slurm_cpus }}
-#SBATCH --mem={{ ollama_slurm_memory }}
-#SBATCH --gres=gpu:{{ ollama_slurm_gpus }}
 #SBATCH --time={{ ollama_slurm_time }}
 #SBATCH --output=/var/log/hpc-ollama/shared-ollama-%j.log
 

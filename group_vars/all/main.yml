@@ -81,8 +81,10 @@ ollama_models_dir: /srv/ollama/models
 ollama_apptainer_image: /opt/images/ollama.sif
 ollama_slurm_job_name: shared-ollama
 ollama_slurm_partition: debug
-ollama_slurm_cpus: 4
-ollama_slurm_memory: 16G
+ollama_slurm_default_cpus: 4
+ollama_slurm_default_memory: 16G
+ollama_slurm_allowed_cpus: [4, 8, 12, 16, 20]
+ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
 ollama_slurm_gpus: 1
 ollama_slurm_time: "INFINITE"
 
