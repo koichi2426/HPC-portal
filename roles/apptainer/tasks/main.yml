@@ -27,7 +27,6 @@
     mode: "0644"
   loop:
     - { src: jupyter-cpu.def }
-    - { src: ollama.def }
     - { src: openwebui.def }
     - { src: ubuntu-22.04-ttyd.def }
   register: apptainer_def_copy
