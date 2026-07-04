@@ -160,7 +160,7 @@ ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi 
 ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
 
 # 残存プロセス（YOUR_USER は ansible_user に置き換え）
-ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|curl' || true"
+ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
 
 # 部分デプロイ
 ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub

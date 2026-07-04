@@ -56,7 +56,7 @@
 
     - name: shared Ollama ユーザーの残存プロセスを強制終了
       ansible.builtin.shell: |
-        pgrep -u "{{ ollama_service_user | default('hpc-ollama') }}" -f '(ollama|curl)' \
+        pgrep -u "{{ ollama_service_user | default('hpc-ollama') }}" -f '(ollama|apptainer|curl)' \
           | xargs -r kill -9
       failed_when: false
 
@@ -87,6 +87,8 @@
         - /opt/hpc-portal/ollama
         - /var/log/hpc-ollama
         - /usr/local/sbin/hpc-ollama
+        - /opt/images/ollama.sif
+        - /opt/apptainer/ollama.def
         - /usr/local/bin/ollama
         - /usr/local/lib/ollama
         - /tmp/ollama-linux.tar.zst

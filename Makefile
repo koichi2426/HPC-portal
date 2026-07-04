@@ -90,4 +90,4 @@ services: check-inv ## JupyterHub / Slurm / LiteLLM / shared Ollama 状態
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "echo '--- systemd'; systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; echo '--- squeue'; squeue || true; echo '--- hpc-ollama'; if [ -x /usr/local/sbin/hpc-ollama ]; then /usr/local/sbin/hpc-ollama status || true; else echo 'hpc-ollama: not installed'; fi; echo '--- jupyterhub log'; journalctl -u jupyterhub -n 30 --no-pager; echo '--- litellm log'; journalctl -u litellm -n 20 --no-pager"
 
 processes: check-inv ## 実行ユーザー / hpc-ollama の残存プロセス確認
-	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "echo '--- ansible user'; pgrep -au \$$(whoami) -f 'open_webui|ollama|apptainer|jupyter' || true; echo '--- hpc-ollama'; pgrep -au hpc-ollama -f 'ollama|curl' || true"
+	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "echo '--- ansible user'; pgrep -au \$$(whoami) -f 'open_webui|ollama|apptainer|jupyter' || true; echo '--- hpc-ollama'; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
