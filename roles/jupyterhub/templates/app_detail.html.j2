@@ -99,14 +99,52 @@
     <div style="font-weight:700; color:#c9d1d9; margin-bottom:12px;">ジョブ・接続</div>
     <table class="gx10-detail-table">
       <tr><th>Slurm JOB ID</th><td>{% if d.job_id %}{{ d.job_id }}{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
+      {% if d.shared_ollama %}
+      <tr><th>API</th><td>{% if d.api %}<span style="color:#3fb950;">OK</span>{% else %}<span style="color:#e3b341;">起動待ち / 未応答</span>{% endif %}</td></tr>
+      <tr><th>Port</th><td>{{ d.port }}</td></tr>
+      <tr><th>Models dir</th><td><code style="font-size:11px;">{{ d.models_dir }}</code></td></tr>
+      {% if d.status_error %}
+      <tr><th>Warning</th><td style="color:#e3b341;">{{ d.status_error }}</td></tr>
+      {% endif %}
+      {% else %}
       <tr><th>ジョブホスト</th><td>{% if d.job_host %}{{ d.job_host }}{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
       <tr><th>Hub ポート</th><td>{% if d.port %}{{ d.port }}{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
       <tr><th>公開 URL</th><td>{% if d.job_url %}<a href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer" style="color:#58a6ff;">{{ d.job_url }}</a>{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
       {% if d.proxy_spec %}
       <tr><th>Proxy route</th><td><code style="font-size:11px;">{{ d.proxy_spec }}</code></td></tr>
       {% endif %}
+      {% endif %}
     </table>
   </div>
+
+  {% if d.shared_ollama %}
+  <div class="gx10-detail-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+      <div style="font-weight:700; color:#c9d1d9;">Ollama モデル</div>
+      <button type="button" class="gx10-primary-btn" style="border:0; cursor:pointer;" onclick="window.location.reload()">更新</button>
+    </div>
+    {% if d.models %}
+      <table class="gx10-detail-table">
+        {% for model in d.models %}
+        <tr>
+          <th>{{ model.name }}</th>
+          <td>
+            {% if model.size %}<span style="color:#8b949e;">{{ model.size }}</span>{% endif %}
+            <button type="button" class="gx10-delete-btn" style="padding:6px 10px; font-size:12px; float:right;" data-model="{{ model.name }}" onclick="hpcOllamaDelete(this)">delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <div style="font-size:13px; color:#8b949e;">モデルはまだありません。</div>
+    {% endif %}
+    <div style="display:flex; gap:8px; margin-top:14px; align-items:center;">
+      <input id="ollama-pull-model" type="text" placeholder="例: llama3.1:8b" style="flex:1; min-width:0; background:#010409; color:#c9d1d9; border:1px solid #30363d; border-radius:8px; padding:10px;">
+      <button type="button" class="gx10-primary-btn" style="border:0; cursor:pointer;" onclick="hpcOllamaPull(this)">Pull</button>
+    </div>
+    <div id="ollama-action-msg" style="font-size:12px; color:#8b949e; margin-top:10px;"></div>
+  </div>
+  {% endif %}
 
   {% if d.status == 'pending' %}
   <div style="margin-top:12px; height:6px; background:#30363d; border-radius:999px;">
@@ -115,10 +153,16 @@
   {% endif %}
 
   <div class="gx10-actions">
+    {% if d.shared_ollama %}
+    {% if d.active %}
+    <button type="button" class="gx10-delete-btn" onclick="hpcOllamaStop(this)">停止</button>
+    {% endif %}
+    {% else %}
     {% if d.active and d.job_url %}
     <a class="gx10-primary-btn" href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer">アプリを開く (JUMP) ↗</a>
     {% endif %}
     <button type="button" class="gx10-delete-btn" data-server-name="{{ d.server_name }}" onclick="hpcDeleteApp(this)">削除</button>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
@@ -160,6 +204,61 @@ function hpcDeleteApp(btn) {
       btn.textContent = "削除";
       alert("削除に失敗しました。しばらくしてから再度お試しください。");
     });
+}
+function hpcOllamaPost(payload) {
+  var xsrf = hpcReadXsrf();
+  return fetch("/hub/admin/users/api", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: Object.assign({"Content-Type": "application/json"}, xsrf ? {"X-XSRFToken": xsrf} : {}),
+    body: JSON.stringify(payload)
+  }).then(function (r) {
+    return r.json().then(function (body) {
+      if (!r.ok) throw new Error(body.error || "Ollama 操作に失敗しました");
+      return body;
+    });
+  });
+}
+function hpcOllamaMsg(text, ok) {
+  var el = document.getElementById("ollama-action-msg");
+  if (!el) return;
+  el.style.color = ok ? "#3fb950" : "#f85149";
+  el.textContent = text;
+}
+function hpcOllamaPull(btn) {
+  var input = document.getElementById("ollama-pull-model");
+  var model = input ? input.value.trim() : "";
+  if (!model) return hpcOllamaMsg("モデル名を入力してください", false);
+  btn.disabled = true;
+  hpcOllamaPost({action: "ollama_pull", model: model}).then(function (body) {
+    var data = body.data || {};
+    hpcOllamaMsg(data.output || data.raw || JSON.stringify(data), true);
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+  }).finally(function () {
+    btn.disabled = false;
+  });
+}
+function hpcOllamaDelete(btn) {
+  var model = btn.getAttribute("data-model") || "";
+  if (!model || !confirm(model + " を削除しますか？")) return;
+  btn.disabled = true;
+  hpcOllamaPost({action: "ollama_delete", model: model}).then(function () {
+    window.location.reload();
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+    btn.disabled = false;
+  });
+}
+function hpcOllamaStop(btn) {
+  if (!confirm("shared Ollama を停止しますか？")) return;
+  btn.disabled = true;
+  hpcOllamaPost({action: "ollama_stop"}).then(function () {
+    window.location.href = "/hub/home";
+  }).catch(function (e) {
+    alert(e.message);
+    btn.disabled = false;
+  });
 }
 </script>
 {% endblock %}

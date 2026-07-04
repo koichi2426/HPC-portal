@@ -96,6 +96,22 @@
 
   <div style="margin-bottom:10px; color:#8b949e;">起動中のアプリケーション</div>
 
+  {% if user and user.name in hpc_portal_admin_users %}
+    {% set shared = hpc_shared_ollama_detail() %}
+    {% if shared.active %}
+    <div class="gx10-app-card">
+      <a class="gx10-app-card-link" href="/hub/apps/shared-ollama">
+        <div>
+          <div style="font-weight:600; color:#c9d1d9;">shared Ollama{% if shared.job_id %} <span style="color:#8b949e;font-size:11px;">(job {{ shared.job_id }})</span>{% endif %}</div>
+          <div style="font-size:11px; color:#8b949e; margin-top:6px;">割り当て: {{ shared.allocation.cpu }} vCPU · {{ shared.allocation.memory }} RAM · 1 GPU · {{ shared.allocation.hours }}</div>
+          <div style="font-size:12px; color:#3fb950; margin-top:4px;">Running{% if shared.api %} / API OK{% else %} / API 起動待ち{% endif %}</div>
+          <div class="gx10-detail-hint">詳細を見る →</div>
+        </div>
+      </a>
+    </div>
+    {% endif %}
+  {% endif %}
+
   {% if user and user.spawners %}
     {% set has_any = false %}
     {% for name, spawner in user.spawners.items() %}

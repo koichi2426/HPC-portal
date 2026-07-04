@@ -334,6 +334,20 @@ class HpcAppDetailHandler(BaseHandler):
     async def get(self, server_name_path):
         user = self.current_user
         server_name = _hpc_server_name_from_path(server_name_path)
+        if server_name == "shared-ollama":
+            if not _hpc_is_portal_admin(user):
+                raise web.HTTPError(403, "管理者のみアクセスできます")
+            detail = _hpc_shared_ollama_detail_context()
+            html = await self.render_template(
+                "app_detail.html",
+                user=user,
+                detail=detail,
+                node_resources=_hpc_resource_snapshot(),
+                hpc_public_scheme=HPC_PUBLIC_SCHEME,
+                hpc_job_dns_domain=HPC_JOB_DNS_DOMAIN,
+            )
+            self.finish(html)
+            return
         spawner = user.spawners.get(server_name)
         if spawner is None or not (
             getattr(spawner, "active", False) or getattr(spawner, "pending", None)
@@ -1799,10 +1813,32 @@ def _hpc_litellm_delete_user_keys(username: str) -> str | None:
 
 
 _HPC_OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
+HPC_OLLAMA_ALLOWED_CPUS = tuple(str(v) for v in {{ ollama_slurm_allowed_cpus | default([4, 8, 12, 16, 20]) | to_json }})
+HPC_OLLAMA_ALLOWED_MEMORY = tuple(str(v) for v in {{ ollama_slurm_allowed_memory | default(['16G', '32G', '64G', '96G', '112G']) | to_json }})
+HPC_OLLAMA_DEFAULT_CPUS = str({{ ollama_slurm_default_cpus | default(4) | to_json }})
+HPC_OLLAMA_DEFAULT_MEMORY = str({{ ollama_slurm_default_memory | default('16G') | to_json }})
+HPC_OLLAMA_GPUS = "1"
+HPC_OLLAMA_MODELS_DIR = "{{ ollama_models_dir | default('/srv/ollama/models') }}"
+HPC_OLLAMA_PORT = "{{ ollama_port | default(11434) }}"
 
 
-def _hpc_ollama_cmd(action: str, model: str | None = None) -> tuple[dict | None, str | None]:
+def _hpc_validate_ollama_resources(cpus: str | None, memory: str | None) -> tuple[str | None, str | None, str | None]:
+    c = str(cpus or HPC_OLLAMA_DEFAULT_CPUS).strip()
+    m = str(memory or HPC_OLLAMA_DEFAULT_MEMORY).strip().upper()
+    if c not in HPC_OLLAMA_ALLOWED_CPUS:
+        return None, None, f"CPU は {', '.join(HPC_OLLAMA_ALLOWED_CPUS)} から選択してください"
+    if m not in HPC_OLLAMA_ALLOWED_MEMORY:
+        return None, None, f"Memory は {', '.join(HPC_OLLAMA_ALLOWED_MEMORY)} から選択してください"
+    return c, m, None
+
+
+def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = None, memory: str | None = None) -> tuple[dict | None, str | None]:
     cmd = ["/usr/local/sbin/hpc-ollama", action]
+    if action == "start":
+        c, m, err = _hpc_validate_ollama_resources(cpus, memory)
+        if err:
+            return None, err
+        cmd.extend(["--cpus", c or HPC_OLLAMA_DEFAULT_CPUS, "--memory", m or HPC_OLLAMA_DEFAULT_MEMORY])
     if model:
         if not _HPC_OLLAMA_MODEL_RE.fullmatch(model):
             return None, "モデル名に使用できない文字が含まれています"
@@ -1821,7 +1857,64 @@ def _hpc_ollama_cmd(action: str, model: str | None = None) -> tuple[dict | None,
             return json.loads(body), None
         except json.JSONDecodeError:
             return {"raw": body}, None
+    if action == "start" and body:
+        try:
+            data = json.loads(body)
+            data.setdefault("cpus", cpus or HPC_OLLAMA_DEFAULT_CPUS)
+            data.setdefault("memory", memory or HPC_OLLAMA_DEFAULT_MEMORY)
+            data.setdefault("gpus", HPC_OLLAMA_GPUS)
+            return data, None
+        except json.JSONDecodeError:
+            return {"ok": True, "output": body, "cpus": cpus or HPC_OLLAMA_DEFAULT_CPUS, "memory": memory or HPC_OLLAMA_DEFAULT_MEMORY, "gpus": HPC_OLLAMA_GPUS}, None
     return {"ok": True, "output": body}, None
+
+
+def _hpc_shared_ollama_detail_context() -> dict:
+    status, status_err = _hpc_ollama_cmd("status")
+    tags, tags_err = _hpc_ollama_cmd("tags")
+    status = status or {}
+    models = []
+    if tags and isinstance(tags, dict):
+        for item in tags.get("models", []) or []:
+            if isinstance(item, dict):
+                models.append({
+                    "name": item.get("name", ""),
+                    "size": item.get("size", ""),
+                    "modified_at": item.get("modified_at", ""),
+                })
+    running = bool(status.get("running"))
+    api = bool(status.get("api"))
+    return {
+        "shared_ollama": True,
+        "server_name": "shared-ollama",
+        "app_label": "shared Ollama",
+        "app_choice": "shared-ollama",
+        "status": "running" if running else "stopped",
+        "status_label": "実行中" if running else "停止中",
+        "active": running,
+        "pending": None,
+        "job_id": status.get("job_ids", ""),
+        "job_host": "",
+        "job_url": "",
+        "allocation": {
+            "cpu": status.get("cpus") or HPC_OLLAMA_DEFAULT_CPUS,
+            "memory": status.get("memory") or HPC_OLLAMA_DEFAULT_MEMORY,
+            "gpu": 1,
+            "gpu_label": "1 GPU",
+            "runtime": "{{ ollama_slurm_time | default('INFINITE') }}",
+            "hours": "無制限",
+        },
+        "port": HPC_OLLAMA_PORT,
+        "models_dir": HPC_OLLAMA_MODELS_DIR,
+        "api": api,
+        "models": models,
+        "status_error": status_err or tags_err or "",
+    }
+
+
+c.JupyterHub.template_vars.update({
+    "hpc_shared_ollama_detail": _hpc_shared_ollama_detail_context,
+})
 
 
 class HpcAdminUsersPageHandler(BaseHandler):
@@ -1942,7 +2035,12 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 "ollama_delete": "delete",
             }
             model = str(body.get("model", "")).strip()
-            data, err = _hpc_ollama_cmd(mapping[action], model if action in {"ollama_pull", "ollama_delete"} else None)
+            data, err = _hpc_ollama_cmd(
+                mapping[action],
+                model if action in {"ollama_pull", "ollama_delete"} else None,
+                str(body.get("cpus", "")).strip() if action == "ollama_start" else None,
+                str(body.get("memory", "")).strip() if action == "ollama_start" else None,
+            )
             if err:
                 return self._api_error(400, err)
             self.write({"ok": True, "data": data})
@@ -2004,6 +2102,21 @@ def make_options_form(spawner):
 
     active_sessions_html = ""
     user = spawner.user
+    if _hpc_is_portal_admin(user):
+        shared = _hpc_shared_ollama_detail_context()
+        if shared.get("active"):
+            active_sessions_html += (
+                f'<div style="background:rgba(88,166,255,0.10);border:1px solid rgba(88,166,255,0.35);'
+                f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
+                f'<div style="font-weight:600;">● shared Ollama <span style="color:#8b949e;font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
+                f'<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">'
+                f'<a href="/hub/apps/shared-ollama" style="text-decoration:none;color:#4facfe;font-weight:700;">詳細 →</a>'
+                f'</div></div>'
+                f'<span style="display:block;margin-top:6px;font-size:0.75rem;color:#8b949e;">割り当て: '
+                f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
+                f'</div>'
+            )
     for name, s in user.spawners.items():
         is_openwebui = _is_openwebui_spawner(s)
         app_label = "Open WebUI" if is_openwebui else "JupyterLab"
@@ -2068,6 +2181,17 @@ def make_options_form(spawner):
 
     if not active_sessions_html:
         active_sessions_html = '<div style="color:#555;font-size:0.8rem;font-style:italic;">No active sessions.</div>'
+
+    is_portal_admin = _hpc_is_portal_admin(user)
+    shared_ollama_option = '<option value="shared-ollama">shared Ollama (管理者専用)</option>' if is_portal_admin else ''
+    shared_cpu_options = "".join(
+        f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_CPUS else ""}>{html.escape(v)} vCPU</option>'
+        for v in HPC_OLLAMA_ALLOWED_CPUS
+    )
+    shared_memory_options = "".join(
+        f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_MEMORY else ""}>{html.escape(v)} RAM</option>'
+        for v in HPC_OLLAMA_ALLOWED_MEMORY
+    )
 
     lb = "{{ '{' }}"
     rb = "{{ '}' }}"
@@ -2148,7 +2272,16 @@ def make_options_form(spawner):
                 <select class="form-control input-dark" name="app_choice">
                     <option value="ubuntu-cli">Ubuntu CLI (JupyterLab)</option>
                     <option value="open-webui">Open WebUI (AI Chat)</option>
+                    {shared_ollama_option}
                 </select>
+                <div id="shared-ollama-options" style="display:none; border:1px solid rgba(88,166,255,0.25); background:rgba(88,166,255,0.06); border-radius:10px; padding:12px; margin-bottom:15px;">
+                    <div style="font-size:0.78rem;color:#8b949e;margin-bottom:10px;">shared Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                        <div><label class="label">Ollama vCPUs</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
+                        <div><label class="label">Ollama RAM</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
+                        <div><label class="label">Ollama GPUs</label><input type="text" class="form-control input-dark" value="1" readonly></div>
+                    </div>
+                </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                     <div><label class="label">vCPUs</label><input type="number" class="form-control input-dark" name="cpu" value="2" min="1"></div>
                     <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
@@ -2186,17 +2319,44 @@ def make_options_form(spawner):
         const form = document.querySelector('form');
         const appChoice = document.querySelector('select[name="app_choice"]');
         const gpuInput = document.querySelector('input[name="gpu"]');
-        if (appChoice && gpuInput) {
-            appChoice.addEventListener("change", function() {
+        const sharedBox = document.getElementById("shared-ollama-options");
+        function refreshAppChoice() {
+            if (!appChoice) return;
+            if (sharedBox) sharedBox.style.display = appChoice.value === "shared-ollama" ? "block" : "none";
+            if (gpuInput) {
                 const gpuMax = parseInt(gpuInput.max || "0", 10);
                 const gpuCurrent = parseInt(gpuInput.value || "0", 10);
                 if (appChoice.value === "open-webui" && gpuMax > 0 && gpuCurrent === 0) {
                     gpuInput.value = "1";
                 }
-            });
+            }
+        }
+        if (appChoice) {
+            appChoice.addEventListener("change", refreshAppChoice);
+            refreshAppChoice();
         }
         if (form) {
-            form.onsubmit = function() {
+            form.onsubmit = function(ev) {
+                if (appChoice && appChoice.value === "shared-ollama") {
+                    ev.preventDefault();
+                    const xsrf = hpcReadXsrf();
+                    const cpus = document.querySelector('select[name="ollama_cpus"]').value;
+                    const memory = document.querySelector('select[name="ollama_memory"]').value;
+                    fetch("/hub/admin/users/api", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        headers: Object.assign({"Content-Type": "application/json"}, xsrf ? {"X-XSRFToken": xsrf} : {}),
+                        body: JSON.stringify({ action: "ollama_start", cpus: cpus, memory: memory })
+                    }).then(function(r) {
+                        return r.json().then(function(body) {
+                            if (!r.ok) throw new Error(body.error || "shared Ollama の起動に失敗しました");
+                            window.location.href = "/hub/apps/shared-ollama";
+                        });
+                    }).catch(function(e) {
+                        alert(e.message || "shared Ollama の起動に失敗しました");
+                    });
+                    return false;
+                }
                 const inputs = document.querySelectorAll('input[name="_xsrf"]');
                 if (inputs.length > 1) {
                     for (let i = 1; i < inputs.length; i++) inputs[i].remove();
