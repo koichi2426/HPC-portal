@@ -106,15 +106,16 @@ sequenceDiagram
 | `make check` | ドライラン（`--check --diff`） |
 | `make deploy` | フルデプロイ（`site.yml`） |
 | `make deploy-safe` | 再起動抑止デプロイ（`site_safe.yml`） |
-| `make cleanup` | クリーンアップ（`cleanup.yml`） |
+| `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
+| `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
 | `make jupyterhub` | JupyterHub ロールのみ |
 | `make slurm` | Slurm ロールのみ |
 | `make ollama` | shared Ollama ロールのみ |
 | `make apptainer` | Apptainer ロールのみ |
 | `make status` | Slurm ジョブ・ディスク空き |
 | `make gpu` | GPU / VRAM |
-| `make services` | サービス状態・JupyterHub ログ |
-| `make processes` | 残存プロセス確認 |
+| `make services` | サービス・shared Ollama 状態・主要ログ |
+| `make processes` | 実行ユーザー / hpc-ollama の残存プロセス確認 |
 
 別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
 
@@ -128,6 +129,12 @@ make deploy
 
 ```bash
 make cleanup
+```
+
+`make cleanup` は `/srv/ollama/models` や LiteLLM DB などのデータを削除しません。データまで消す場合だけ、確認文に `削除する` と入力して完全削除を実行します。
+
+```bash
+make cleanup-purge-data
 ```
 
 #### 🔍 リモートでの原因調査
@@ -149,11 +156,11 @@ ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node
 # GPU / VRAM
 ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
 
-# JupyterHub / Slurm サービス（-b は root 権限が必要なとき）
-ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd; journalctl -u jupyterhub -n 30 --no-pager"
+# JupyterHub / Slurm / LiteLLM / shared Ollama 状態（-b は root 権限が必要なとき）
+ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
 
 # 残存プロセス（YOUR_USER は ansible_user に置き換え）
-ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true"
+ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|curl' || true"
 
 # 部分デプロイ
 ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub

@@ -105,7 +105,8 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make check` | Dry run (`--check --diff`) |
 | `make deploy` | Full deploy (`site.yml`) |
 | `make deploy-safe` | Deploy without service restarts (`site_safe.yml`) |
-| `make cleanup` | Cleanup playbook |
+| `make cleanup` | Cleanup services and config while keeping model/DB data |
+| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
 | `make jupyterhub` / `make slurm` / `make ollama` | Single role or tag |
 | `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
 
@@ -121,6 +122,12 @@ make deploy
 
 ```bash
 make cleanup
+```
+
+`make cleanup` removes services and configuration but keeps data such as `/srv/ollama/models` and the LiteLLM database. Use the explicit purge target only when you want to delete model and DB data as well.
+
+```bash
+make cleanup-purge-data
 ```
 
 #### 🔍 Remote diagnostics

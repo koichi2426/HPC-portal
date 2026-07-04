@@ -1,0 +1,55 @@
+---
+- name: HPC 環境データ完全削除
+  hosts: gx10
+  become: true
+  tasks:
+    - name: PostgreSQL が利用可能か確認
+      ansible.builtin.shell: command -v psql
+      register: cleanup_psql
+      changed_when: false
+      failed_when: false
+
+    - name: LiteLLM database を削除
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ litellm_database_name | default('litellm') }}'" | grep -q 1; then
+          sudo -u postgres dropdb "{{ litellm_database_name | default('litellm') }}"
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: cleanup_psql.rc == 0
+
+    - name: LiteLLM database user を削除
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ litellm_database_user | default('litellm') }}'" | grep -q 1; then
+          sudo -u postgres dropuser "{{ litellm_database_user | default('litellm') }}"
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: cleanup_psql.rc == 0
+
+    - name: LiteLLM / shared Ollama データディレクトリを削除
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/litellm
+        - "{{ ollama_models_dir | default('/srv/ollama/models') }}"
+        - "{{ ollama_service_home | default('/var/lib/hpc-ollama') }}"
+
+    - name: LiteLLM / shared Ollama OS ユーザーを削除
+      ansible.builtin.user:
+        name: "{{ item }}"
+        state: absent
+        remove: true
+      failed_when: false
+      loop:
+        - "{{ litellm_user | default('litellm') }}"
+        - "{{ ollama_service_user | default('hpc-ollama') }}"
+
+    - name: 完全削除の終了メッセージ
+      ansible.builtin.debug:
+        msg: "データ完全削除が完了しました。LiteLLM DB/user、shared Ollama モデル、LiteLLM/shared Ollama のデータユーザーを削除しました。"

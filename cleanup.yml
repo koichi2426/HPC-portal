@@ -11,10 +11,24 @@
       failed_when: false
       loop:
         - jupyterhub
+        - litellm
         - slurmctld
         - slurmd
         - munge
         - cloudflared
+
+    - name: shared Ollama Slurm job を停止
+      ansible.builtin.shell: |
+        if command -v /usr/local/sbin/hpc-ollama >/dev/null 2>&1; then
+          /usr/local/sbin/hpc-ollama stop || true
+        else
+          squeue -h -u "{{ ollama_service_user | default('hpc-ollama') }}" -n "{{ ollama_slurm_job_name | default('shared-ollama') }}" -o '%A' \
+            | xargs -r scancel
+        fi
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: false
 
     - name: 実行ユーザーのゾンビプロセス親を強制終了
       ansible.builtin.shell: |
@@ -40,6 +54,12 @@
           | xargs -r kill -9
       failed_when: false
 
+    - name: shared Ollama ユーザーの残存プロセスを強制終了
+      ansible.builtin.shell: |
+        pgrep -u "{{ ollama_service_user | default('hpc-ollama') }}" -f '(ollama|curl)' \
+          | xargs -r kill -9
+      failed_when: false
+
     - name: パッケージの削除 (Purge)
       ansible.builtin.apt:
         name:
@@ -62,11 +82,27 @@
         - /var/log/slurm
         - /etc/jupyterhub
         - /var/lib/jupyterhub
+        - /etc/litellm
+        - /opt/litellm
+        - /opt/hpc-portal/ollama
+        - /var/log/hpc-ollama
+        - /usr/local/sbin/hpc-ollama
+        - /usr/local/bin/ollama
+        - /usr/local/lib/ollama
+        - /tmp/ollama-linux.tar.zst
+        - /etc/systemd/system/jupyterhub.service
+        - /etc/systemd/system/litellm.service
+        - /etc/systemd/system/cloudflared.service
 
     - name: Cloudflare Tunnel関連の削除
       ansible.builtin.file:
         path: /etc/cloudflared
         state: absent
+
+    - name: systemdをリロード
+      ansible.builtin.systemd:
+        daemon_reload: true
+      failed_when: false
 
     - name: mungeユーザーの削除
       ansible.builtin.user:
@@ -77,4 +113,4 @@
 
     - name: 終了メッセージ
       ansible.builtin.debug:
-        msg: "クリーンアップが完了しました。サーバーは更地に戻りました。"
+        msg: "クリーンアップが完了しました。モデル・DBなどのデータは残しています。完全削除は make cleanup-purge-data を使ってください。"
