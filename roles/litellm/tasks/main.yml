@@ -33,6 +33,7 @@
   ansible.builtin.pip:
     name:
       - "litellm[proxy]=={{ litellm_version }}"
+      - prisma
       - psycopg2-binary
     virtualenv: /opt/litellm/venv
     virtualenv_command: python3 -m venv
