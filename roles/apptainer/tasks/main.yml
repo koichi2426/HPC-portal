@@ -32,6 +32,15 @@
     - { src: ubuntu-22.04-ttyd.def }
   register: apptainer_def_copy
 
+- name: Ollama Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: ollama.def.j2
+    dest: /opt/apptainer/ollama.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: ollama_def_template
+
 - name: 既存SIFの有無を確認
   ansible.builtin.stat:
     path: "{{ item.image }}"
@@ -53,6 +62,8 @@
       | map(attribute='changed')
       | first
       | default(false))
+    or
+    (item.src == 'ollama.def' and ollama_def_template.changed)
     or
     not
     (apptainer_image_stat.results
