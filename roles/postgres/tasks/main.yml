@@ -18,7 +18,9 @@
     name: postgresql
     enabled: true
     state: started
-  when: not (hpc_skip_service_restarts | default(false) | bool)
+  when:
+    - not ansible_check_mode
+    - not (hpc_skip_service_restarts | default(false) | bool)
 
 - name: LiteLLM 用 database user を作成・更新
   ansible.builtin.shell: |
@@ -32,6 +34,7 @@
     executable: /bin/bash
   changed_when: false
   no_log: true
+  when: not ansible_check_mode
 
 - name: LiteLLM 用 database を作成
   ansible.builtin.shell: |
@@ -42,6 +45,7 @@
   args:
     executable: /bin/bash
   changed_when: false
+  when: not ansible_check_mode
 
 - name: LiteLLM 用 database/schema 権限を付与
   ansible.builtin.shell: |
@@ -51,3 +55,4 @@
   args:
     executable: /bin/bash
   changed_when: false
+  when: not ansible_check_mode

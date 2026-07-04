@@ -43,6 +43,7 @@
   register: slurm_nvidia_smi
   failed_when: false
   changed_when: false
+  check_mode: false
 
 - name: Slurmで管理するGPU数を設定
   ansible.builtin.set_fact:

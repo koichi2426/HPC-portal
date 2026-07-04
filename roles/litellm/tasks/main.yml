@@ -37,6 +37,7 @@
     virtualenv: /opt/litellm/venv
     virtualenv_command: python3 -m venv
     state: latest
+  when: not ansible_check_mode
 
 - name: LiteLLM 設定ファイルを配置
   ansible.builtin.template:
@@ -46,6 +47,7 @@
     group: "{{ litellm_user }}"
     mode: "0640"
   notify: LiteLLM を再起動
+  when: not ansible_check_mode
 
 - name: LiteLLM 環境ファイルを配置
   ansible.builtin.template:
@@ -56,6 +58,7 @@
     mode: "0640"
   notify: LiteLLM を再起動
   no_log: true
+  when: not ansible_check_mode
 
 - name: LiteLLM systemd ユニットを配置
   ansible.builtin.template:
@@ -65,17 +68,21 @@
     group: root
     mode: "0644"
   notify: LiteLLM を再起動
+  when: not ansible_check_mode
 
 - name: systemd をリロード
   ansible.builtin.systemd:
     daemon_reload: true
+  when: not ansible_check_mode
 
 - name: LiteLLM を有効化して起動
   ansible.builtin.systemd:
     name: litellm
     enabled: true
     state: started
-  when: not (hpc_skip_service_restarts | default(false) | bool)
+  when:
+    - not ansible_check_mode
+    - not (hpc_skip_service_restarts | default(false) | bool)
 
 - name: Open WebUI 用 LiteLLM key の存在確認
   ansible.builtin.stat:
@@ -92,6 +99,7 @@
   delay: 3
   until: litellm_health.status in [200, 401, 404]
   when:
+    - not ansible_check_mode
     - not (hpc_skip_service_restarts | default(false) | bool)
     - not openwebui_litellm_key_file.stat.exists
 
@@ -113,6 +121,7 @@
   register: openwebui_litellm_key_response
   no_log: true
   when:
+    - not ansible_check_mode
     - not (hpc_skip_service_restarts | default(false) | bool)
     - not openwebui_litellm_key_file.stat.exists
 
@@ -125,6 +134,7 @@
     mode: "0600"
   no_log: true
   when:
+    - not ansible_check_mode
     - not (hpc_skip_service_restarts | default(false) | bool)
     - not openwebui_litellm_key_file.stat.exists
 
@@ -132,6 +142,7 @@
   ansible.builtin.debug:
     msg: "hpc_skip_service_restarts=true のため Open WebUI 用 LiteLLM key は未生成です。通常デプロイ（site.yml）で生成してください。"
   when:
+    - not ansible_check_mode
     - hpc_skip_service_restarts | default(false) | bool
     - not openwebui_litellm_key_file.stat.exists
 
