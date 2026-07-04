@@ -78,7 +78,7 @@ ollama_service_home: /var/lib/hpc-ollama
 ollama_host: "127.0.0.1"
 ollama_port: 11434
 ollama_models_dir: /srv/ollama/models
-ollama_manage_binary: true
+ollama_apptainer_image: /opt/images/ollama.sif
 ollama_slurm_job_name: shared-ollama
 ollama_slurm_partition: debug
 ollama_slurm_cpus: 4

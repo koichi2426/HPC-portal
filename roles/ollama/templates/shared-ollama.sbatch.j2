@@ -13,4 +13,11 @@ export OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }}
 export OLLAMA_MODELS={{ ollama_models_dir }}
 export HOME={{ ollama_service_home }}
 
-exec /usr/local/bin/ollama serve
+exec apptainer exec --nv \
+  --bind {{ ollama_models_dir }}:{{ ollama_models_dir }} \
+  --bind {{ ollama_service_home }}:{{ ollama_service_home }} \
+  --env OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }} \
+  --env OLLAMA_MODELS={{ ollama_models_dir }} \
+  --env HOME={{ ollama_service_home }} \
+  {{ ollama_apptainer_image }} \
+  ollama serve

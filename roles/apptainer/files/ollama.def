@@ -1,0 +1,2 @@
+bootstrap: docker
+from: ollama/ollama:0.31.1

@@ -19,34 +19,6 @@
     - { path: /opt/hpc-portal/ollama, owner: root, group: root, mode: "0755" }
     - { path: /var/log/hpc-ollama, mode: "0755" }
 
-- name: Ollama 用アーキテクチャを判定
-  ansible.builtin.set_fact:
-    ollama_archive_arch: "{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
-
-- name: Ollama アーカイブ展開用パッケージをインストール
-  ansible.builtin.package:
-    name: zstd
-    state: present
-  when: ollama_manage_binary | default(true) | bool
-
-- name: Ollama アーカイブを取得
-  ansible.builtin.get_url:
-    url: "{{ ollama_download_url | default('https://ollama.com/download/ollama-linux-' ~ ollama_archive_arch ~ '.tar.zst') }}"
-    dest: /tmp/ollama-linux.tar.zst
-    mode: "0644"
-  when:
-    - not ansible_check_mode
-    - ollama_manage_binary | default(true) | bool
-
-- name: Ollama バイナリを展開
-  ansible.builtin.unarchive:
-    src: /tmp/ollama-linux.tar.zst
-    dest: /usr/local
-    remote_src: true
-  when:
-    - not ansible_check_mode
-    - ollama_manage_binary | default(true) | bool
-
 - name: Ollama sbatch スクリプトを配置
   ansible.builtin.template:
     src: shared-ollama.sbatch.j2
