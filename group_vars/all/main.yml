@@ -58,6 +58,7 @@ hpc_portal_user_sudo_group: sudo
 
 # LiteLLM / PostgreSQL
 litellm_user: litellm
+litellm_version: "1.90.3"
 litellm_host: "127.0.0.1"
 litellm_port: 4000
 litellm_database_host: "127.0.0.1"

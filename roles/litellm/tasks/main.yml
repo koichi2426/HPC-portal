@@ -32,11 +32,11 @@
 - name: LiteLLM Python venv とパッケージを用意
   ansible.builtin.pip:
     name:
-      - "litellm[proxy]"
+      - "litellm[proxy]=={{ litellm_version }}"
       - psycopg2-binary
     virtualenv: /opt/litellm/venv
     virtualenv_command: python3 -m venv
-    state: latest
+    state: present
   when: not ansible_check_mode
 
 - name: LiteLLM 設定ファイルを配置
