@@ -8,6 +8,10 @@ User={{ litellm_user }}
 Group={{ litellm_user }}
 WorkingDirectory=/var/lib/litellm
 EnvironmentFile=/etc/litellm/litellm.env
+Environment=PATH=/opt/litellm/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/var/lib/litellm
+Environment=PRISMA_HOME_DIR=/var/lib/litellm
+Environment=PRISMA_BINARY_CACHE_DIR=/var/lib/litellm/.cache/prisma-python/binaries
 ExecStart=/opt/litellm/venv/bin/litellm --config /etc/litellm/config.yaml --host {{ litellm_host }} --port {{ litellm_port }}
 Restart=on-failure
 RestartSec=5

@@ -24,6 +24,7 @@ hpc_llm_public_domain: "{{ hpc_llm_subdomain | default('llm') }}.{{ hpc_base_dom
 hpc_llm_admin_subdomain: llm-admin
 hpc_llm_admin_public_domain: "{{ hpc_llm_admin_subdomain | default('llm-admin') }}.{{ hpc_base_domain | default('example.com') }}"
 hpc_llm_public_base_url: "https://{{ hpc_llm_public_domain }}/v1"
+hpc_llm_admin_base_url: "https://{{ hpc_llm_admin_public_domain }}"
 hpc_llm_admin_url: "https://{{ hpc_llm_admin_public_domain }}/ui"
 
 cloudflared_tunnel_name: hpc
@@ -66,6 +67,7 @@ litellm_database_port: 5432
 litellm_database_name: litellm
 litellm_database_user: litellm
 litellm_public_base_url: "{{ hpc_llm_public_base_url }}"
+litellm_proxy_base_url: "{{ hpc_llm_admin_base_url }}"
 litellm_admin_url: "{{ hpc_llm_admin_url }}"
 litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
 litellm_initial_models:

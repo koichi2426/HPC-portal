@@ -38,6 +38,57 @@
     virtualenv: /opt/litellm/venv
     virtualenv_command: python3 -m venv
     state: present
+  register: litellm_pip
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: LiteLLM Prisma client を生成
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mkdir -p "$PRISMA_BINARY_CACHE_DIR"
+    schema="$(
+      /opt/litellm/venv/bin/python - <<'PY'
+    from pathlib import Path
+    import litellm
+
+    root = Path(litellm.__file__).resolve().parent
+    candidates = [
+        root / "proxy" / "prisma" / "schema.prisma",
+        root / "proxy" / "schema.prisma",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            print(candidate)
+            break
+    else:
+        raise SystemExit("LiteLLM Prisma schema.prisma not found")
+    PY
+    )"
+    /opt/litellm/venv/bin/prisma py fetch
+    /opt/litellm/venv/bin/prisma generate --schema "$schema"
+  args:
+    executable: /bin/bash
+  environment:
+    PATH: "/opt/litellm/venv/bin:{{ ansible_env.PATH }}"
+    HOME: /var/lib/litellm
+    PRISMA_HOME_DIR: /var/lib/litellm
+    PRISMA_BINARY_CACHE_DIR: /var/lib/litellm/.cache/prisma-python/binaries
+  register: litellm_prisma_generate
+  changed_when: >
+    litellm_pip.changed or
+    'Generated Prisma Client' in litellm_prisma_generate.stdout or
+    '✔ Generated' in litellm_prisma_generate.stdout
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: LiteLLM Prisma cache の所有者を修正
+  ansible.builtin.file:
+    path: /var/lib/litellm/.cache
+    state: directory
+    owner: "{{ litellm_user }}"
+    group: "{{ litellm_user }}"
+    recurse: true
+  notify: LiteLLM を再起動
   when: not ansible_check_mode
 
 - name: LiteLLM 設定ファイルを配置
@@ -81,6 +132,12 @@
     name: litellm
     enabled: true
     state: started
+  when:
+    - not ansible_check_mode
+    - not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: LiteLLM の設定変更を起動確認前に反映
+  ansible.builtin.meta: flush_handlers
   when:
     - not ansible_check_mode
     - not (hpc_skip_service_restarts | default(false) | bool)
