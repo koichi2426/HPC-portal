@@ -2,11 +2,28 @@
 - name: apt ロック解放待ち
   ansible.builtin.import_tasks: ../../common/tasks/wait_for_apt.yml
 
-- name: universeリポジトリを有効化 (ARM用)
+- name: 標準Ubuntu sourcesのuniverse有効化状態を確認 (ARM用)
+  ansible.builtin.command: grep -Eq '^Components:.*\buniverse\b' /etc/apt/sources.list.d/ubuntu.sources
+  register: slurm_ubuntu_sources_universe
+  failed_when: false
+  changed_when: false
+  when: ansible_architecture == 'aarch64'
+
+- name: universeリポジトリを有効化 (ARM用・標準sources未設定時)
   ansible.builtin.apt_repository:
     repo: "deb http://ports.ubuntu.com/ubuntu-ports {{ ansible_distribution_release }} universe"
     state: present
-  when: ansible_architecture == 'aarch64'
+  when:
+    - ansible_architecture == 'aarch64'
+    - slurm_ubuntu_sources_universe.rc != 0
+
+- name: 重複したuniverseリポジトリ定義を削除 (ARM用)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/ports_ubuntu_com_ubuntu_ports.list
+    state: absent
+  when:
+    - ansible_architecture == 'aarch64'
+    - slurm_ubuntu_sources_universe.rc == 0
 
 - name: aptキャッシュを強制更新
   ansible.builtin.apt:
