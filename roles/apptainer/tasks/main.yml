@@ -2,6 +2,37 @@
 - name: apt ロック解放待ち
   ansible.builtin.import_tasks: ../../common/tasks/wait_for_apt.yml
 
+- name: apt keyring ディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Apptainer PPA signing key を配置
+  ansible.builtin.get_url:
+    url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6B0F5193D4F3301EF491FF0AFE36534FC6218AE"
+    dest: /etc/apt/keyrings/apptainer-ppa.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apptainer PPA を signed-by 付きで配置
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/apptainer-ppa.asc] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu {{ ansible_distribution_release }} main"
+    filename: apptainer-ppa
+    state: present
+
+- name: 旧形式のApptainer PPA定義を削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/etc/apt/sources.list.d/apptainer-ubuntu-ppa-{{ ansible_distribution_release }}.list"
+    - /etc/apt/sources.list.d/apptainer-ubuntu-ppa.list
+    - /etc/apt/sources.list.d/apptainer-ubuntu-ppa.sources
+
 - name: Apptainerをインストール
   ansible.builtin.package:
     name: apptainer
