@@ -5,8 +5,8 @@
 <div style="max-width: 900px; margin: 24px auto; padding: 0 16px 32px; color:#c9d1d9;">
   <div style="margin-bottom:20px;">
     <a href="/hub/home" style="color:#8b949e; text-decoration:none; font-size:13px;">← Home</a>
-    <h2 style="margin:10px 0 4px; color:#c9d1d9;">LLM API Key</h2>
-    <div style="font-size:12px; color:#8b949e;">OpenAI 互換 API を使うための自分用 key を管理します。</div>
+    <h2 style="margin:10px 0 4px; color:#c9d1d9;">LLM API</h2>
+    <div style="font-size:12px; color:#8b949e;">OpenAI 互換 API の key、利用可能モデル、使い方を確認します。</div>
   </div>
 
   <style>
@@ -26,6 +26,10 @@
     .gx10-key-box.visible { display:block; }
     .gx10-key-line { display:flex; gap:8px; align-items:center; margin-top:8px; }
     .gx10-key-value { flex:1; min-width:0; overflow-wrap:anywhere; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; color:#c9d1d9; background:#010409; border:1px solid #30363d; border-radius:8px; padding:8px; }
+    .gx10-model-list { display:grid; gap:8px; margin-top:10px; }
+    .gx10-model-item { display:flex; justify-content:space-between; gap:10px; align-items:center; background:#010409; border:1px solid #30363d; border-radius:8px; padding:10px; }
+    .gx10-model-name { font-family:ui-monospace, SFMono-Regular, Consolas, monospace; color:#c9d1d9; overflow-wrap:anywhere; }
+    .gx10-model-meta { color:#8b949e; font-size:11px; white-space:nowrap; }
   </style>
 
   {% if api_disabled %}
@@ -42,7 +46,28 @@
     <div class="gx10-key-label">API Base URL</div>
     <code class="gx10-key-code">{{ hpc_litellm_public_base_url or "未設定" }}</code>
     <div class="gx10-key-label" style="margin-top:14px;">model 例</div>
-    <code class="gx10-key-code">ollama-default</code>
+    <code class="gx10-key-code">{{ default_model }}</code>
+  </div>
+
+  <div class="gx10-key-card">
+    <div style="font-weight:700; margin-bottom:6px;">利用可能モデル</div>
+    <div style="font-size:12px; color:#8b949e;">OpenAI 互換 API の <code>model</code> に指定できる名前です。</div>
+    {% if models_error %}
+    <div class="gx10-key-msg warn" style="display:block;">モデル一覧の取得に失敗しました: {{ models_error }}</div>
+    {% elif models %}
+    <div class="gx10-model-list">
+      {% for model in models %}
+      <div class="gx10-model-item">
+        <div class="gx10-model-name">{{ model.id }}</div>
+        {% if model.owned_by %}
+        <div class="gx10-model-meta">{{ model.owned_by }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="gx10-key-msg warn" style="display:block;">現在表示できるモデルがありません。</div>
+    {% endif %}
   </div>
 
   <div class="gx10-key-card">
@@ -51,7 +76,7 @@
   -H "Authorization: Bearer LITELLM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "ollama-default",
+    "model": "{{ default_model }}",
     "messages": [{"role": "user", "content": "こんにちは"}]
   }'</pre>
     <pre class="gx10-key-pre">from openai import OpenAI
@@ -62,7 +87,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="ollama-default",
+    model="{{ default_model }}",
     messages=[{"role": "user", "content": "こんにちは"}],
 )
 print(response.choices[0].message.content)</pre>
@@ -102,7 +127,7 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
   }
   function apiUrl() {
     var xsrf = xsrfToken();
-    return xsrf ? "/hub/llm-api-key/api?_xsrf=" + encodeURIComponent(xsrf) : "/hub/llm-api-key/api";
+    return xsrf ? "/hub/llm-api/api?_xsrf=" + encodeURIComponent(xsrf) : "/hub/llm-api/api";
   }
   function apiHeaders() {
     var xsrf = xsrfToken();

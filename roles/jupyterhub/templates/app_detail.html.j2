@@ -254,7 +254,7 @@ function hpcOllamaDelete(btn) {
   });
 }
 function hpcOllamaStop(btn) {
-  if (!confirm("shared Ollama を停止しますか？")) return;
+  if (!confirm("Ollama を停止しますか？")) return;
   btn.disabled = true;
   hpcOllamaPost({action: "ollama_stop"}).then(function () {
     window.location.href = "/hub/home";

@@ -108,10 +108,10 @@
     group: root
     mode: '0644'
 
-- name: llm_api_key.htmlを配置
+- name: llm_api.htmlを配置
   ansible.builtin.template:
-    src: llm_api_key.html.j2
-    dest: /etc/jupyterhub/templates/llm_api_key.html
+    src: llm_api.html.j2
+    dest: /etc/jupyterhub/templates/llm_api.html
     owner: root
     group: root
     mode: '0644'

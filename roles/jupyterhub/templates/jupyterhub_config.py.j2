@@ -1474,6 +1474,8 @@ def _hpc_nvidia_vram_snapshot():
 
 
 def _hpc_resource_snapshot(disk_path="/home"):
+    if not isinstance(disk_path, str):
+        disk_path = "/home"
     slurm_free = _hpc_slurm_free_resources()
     mem = psutil.virtual_memory()
     if slurm_free:
@@ -1750,6 +1752,67 @@ def _hpc_litellm_request(path: str, payload: dict | None = None, method: str = "
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"raw": raw}
+
+
+def _hpc_litellm_model_records(value):
+    """LiteLLM の model 一覧レスポンスから model record を取り出す。
+
+    引数:
+        value: LiteLLM API から返った JSON 互換オブジェクト。
+
+    戻り値:
+        model ID を含む可能性がある dict を順に返す generator。
+    """
+    if isinstance(value, dict):
+        for key in ("data", "models", "model_list"):
+            if key in value:
+                yield from _hpc_litellm_model_records(value[key])
+        if any(k in value for k in ("id", "model_name", "litellm_params")):
+            yield value
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from _hpc_litellm_model_records(item)
+        return
+    if isinstance(value, str) and value.strip():
+        yield {"id": value.strip()}
+
+
+def _hpc_litellm_list_models() -> tuple[list[dict], str | None]:
+    """ユーザー画面に表示する LiteLLM model 一覧を取得する。
+
+    LiteLLM の `/models` はバージョンや設定によって response shape が揺れるため、
+    複数の候補フィールドから model ID を取り出して重複を除去する。
+
+    戻り値:
+        1要素目は `id` と `owned_by` を持つ model dict の list。
+        2要素目は取得失敗時のエラーメッセージ。成功時は None。
+    """
+    if not _hpc_litellm_enabled():
+        return [], "LiteLLM Admin API が未設定です"
+    try:
+        data = _hpc_litellm_request("/models", method="GET")
+    except RuntimeError as exc:
+        return [], str(exc)
+    models = []
+    seen = set()
+    for record in _hpc_litellm_model_records(data):
+        model_id = (
+            record.get("id")
+            or record.get("model_name")
+            or record.get("model")
+            or ""
+        )
+        model_id = str(model_id).strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({
+            "id": model_id,
+            "owned_by": str(record.get("owned_by") or record.get("provider") or "").strip(),
+        })
+    models.sort(key=lambda item: item["id"])
+    return models, None
 
 
 def _hpc_litellm_ensure_user(username: str) -> str | None:
@@ -2078,7 +2141,19 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
     return {"ok": True, "output": body}, None
 
 
-def _hpc_shared_ollama_detail_context() -> dict:
+def _hpc_shared_ollama_detail_context(user=None) -> dict:
+    """Ollama 詳細表示用コンテキストを作成する。
+
+    JupyterHub の template_vars は callable を `value(user)` として呼び出すため、
+    user 引数を受け取れる形にしている。現在の実装では user ごとの差分はなく、
+    管理者向け shared service の状態を同じ形式で返す。
+
+    引数:
+        user: JupyterHub が渡すログインユーザー。現在は未使用。
+
+    戻り値:
+        app_detail.html と home.html で使う Ollama の表示情報。
+    """
     status, status_err = _hpc_ollama_cmd("status")
     tags, tags_err = _hpc_ollama_cmd("tags")
     status = status or {}
@@ -2096,7 +2171,7 @@ def _hpc_shared_ollama_detail_context() -> dict:
     return {
         "shared_ollama": True,
         "server_name": "shared-ollama",
-        "app_label": "shared Ollama",
+        "app_label": "Ollama",
         "app_choice": "shared-ollama",
         "status": "running" if running else "stopped",
         "status_label": "実行中" if running else "停止中",
@@ -2152,8 +2227,12 @@ class HpcAdminUsersPageHandler(BaseHandler):
         self.finish(html_out)
 
 
-class HpcLlmApiKeyPageHandler(BaseHandler):
-    """本人用 LiteLLM API key 管理 UI（/hub/llm-api-key）"""
+class HpcLlmApiPageHandler(BaseHandler):
+    """本人用 LLM API 管理 UI を表示する handler。
+
+    ログイン中ユーザーの API key 状態、利用可能 model、API 利用例を
+    `/hub/llm-api` に表示する。API key の生値はここでは取得しない。
+    """
 
     @web.authenticated
     async def get(self):
@@ -2167,17 +2246,26 @@ class HpcLlmApiKeyPageHandler(BaseHandler):
             status_error = err or ""
         else:
             status_error = "LiteLLM Admin API が未設定です"
+        models, models_error = _hpc_litellm_list_models()
+        default_model = models[0]["id"] if models else "ollama-default"
         html_out = await self.render_template(
-            "llm_api_key.html",
+            "llm_api.html",
             xsrf_token=xsrf_token,
             api_disabled=disabled,
             status_error=status_error,
+            models=models,
+            models_error=models_error,
+            default_model=default_model,
         )
         self.finish(html_out)
 
 
-class HpcLlmApiKeyApiHandler(BaseHandler):
-    """本人用 LiteLLM API key 操作 API"""
+class HpcLlmApiApiHandler(BaseHandler):
+    """本人用 LiteLLM API key 操作 API。
+
+    ログイン中ユーザー本人の key 再発行だけを受け付ける。
+    管理者が無効化したユーザーは、下位の LiteLLM key 管理関数で拒否される。
+    """
 
     def get_json_body(self):
         if not self.request.body:
@@ -2348,8 +2436,8 @@ for _handlers in (_jh_pages_handlers.default_handlers, _jh_handlers.default_hand
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
-c.JupyterHub.extra_handlers.append((r"/llm-api-key/api", HpcLlmApiKeyApiHandler))
-c.JupyterHub.extra_handlers.append((r"/llm-api-key", HpcLlmApiKeyPageHandler))
+c.JupyterHub.extra_handlers.append((r"/llm-api/api", HpcLlmApiApiHandler))
+c.JupyterHub.extra_handlers.append((r"/llm-api", HpcLlmApiPageHandler))
 c.JupyterHub.extra_handlers.append((r"/admin/users/api", HpcAdminUsersApiHandler))
 c.JupyterHub.extra_handlers.append((r"/admin/users", HpcAdminUsersPageHandler))
 
@@ -2386,7 +2474,7 @@ def make_options_form(spawner):
                 f'<div style="background:rgba(88,166,255,0.10);border:1px solid rgba(88,166,255,0.35);'
                 f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
                 f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
-                f'<div style="font-weight:600;">● shared Ollama <span style="color:#8b949e;font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
+                f'<div style="font-weight:600;">● Ollama <span style="color:#8b949e;font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
                 f'<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">'
                 f'<a href="/hub/apps/shared-ollama" style="text-decoration:none;color:#4facfe;font-weight:700;">詳細 →</a>'
                 f'</div></div>'
@@ -2460,7 +2548,7 @@ def make_options_form(spawner):
         active_sessions_html = '<div style="color:#555;font-size:0.8rem;font-style:italic;">No active sessions.</div>'
 
     is_portal_admin = _hpc_is_portal_admin(user)
-    shared_ollama_option = '<option value="shared-ollama">shared Ollama (管理者専用)</option>' if is_portal_admin else ''
+    shared_ollama_option = '<option value="shared-ollama">Ollama (管理者専用)</option>' if is_portal_admin else ''
     shared_cpu_options = "".join(
         f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_CPUS else ""}>{html.escape(v)} vCPU</option>'
         for v in HPC_OLLAMA_ALLOWED_CPUS
@@ -2552,33 +2640,35 @@ def make_options_form(spawner):
                     {shared_ollama_option}
                 </select>
                 <div id="shared-ollama-options" style="display:none; border:1px solid rgba(88,166,255,0.25); background:rgba(88,166,255,0.06); border-radius:10px; padding:12px; margin-bottom:15px;">
-                    <div style="font-size:0.78rem;color:#8b949e;margin-bottom:10px;">shared Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
+                    <div style="font-size:0.78rem;color:#8b949e;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
                     <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
                         <div><label class="label">Ollama vCPUs</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
                         <div><label class="label">Ollama RAM</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
                         <div><label class="label">Ollama GPUs</label><input type="text" class="form-control input-dark" value="1" readonly></div>
                     </div>
                 </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                    <div><label class="label">vCPUs</label><input type="number" class="form-control input-dark" name="cpu" value="2" min="1"></div>
-                    <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
+                <div id="standard-resource-options">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div><label class="label">vCPUs</label><input type="number" class="form-control input-dark" name="cpu" value="2" min="1"></div>
+                        <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
+                        <div><label class="label">最大実行時間</label>
+                            <select class="form-control input-dark" name="hours">
+                                <option value="1">1 時間</option>
+                                <option value="2">2 時間</option>
+                                <option value="4">4 時間</option>
+                                <option value="8" selected>8 時間</option>
+                                <option value="12">12 時間</option>
+                                <option value="24">24 時間</option>
+                                <option value="48">48 時間</option>
+                                <option value="72">72 時間</option>
+                                <option value="unlimited">無制限</option>
+                            </select></div>
+                    </div>
                 </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                    <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
-                    <div><label class="label">最大実行時間</label>
-                        <select class="form-control input-dark" name="hours">
-                            <option value="1">1 時間</option>
-                            <option value="2">2 時間</option>
-                            <option value="4">4 時間</option>
-                            <option value="8" selected>8 時間</option>
-                            <option value="12">12 時間</option>
-                            <option value="24">24 時間</option>
-                            <option value="48">48 時間</option>
-                            <option value="72">72 時間</option>
-                            <option value="unlimited">無制限</option>
-                        </select></div>
-                </div>
-                <div style="font-size:0.74rem;color:#777;margin-top:-5px;">Open WebUIで大型LLMを使う場合は GPUs を 1 以上にしてください。無制限は Slurm パーティション上限（INFINITE）まで実行できます。</div>
+                <div id="standard-resource-help" style="font-size:0.74rem;color:#777;margin-top:-5px;">無制限は Slurm パーティションで許可された上限まで実行できます。</div>
             </div>
         </div>
     </div>
@@ -2595,18 +2685,20 @@ def make_options_form(spawner):
     document.addEventListener("DOMContentLoaded", function() {
         const form = document.querySelector('form');
         const appChoice = document.querySelector('select[name="app_choice"]');
-        const gpuInput = document.querySelector('input[name="gpu"]');
         const sharedBox = document.getElementById("shared-ollama-options");
+        const standardBox = document.getElementById("standard-resource-options");
+        const standardHelp = document.getElementById("standard-resource-help");
         function refreshAppChoice() {
             if (!appChoice) return;
-            if (sharedBox) sharedBox.style.display = appChoice.value === "shared-ollama" ? "block" : "none";
-            if (gpuInput) {
-                const gpuMax = parseInt(gpuInput.max || "0", 10);
-                const gpuCurrent = parseInt(gpuInput.value || "0", 10);
-                if (appChoice.value === "open-webui" && gpuMax > 0 && gpuCurrent === 0) {
-                    gpuInput.value = "1";
-                }
+            const isSharedOllama = appChoice.value === "shared-ollama";
+            if (sharedBox) sharedBox.style.display = isSharedOllama ? "block" : "none";
+            if (standardBox) {
+                standardBox.style.display = isSharedOllama ? "none" : "block";
+                standardBox.querySelectorAll("input, select, textarea, button").forEach(function(el) {
+                    el.disabled = isSharedOllama;
+                });
             }
+            if (standardHelp) standardHelp.style.display = isSharedOllama ? "none" : "block";
         }
         if (appChoice) {
             appChoice.addEventListener("change", refreshAppChoice);
@@ -2626,11 +2718,11 @@ def make_options_form(spawner):
                         body: JSON.stringify({ action: "ollama_start", cpus: cpus, memory: memory })
                     }).then(function(r) {
                         return r.json().then(function(body) {
-                            if (!r.ok) throw new Error(body.error || "shared Ollama の起動に失敗しました");
+                            if (!r.ok) throw new Error(body.error || "Ollama の起動に失敗しました");
                             window.location.href = "/hub/apps/shared-ollama";
                         });
                     }).catch(function(e) {
-                        alert(e.message || "shared Ollama の起動に失敗しました");
+                        alert(e.message || "Ollama の起動に失敗しました");
                     });
                     return false;
                 }
@@ -2865,7 +2957,7 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
     mkdir -p "$OPENWEBUI_DATA_DIR/static" "$HOME/.ollama" "$HF_HUB_CACHE_DIR" "$SENTENCE_TRANSFORMERS_HOME_DIR" "$TRANSFORMERS_CACHE_DIR"
     JOB_HOST="job$(printenv SLURM_JOB_ID || echo 0).{{ jupyterhub_job_dns_domain }}"
     WEBUI_EXTERNAL_URL="{{ hpc_public_scheme | default('https') }}://$JOB_HOST/"
-    exec apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static ENABLE_OPENAI_API=True OPENAI_API_BASE_URL=$LITELLM_BASE_URL OPENAI_API_KEY=$LITELLM_API_KEY ENABLE_OLLAMA_API=False WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
+    exec apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static WEBUI_AUTH=False ENABLE_OPENAI_API=True OPENAI_API_BASE_URL=$LITELLM_BASE_URL OPENAI_API_KEY=$LITELLM_API_KEY ENABLE_OLLAMA_API=False WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
 else
     IMAGE_PATH="/opt/images/jupyter-cpu.sif"
     exec apptainer exec --nv $HPC_APPTAINER_BIND "$IMAGE_PATH" {bs}cmd{be} --ip=0.0.0.0

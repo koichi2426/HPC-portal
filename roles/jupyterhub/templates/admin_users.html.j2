@@ -85,31 +85,6 @@
   </div>
 
   <div class="gx10-admin-card">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
-      <div>
-        <div style="font-weight:700;">共有 Ollama</div>
-        <div style="font-size:12px; color:#8b949e; margin-top:3px;">Slurm job shared-ollama の起動・停止・モデル管理</div>
-      </div>
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="ollama-status-btn">状態確認</button>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" id="ollama-start-btn">起動</button>
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-danger" id="ollama-stop-btn">停止</button>
-    </div>
-    <div class="gx10-admin-form-grid">
-      <div>
-        <label class="gx10-admin-label" for="ollama-model">Ollama モデル名</label>
-        <input class="gx10-admin-input" id="ollama-model" placeholder="例: qwen3:32b" autocomplete="off">
-      </div>
-      <div style="display:flex; gap:8px;">
-        <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" id="ollama-pull-btn">pull</button>
-        <button type="button" class="gx10-admin-btn gx10-admin-btn-danger" id="ollama-delete-btn">delete</button>
-      </div>
-    </div>
-    <div id="ollama-msg" class="gx10-admin-msg"></div>
-  </div>
-
-  <div class="gx10-admin-card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
       <div style="font-weight:700;">登録ユーザー（UID ≥ 1000）</div>
       <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
@@ -314,46 +289,6 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
       });
     });
   }
-  function setBusy(buttons, busy) {
-    buttons.forEach(function (btn) { btn.disabled = busy; });
-  }
-  function runOllama(action, model) {
-    var msg = document.getElementById("ollama-msg");
-    var buttons = [
-      document.getElementById("ollama-start-btn"),
-      document.getElementById("ollama-stop-btn"),
-      document.getElementById("ollama-status-btn"),
-      document.getElementById("ollama-pull-btn"),
-      document.getElementById("ollama-delete-btn")
-    ];
-    setBusy(buttons, true);
-    var payload = { action: action };
-    if (model) payload.model = model;
-    return postAction(payload).then(function (body) {
-      var data = body.data || {};
-      var text = data.raw || data.output || JSON.stringify(data);
-      showMsg(msg, text || "OK", true);
-    }).catch(function (e) {
-      showMsg(msg, e.message, false);
-      failOp(e.message);
-    }).finally(function () {
-      setBusy(buttons, false);
-    });
-  }
-  document.getElementById("ollama-status-btn").onclick = function () { runOllama("ollama_status"); };
-  document.getElementById("ollama-start-btn").onclick = function () { runOllama("ollama_start"); };
-  document.getElementById("ollama-stop-btn").onclick = function () { runOllama("ollama_stop"); };
-  document.getElementById("ollama-pull-btn").onclick = function () {
-    var model = document.getElementById("ollama-model").value.trim();
-    if (!model) return showMsg(document.getElementById("ollama-msg"), "モデル名を入力してください", false);
-    runOllama("ollama_pull", model);
-  };
-  document.getElementById("ollama-delete-btn").onclick = function () {
-    var model = document.getElementById("ollama-model").value.trim();
-    if (!model) return showMsg(document.getElementById("ollama-msg"), "モデル名を入力してください", false);
-    if (!confirm(model + " を削除しますか？LiteLLM 側の公開モデル設定は自動削除されません。")) return;
-    runOllama("ollama_delete", model);
-  };
   function reloadUsers() {
     return fetch(apiUrl(), { credentials: "same-origin", headers: apiHeaders() })
       .then(function (r) { return r.json(); })
