@@ -112,6 +112,7 @@ c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
 c.JupyterHub.allow_named_servers = True
 
 HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
+HPC_PORTAL_CSS = "/etc/jupyterhub/static/hpc-portal.css"
 c.Authenticator.allow_all = True
 
 # ポータル管理者（Linux ユーザー管理）
@@ -475,7 +476,7 @@ def _hpc_allocation_html(user_options) -> str:
     """割り当てリソースの HTML 行（spawn フォーム・一覧用）"""
     a = _hpc_allocation_summary(user_options)
     return (
-        f'<span style="display:block;margin-top:6px;font-size:0.75rem;color:#8b949e;'
+        f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;'
         f'letter-spacing:0.02em;">割り当て: {a["line"]}</span>'
     )
 
@@ -1595,6 +1596,20 @@ class HpcResourceMeterJsHandler(BaseHandler):
             self.write("/* hpc-resource-meter.js not found */")
 
 
+class HpcPortalCssHandler(BaseHandler):
+    """HPC ポータル共通スタイルシート（/hub/static が使えない環境向け）"""
+
+    async def get(self):
+        self.set_header("Content-Type", "text/css; charset=UTF-8")
+        self.set_header("Cache-Control", "public, max-age=300")
+        try:
+            with open(HPC_PORTAL_CSS, encoding="utf-8") as f:
+                self.write(f.read())
+        except OSError:
+            self.set_status(404)
+            self.write("/* hpc-portal.css not found */")
+
+
 _HPC_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
 _HPC_NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/bin/false", "/sbin/nologin"}
 
@@ -2434,6 +2449,7 @@ for _handlers in (_jh_pages_handlers.default_handlers, _jh_handlers.default_hand
 
 
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
+c.JupyterHub.extra_handlers.append((r"/hpc-portal.css", HpcPortalCssHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
 c.JupyterHub.extra_handlers.append((r"/llm-api/api", HpcLlmApiApiHandler))
@@ -2471,14 +2487,13 @@ def make_options_form(spawner):
         shared = _hpc_shared_ollama_detail_context()
         if shared.get("active"):
             active_sessions_html += (
-                f'<div style="background:rgba(88,166,255,0.10);border:1px solid rgba(88,166,255,0.35);'
-                f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
-                f'<div style="font-weight:600;">● Ollama <span style="color:#8b949e;font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
-                f'<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">'
-                f'<a href="/hub/apps/shared-ollama" style="text-decoration:none;color:#4facfe;font-weight:700;">詳細 →</a>'
+                f'<div class="gx10-app-card" style="padding:12px;margin-top:10px;">'
+                f'<div class="hpc-row-between">'
+                f'<div class="hpc-section-title">● Ollama <span class="hpc-muted" style="font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
+                f'<div class="hpc-inline-actions">'
+                f'<a class="hpc-page-link" href="/hub/apps/shared-ollama">詳細 →</a>'
                 f'</div></div>'
-                f'<span style="display:block;margin-top:6px;font-size:0.75rem;color:#8b949e;">割り当て: '
+                f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;">割り当て: '
                 f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
                 f'</div>'
             )
@@ -2521,31 +2536,28 @@ def make_options_form(spawner):
         if getattr(s, "pending", None):
             pending_state = str(getattr(s, "pending", "spawn"))
             active_sessions_html += (
-                f'<div style="background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.35);'
-                f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
-                f'<div>● {app_label} <span style="color:#ffc107;">起動中...</span></div>'
+                f'<div class="gx10-app-card" style="padding:12px;margin-top:10px;">'
+                f'<div class="hpc-row-between">'
+                f'<div>● {app_label} <span class="hpc-status-warn">起動中...</span></div>'
                 f'<div>{stop_btn}</div></div>'
                 f'{alloc_html}'
-                f'<div style="margin-top:8px;font-size:0.78rem;color:#ccc;">status: {pending_state}</div>'
-                f'<div style="margin-top:8px;height:6px;background:rgba(255,255,255,0.12);border-radius:999px;overflow:hidden;">'
-                f'<div style="width:55%;height:100%;background:#ffc107;animation:gx10pulse 1.2s ease-in-out infinite alternate;"></div>'
-                f"</div></div>"
+                f'<div class="hpc-muted" style="margin-top:8px;font-size:0.78rem;">status: {pending_state}</div>'
+                f'<div class="hpc-progress"><div class="hpc-progress-fill"></div></div>'
+                f'</div>'
             )
         elif s.active:
             active_sessions_html += (
-                f'<div style="background:rgba(79,172,254,0.1);border:1px solid rgba(79,172,254,0.3);'
-                f'padding:12px;border-radius:10px;color:#fff;margin-top:10px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">'
-                f'<div style="font-weight:600;">● {app_label}</div>'
-                f'<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">'
-                f'<a href="{url}" target="_blank" style="text-decoration:none;color:#4facfe;font-weight:700;">JUMP ↗</a>'
+                f'<div class="gx10-app-card" style="padding:12px;margin-top:10px;">'
+                f'<div class="hpc-row-between">'
+                f'<div class="hpc-section-title">● {app_label}</div>'
+                f'<div class="hpc-inline-actions">'
+                f'<a class="hpc-page-link" href="{url}" target="_blank">JUMP ↗</a>'
                 f'{stop_btn}</div></div>'
                 f'{alloc_html}</div>'
             )
 
     if not active_sessions_html:
-        active_sessions_html = '<div style="color:#555;font-size:0.8rem;font-style:italic;">No active sessions.</div>'
+        active_sessions_html = '<div class="hpc-empty" style="font-style:italic;">No active sessions.</div>'
 
     is_portal_admin = _hpc_is_portal_admin(user)
     shared_ollama_option = '<option value="shared-ollama">Ollama (管理者専用)</option>' if is_portal_admin else ''
@@ -2558,35 +2570,11 @@ def make_options_form(spawner):
         for v in HPC_OLLAMA_ALLOWED_MEMORY
     )
 
-    lb = "{{ '{' }}"
-    rb = "{{ '}' }}"
-
     header_html = f"""
-    <style>
-        .gx10-card {lb} background: rgba(255, 255, 255, 0.03); border-radius: 16px; padding: 24px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 20px; color: #fff; {rb}
-        .label {lb} font-size: 0.75rem; color: #777; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: 600; {rb}
-        .input-dark {lb} background: rgba(0, 0, 0, 0.3) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; color: #fff !important; margin-bottom: 15px; border-radius: 8px !important; {rb}
-        .resource-grid {lb} display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 16px 0 6px; {rb}
-        .resource-meter {lb} background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; {rb}
-        .meter-head {lb} display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px; font-size: 0.78rem; color: #bbb; {rb}
-        .meter-status {lb} color:#9be7c7; font-weight: 700; {rb}
-        .meter-track {lb} height: 12px; background: rgba(255, 255, 255, 0.10); border-radius: 999px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04); {rb}
-        .meter-fill {lb} height: 100%; border-radius: 999px; background: linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7); box-shadow: 0 0 18px rgba(79,172,254,0.35); {rb}
-        .meter-numbers {lb} display:flex; justify-content:space-between; margin-top:8px; color:#888; font-size:0.72rem; {rb}
-        @media (max-width: 720px) {lb} .resource-grid {lb} grid-template-columns: 1fr; {rb} {rb}
-        @keyframes gx10pulse {lb} from {lb} opacity: 0.45; {rb} to {lb} opacity: 1; {rb} {rb}
-        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live {lb} color:#3fb950; font-weight:600; {rb}
-        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale {lb} color:#f85149; font-weight:600; {rb}
-        [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading {lb} color:#e3b341; {rb}
-        [data-hpc-resource-meter].hpc-resource-refreshed .meter-fill {lb} filter:brightness(1.2); transition:width 0.35s ease, filter 0.2s ease; {rb}
-        .gx10-stop-btn {lb} background:transparent; border:1px solid #f85149; color:#f85149; border-radius:6px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; {rb}
-        .gx10-stop-btn:hover:not(:disabled) {lb} background:rgba(248,81,73,0.12); {rb}
-        .gx10-stop-btn:disabled {lb} opacity:0.6; cursor:wait; {rb}
-    </style>
     <div id="resource-dashboard" data-hpc-resource-meter>
         <div class="gx10-card">
-            <h3 style="margin-top:0; color:#fff;">🚀 gx10-ac12 Control Center</h3>
-            <div style="font-size:0.8rem;color:#777;">Node: gx10-ac12 <span data-resource-updated-at style="float:right;">5秒ごとに自動更新</span></div>
+            <h3 class="hpc-page-title">gx10-ac12 Control Center</h3>
+            <div class="hpc-muted" style="font-size:0.8rem;">Node: gx10-ac12 <span data-resource-updated-at style="float:right;">5秒ごとに自動更新</span></div>
             <div class="resource-grid" aria-label="現在使えるリソース">
                 <div class="resource-meter">
                     <div class="meter-head"><span>CPU 空き</span><span class="meter-status" data-resource-text="cpu_status">{cpu_status}</span></div>
@@ -2639,20 +2627,20 @@ def make_options_form(spawner):
                     <option value="open-webui">Open WebUI (AI Chat)</option>
                     {shared_ollama_option}
                 </select>
-                <div id="shared-ollama-options" style="display:none; border:1px solid rgba(88,166,255,0.25); background:rgba(88,166,255,0.06); border-radius:10px; padding:12px; margin-bottom:15px;">
-                    <div style="font-size:0.78rem;color:#8b949e;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                <div id="shared-ollama-options" class="hpc-shared-options">
+                    <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
+                    <div class="hpc-form-grid-3">
                         <div><label class="label">Ollama vCPUs</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
                         <div><label class="label">Ollama RAM</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
                         <div><label class="label">Ollama GPUs</label><input type="text" class="form-control input-dark" value="1" readonly></div>
                     </div>
                 </div>
                 <div id="standard-resource-options">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="hpc-form-grid-2">
                         <div><label class="label">vCPUs</label><input type="number" class="form-control input-dark" name="cpu" value="2" min="1"></div>
                         <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
                     </div>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="hpc-form-grid-2">
                         <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
                         <div><label class="label">最大実行時間</label>
                             <select class="form-control input-dark" name="hours">
@@ -2668,7 +2656,7 @@ def make_options_form(spawner):
                             </select></div>
                     </div>
                 </div>
-                <div id="standard-resource-help" style="font-size:0.74rem;color:#777;margin-top:-5px;">無制限は Slurm パーティションで許可された上限まで実行できます。</div>
+                <div id="standard-resource-help" class="hpc-muted" style="font-size:0.74rem;margin-top:-5px;">無制限は Slurm パーティションで許可された上限まで実行できます。</div>
             </div>
         </div>
     </div>

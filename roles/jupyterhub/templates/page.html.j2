@@ -1,6 +1,11 @@
 {% raw %}
 {% extends "templates/page.html" %}
 
+{% block stylesheet %}
+{{ super() }}
+<link rel="stylesheet" href="{{ base_url }}hpc-portal.css?v=1">
+{% endblock stylesheet %}
+
 {% block nav_bar_left_items %}
   <li class="nav-item">
     <a class="nav-link" href="{{ base_url }}home">Home</a>

@@ -149,6 +149,14 @@
     group: root
     mode: '0644'
 
+- name: HPCポータル共通CSSを配置
+  ansible.builtin.copy:
+    src: hpc-portal.css
+    dest: /etc/jupyterhub/static/hpc-portal.css
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: 設定更新時に負の遺産（DB・Cookie）を削除
   ansible.builtin.file:
     path: "{{ item }}"

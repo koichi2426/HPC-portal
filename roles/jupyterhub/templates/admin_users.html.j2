@@ -2,54 +2,25 @@
 {% extends "page.html" %}
 
 {% block main %}
-<div class="gx10-admin-users" style="max-width: 960px; margin: 24px auto; padding: 0 16px 32px; color:#c9d1d9;">
+<div class="gx10-admin-users">
   <div style="margin-bottom:20px;">
-    <a href="/hub/home" style="color:#8b949e; text-decoration:none; font-size:13px;">← Home</a>
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:10px;">
-      <h2 style="margin:0; color:#c9d1d9;">Linux ユーザー管理</h2>
+    <a class="hpc-back-link" href="/hub/home">← Home</a>
+    <div class="hpc-row-between" style="margin-top:10px;">
+      <h2 class="hpc-page-title">Linux ユーザー管理</h2>
       {% if hpc_litellm_admin_url %}
-      <a href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" style="color:#58a6ff; text-decoration:none; font-size:13px; font-weight:700;">LiteLLM 管理画面 ↗</a>
+      <a class="hpc-page-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面 ↗</a>
       {% endif %}
     </div>
-    <div style="font-size:12px; color:#8b949e;">ポータルへのログインに使う OS アカウントの作成・削除・パスワード変更</div>
+    <div class="hpc-help">ポータルへのログインに使う OS アカウントの作成・削除・パスワード変更</div>
   </div>
 
-  <div style="background:#161b22; border:1px solid #30363d; border-radius:12px; padding:14px 16px; font-size:13px; line-height:1.55; color:#8b949e; margin-bottom:16px;">
-    <strong style="color:#c9d1d9;">ログインは Linux ユーザーです</strong><br>
-    ここで作成・変更したユーザー名とパスワードが、そのまま <a href="/hub/login" style="color:#58a6ff;">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
+  <div class="hpc-note">
+    <strong>ログインは Linux ユーザーです</strong><br>
+    ここで作成・変更したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
   </div>
-
-  <style>
-    .gx10-admin-card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:16px; margin-bottom:16px; }
-    .gx10-admin-table { width:100%; border-collapse:collapse; font-size:13px; }
-    .gx10-admin-table th { text-align:left; color:#8b949e; font-weight:600; padding:10px 12px 10px 0; border-bottom:1px solid #30363d; }
-    .gx10-admin-table td { padding:10px 12px 10px 0; border-bottom:1px solid #21262d; vertical-align:middle; }
-    .gx10-admin-table tr:last-child td { border-bottom:none; }
-    .gx10-admin-input { width:100%; box-sizing:border-box; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; border-radius:8px; padding:8px 10px; font-size:13px; }
-    .gx10-admin-btn { border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid transparent; }
-	    .gx10-admin-btn-primary { background:#1f6feb; color:#fff; border-color:#1f6feb; }
-	    .gx10-admin-btn-danger { background:transparent; color:#f85149; border-color:#f85149; }
-	    .gx10-admin-btn-muted { background:transparent; color:#58a6ff; border-color:#30363d; }
-	    .gx10-admin-btn-warn { background:transparent; color:#e3b341; border-color:#8b6f2a; }
-	    .gx10-admin-btn:disabled { opacity:0.55; cursor:wait; }
-    .gx10-admin-msg { font-size:13px; margin-top:10px; padding:10px 12px; border-radius:8px; display:none; }
-    .gx10-admin-msg.ok { display:block; background:rgba(63,185,80,0.12); border:1px solid rgba(63,185,80,0.35); color:#3fb950; }
-    .gx10-admin-msg.err { display:block; background:rgba(248,81,73,0.12); border:1px solid rgba(248,81,73,0.35); color:#f85149; }
-    .gx10-admin-msg.warn { display:block; background:rgba(227,179,65,0.12); border:1px solid rgba(227,179,65,0.35); color:#e3b341; }
-    .gx10-admin-badge { font-size:11px; padding:2px 8px; border-radius:999px; background:#30363d; color:#8b949e; }
-    .gx10-admin-keybox { display:none; margin-top:12px; background:#0d1117; border:1px solid #30363d; border-radius:10px; padding:12px; }
-    .gx10-admin-keybox.visible { display:block; }
-    .gx10-admin-keyline { display:flex; gap:8px; align-items:center; margin-top:8px; }
-    .gx10-admin-keyvalue { flex:1; min-width:0; overflow-wrap:anywhere; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; color:#c9d1d9; background:#010409; border:1px solid #30363d; border-radius:8px; padding:8px; }
-    .gx10-admin-form-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; align-items:end; }
-    .gx10-admin-label { display:block; font-size:11px; color:#8b949e; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.04em; }
-    .gx10-admin-modal { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center; z-index:9999; }
-    .gx10-admin-modal[hidden] { display:none !important; }
-    .gx10-admin-modal-inner { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:20px; width:min(360px, 92vw); }
-  </style>
 
   <div class="gx10-admin-card">
-    <div style="font-weight:700; margin-bottom:12px;">新規ユーザー作成</div>
+    <div class="hpc-section-title" style="margin-bottom:12px;">新規ユーザー作成</div>
     <form id="hpc-create-user-form" class="gx10-admin-form-grid" method="post" action="#" onsubmit="return false;" data-default-sudo="{% if grant_sudo_default %}true{% else %}false{% endif %}">
       <div>
         <label class="gx10-admin-label" for="new-username">ユーザー名</label>
@@ -61,7 +32,7 @@
       </div>
       <div>
         <label class="gx10-admin-label" style="margin-bottom:10px;">権限</label>
-        <label style="font-size:13px; color:#c9d1d9; display:flex; align-items:center; gap:8px;">
+        <label class="hpc-row" style="font-size:13px;">
           <input type="checkbox" id="new-sudo" name="sudo" {% if grant_sudo_default %}checked{% endif %}>
           sudo グループに追加
         </label>
@@ -72,21 +43,21 @@
     </form>
     <div id="create-msg" class="gx10-admin-msg"></div>
     <div id="create-keybox" class="gx10-admin-keybox" aria-live="polite">
-      <div style="font-weight:700; color:#c9d1d9;">API key（一度だけ表示）</div>
-      <div style="font-size:12px; color:#e3b341; margin-top:4px;">この key は保存されません。画面を閉じる前にユーザーへ安全な経路で共有してください。</div>
+      <div class="hpc-section-title">API key（一度だけ表示）</div>
+      <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">この key は保存されません。画面を閉じる前にユーザーへ安全な経路で共有してください。</div>
       <div class="gx10-admin-keyline">
         <div id="create-keyvalue" class="gx10-admin-keyvalue"></div>
         <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="copy-key-btn">コピー</button>
       </div>
       {% if hpc_litellm_public_base_url %}
-      <div style="font-size:12px; color:#8b949e; margin-top:8px;">API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
+      <div class="hpc-help" style="margin-top:8px;">API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
       {% endif %}
     </div>
   </div>
 
   <div class="gx10-admin-card">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <div style="font-weight:700;">登録ユーザー（UID ≥ 1000）</div>
+    <div class="hpc-row-between" style="margin-bottom:12px;">
+      <div class="hpc-section-title">登録ユーザー（UID ≥ 1000）</div>
       <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
     </div>
     <div style="overflow-x:auto;">
@@ -107,15 +78,15 @@
               {% if u.protected %}<span class="gx10-admin-badge" style="margin-left:6px;">保護</span>{% endif %}
             </td>
             <td>{{ u.uid }}</td>
-            <td><code style="color:#8b949e;">{{ u.home }}</code></td>
+            <td><code>{{ u.home }}</code></td>
             <td>
 	              {% if not u.protected %}
 	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード変更</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}" style="margin-left:6px;">API無効化</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}" style="margin-left:6px;">API有効化</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}" style="margin-left:6px;">削除</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}">API無効化</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}">API有効化</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}">削除</button>
               {% else %}
-              <span style="color:#8b949e; font-size:12px;">—</span>
+              <span class="hpc-muted" style="font-size:12px;">—</span>
               {% endif %}
             </td>
           </tr>
@@ -129,7 +100,7 @@
 
 <div id="hpc-pw-modal" class="gx10-admin-modal" hidden>
   <div class="gx10-admin-modal-inner">
-    <div style="font-weight:700; margin-bottom:12px;" id="hpc-pw-modal-title">パスワード変更</div>
+    <div class="hpc-section-title" style="margin-bottom:12px;" id="hpc-pw-modal-title">パスワード変更</div>
     <label class="gx10-admin-label" for="hpc-pw-modal-input">新しいパスワード（8文字以上）</label>
     <input class="gx10-admin-input" id="hpc-pw-modal-input" type="password" minlength="8" autocomplete="new-password">
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
@@ -299,15 +270,15 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           var tr = document.createElement("tr");
           tr.setAttribute("data-username", u.username);
 	        var ops = u.protected
-	            ? '<span style="color:#8b949e;font-size:12px;">—</span>'
+	            ? '<span class="hpc-muted" style="font-size:12px;">—</span>'
 	            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード変更</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '" style="margin-left:6px;">API無効化</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '" style="margin-left:6px;">API有効化</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '" style="margin-left:6px;">削除</button>';
+	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '">API無効化</button>'
+	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '">API有効化</button>'
+	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '">削除</button>';
           tr.innerHTML = '<td><strong>' + u.username + '</strong>'
             + (u.protected ? ' <span class="gx10-admin-badge" style="margin-left:6px;">保護</span>' : '') + '</td>'
             + '<td>' + u.uid + '</td>'
-            + '<td><code style="color:#8b949e;">' + u.home + '</code></td>'
+            + '<td><code>' + u.home + '</code></td>'
             + '<td>' + ops + '</td>';
           tbody.appendChild(tr);
         });

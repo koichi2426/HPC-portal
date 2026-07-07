@@ -4,51 +4,28 @@
 {% block main %}
 {% set d = detail %}
 {% set res = node_resources %}
-<div class="gx10-app-detail-page" style="max-width: 720px; margin: 24px auto; padding: 0 16px 32px; color:#c9d1d9;">
+<div class="gx10-app-detail-page">
   <div style="margin-bottom: 20px;">
-    <a href="/hub/home" style="color:#8b949e; text-decoration:none; font-size:13px;">← Home</a>
+    <a class="hpc-back-link" href="/hub/home">← Home</a>
   </div>
 
-  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-top:12px;">
+  <div class="hpc-heading-row">
     <div>
-      <h2 style="margin:0 0 6px; color:#c9d1d9;">{{ d.app_label }}</h2>
-      <div style="font-size:12px; color:#8b949e;">サーバー名: <code style="color:#c9d1d9;">{{ d.server_name or '(default)' }}</code></div>
+      <h2 class="hpc-page-title">{{ d.app_label }}</h2>
+      <div class="hpc-help">サーバー名: <code>{{ d.server_name or '(default)' }}</code></div>
     </div>
-    <span style="font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; {% if d.status == 'running' %}background:rgba(63,185,80,0.15); color:#3fb950; border:1px solid rgba(63,185,80,0.35);{% elif d.status == 'pending' %}background:rgba(227,179,65,0.15); color:#e3b341; border:1px solid rgba(227,179,65,0.35);{% else %}background:#30363d; color:#8b949e;{% endif %}">
+    <span class="hpc-status-badge {% if d.status == 'running' %}running{% elif d.status == 'pending' %}pending{% endif %}">
       {{ d.status_label }}
     </span>
   </div>
 
-  <style>
-    .gx10-app-detail-page .gx10-detail-card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:16px; margin-top:16px; }
-    .gx10-app-detail-page .gx10-detail-table { width:100%; border-collapse:collapse; font-size:13px; }
-    .gx10-app-detail-page .gx10-detail-table th { text-align:left; color:#8b949e; font-weight:600; padding:8px 12px 8px 0; width:38%; vertical-align:top; }
-    .gx10-app-detail-page .gx10-detail-table td { color:#c9d1d9; padding:8px 0; word-break:break-all; }
-    .gx10-app-detail-page .gx10-delete-btn { background:#da3633; border:1px solid #f85149; color:#fff; border-radius:8px; padding:10px 18px; font-size:14px; font-weight:600; cursor:pointer; }
-    .gx10-app-detail-page .gx10-delete-btn:hover:not(:disabled) { background:#b62324; }
-    .gx10-app-detail-page .gx10-delete-btn:disabled { opacity:0.6; cursor:wait; }
-    .gx10-app-detail-page .gx10-primary-btn { display:inline-block; padding:10px 18px; border-radius:8px; text-decoration:none; background:#1f6feb; color:#fff; font-weight:600; font-size:14px; }
-    .gx10-app-detail-page .gx10-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; align-items:center; }
-    .gx10-app-detail-page .gx10-resource-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:12px; }
-    .gx10-app-detail-page .gx10-resource-meter { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px; }
-    .gx10-app-detail-page .gx10-meter-head { display:flex; justify-content:space-between; align-items:center; color:#8b949e; font-size:11px; margin-bottom:8px; }
-    .gx10-app-detail-page .gx10-meter-status { color:#9be7c7; font-weight:700; font-size:11px; }
-    .gx10-app-detail-page .gx10-meter-track { height:8px; background:#30363d; border-radius:999px; overflow:hidden; }
-    .gx10-app-detail-page .gx10-meter-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7); }
-    .gx10-app-detail-page .gx10-meter-numbers { display:flex; justify-content:space-between; margin-top:6px; color:#8b949e; font-size:10px; }
-    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live { color:#3fb950; font-weight:600; }
-    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale { color:#f85149; font-weight:600; }
-    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading { color:#e3b341; }
-    [data-hpc-resource-meter].hpc-resource-refreshed .gx10-meter-fill { filter:brightness(1.15); transition:width 0.35s ease, filter 0.2s ease; }
-  </style>
-
   <div class="gx10-detail-card" data-hpc-resource-meter>
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-      <div style="font-weight:700; color:#c9d1d9;">ノードの空きリソース</div>
-      <div data-resource-updated-at style="font-size:11px; color:#8b949e;">5秒ごとに自動更新</div>
+    <div class="hpc-row-between">
+      <div class="hpc-section-title">ノードの空きリソース</div>
+      <div class="hpc-muted" data-resource-updated-at style="font-size:11px;">5秒ごとに自動更新</div>
     </div>
-    <div style="font-size:11px; color:#8b949e; margin-top:4px;">Node: gx10-ac12（Slurm 割当ベース）</div>
-    <div class="gx10-resource-grid" aria-label="ノードの空きリソース">
+    <div class="hpc-muted" style="font-size:11px; margin-top:4px;">Node: gx10-ac12（Slurm 割当ベース）</div>
+    <div class="gx10-resource-grid compact" aria-label="ノードの空きリソース">
       <div class="gx10-resource-meter">
         <div class="gx10-meter-head"><span>CPU</span><span class="gx10-meter-status" data-resource-text="cpu_status">{{ res.cpu_status }}</span></div>
         <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="cpu_available" style="width:{{ "%.0f"|format(res.cpu_available) }}%;"></div></div>
@@ -85,31 +62,31 @@
   </div>
 
   <div class="gx10-detail-card">
-    <div style="font-weight:700; color:#c9d1d9; margin-bottom:12px;">このアプリの割り当て（Slurm 要求値）</div>
+    <div class="hpc-section-title" style="margin-bottom:12px;">このアプリの割り当て（Slurm 要求値）</div>
     <table class="gx10-detail-table" aria-label="割り当てリソース">
-      <tr><th>アプリ種別</th><td>{{ d.app_label }} <span style="color:#8b949e;">({{ d.app_choice }})</span></td></tr>
+      <tr><th>アプリ種別</th><td>{{ d.app_label }} <span class="hpc-muted">({{ d.app_choice }})</span></td></tr>
       <tr><th>vCPU</th><td>{{ d.allocation['cpu'] }}</td></tr>
       <tr><th>メモリ</th><td>{{ d.allocation['memory'] }}</td></tr>
       <tr><th>GPU</th><td>{{ d.allocation['gpu_label'] }}</td></tr>
-      <tr><th>最大実行時間</th><td>{{ d.allocation['runtime'] }} <span style="color:#8b949e;">({{ d.allocation['hours'] }})</span></td></tr>
+      <tr><th>最大実行時間</th><td>{{ d.allocation['runtime'] }} <span class="hpc-muted">({{ d.allocation['hours'] }})</span></td></tr>
     </table>
   </div>
 
   <div class="gx10-detail-card">
-    <div style="font-weight:700; color:#c9d1d9; margin-bottom:12px;">ジョブ・接続</div>
+    <div class="hpc-section-title" style="margin-bottom:12px;">ジョブ・接続</div>
     <table class="gx10-detail-table">
-      <tr><th>Slurm JOB ID</th><td>{% if d.job_id %}{{ d.job_id }}{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
+      <tr><th>Slurm JOB ID</th><td>{% if d.job_id %}{{ d.job_id }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       {% if d.shared_ollama %}
-      <tr><th>API</th><td>{% if d.api %}<span style="color:#3fb950;">OK</span>{% else %}<span style="color:#e3b341;">起動待ち / 未応答</span>{% endif %}</td></tr>
+      <tr><th>API</th><td>{% if d.api %}<span class="hpc-status-ok">OK</span>{% else %}<span class="hpc-status-warn">起動待ち / 未応答</span>{% endif %}</td></tr>
       <tr><th>Port</th><td>{{ d.port }}</td></tr>
       <tr><th>Models dir</th><td><code style="font-size:11px;">{{ d.models_dir }}</code></td></tr>
       {% if d.status_error %}
-      <tr><th>Warning</th><td style="color:#e3b341;">{{ d.status_error }}</td></tr>
+      <tr><th>Warning</th><td class="hpc-status-warn">{{ d.status_error }}</td></tr>
       {% endif %}
       {% else %}
-      <tr><th>ジョブホスト</th><td>{% if d.job_host %}{{ d.job_host }}{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
-      <tr><th>Hub ポート</th><td>{% if d.port %}{{ d.port }}{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
-      <tr><th>公開 URL</th><td>{% if d.job_url %}<a href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer" style="color:#58a6ff;">{{ d.job_url }}</a>{% else %}<span style="color:#8b949e;">—</span>{% endif %}</td></tr>
+      <tr><th>ジョブホスト</th><td>{% if d.job_host %}{{ d.job_host }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
+      <tr><th>Hub ポート</th><td>{% if d.port %}{{ d.port }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
+      <tr><th>公開 URL</th><td>{% if d.job_url %}<a href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer">{{ d.job_url }}</a>{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       {% if d.proxy_spec %}
       <tr><th>Proxy route</th><td><code style="font-size:11px;">{{ d.proxy_spec }}</code></td></tr>
       {% endif %}
@@ -119,9 +96,9 @@
 
   {% if d.shared_ollama %}
   <div class="gx10-detail-card">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
-      <div style="font-weight:700; color:#c9d1d9;">Ollama モデル</div>
-      <button type="button" class="gx10-primary-btn" style="border:0; cursor:pointer;" onclick="window.location.reload()">更新</button>
+    <div class="hpc-row-between" style="margin-bottom:12px;">
+      <div class="hpc-section-title">Ollama モデル</div>
+      <button type="button" class="gx10-primary-btn" onclick="window.location.reload()">更新</button>
     </div>
     {% if d.models %}
       <table class="gx10-detail-table">
@@ -129,30 +106,28 @@
         <tr>
           <th>{{ model.name }}</th>
           <td>
-            {% if model.size %}<span style="color:#8b949e;">{{ model.size }}</span>{% endif %}
+            {% if model.size %}<span class="hpc-muted">{{ model.size }}</span>{% endif %}
             <button type="button" class="gx10-delete-btn" style="padding:6px 10px; font-size:12px; float:right;" data-model="{{ model.name }}" onclick="hpcOllamaDelete(this)">delete</button>
           </td>
         </tr>
         {% endfor %}
       </table>
     {% else %}
-      <div style="font-size:13px; color:#8b949e;">モデルはまだありません。</div>
+      <div class="hpc-empty">モデルはまだありません。</div>
     {% endif %}
-    <div style="font-size:12px; color:#8b949e; margin-top:14px;">
-      モデル名は <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" style="color:#58a6ff;">Ollama library</a> で確認できます。
+    <div class="hpc-help" style="margin-top:14px;">
+      モデル名は <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer">Ollama library</a> で確認できます。
     </div>
-    <div style="display:flex; gap:8px; margin-top:14px; align-items:center;">
-      <input id="ollama-pull-model" type="text" placeholder="例: llama3.1:8b" style="flex:1; min-width:0; background:#010409; color:#c9d1d9; border:1px solid #30363d; border-radius:8px; padding:10px;">
-      <button type="button" class="gx10-primary-btn" style="border:0; cursor:pointer;" onclick="hpcOllamaPull(this)">Pull</button>
+    <div class="hpc-row" style="margin-top:14px;">
+      <input id="ollama-pull-model" type="text" placeholder="例: llama3.1:8b" style="flex:1; min-width:0; border-radius:8px; padding:10px;">
+      <button type="button" class="gx10-primary-btn" onclick="hpcOllamaPull(this)">Pull</button>
     </div>
-    <div id="ollama-action-msg" style="font-size:12px; color:#8b949e; margin-top:10px;"></div>
+    <div id="ollama-action-msg" class="hpc-help" style="margin-top:10px;"></div>
   </div>
   {% endif %}
 
   {% if d.status == 'pending' %}
-  <div style="margin-top:12px; height:6px; background:#30363d; border-radius:999px;">
-    <div style="width:55%; height:100%; background:#e3b341; border-radius:999px;"></div>
-  </div>
+  <div class="hpc-progress"><div class="hpc-progress-fill"></div></div>
   {% endif %}
 
   <div class="gx10-actions">
@@ -225,7 +200,7 @@ function hpcOllamaPost(payload) {
 function hpcOllamaMsg(text, ok) {
   var el = document.getElementById("ollama-action-msg");
   if (!el) return;
-  el.style.color = ok ? "#3fb950" : "#f85149";
+  el.className = ok ? "hpc-help hpc-status-ok" : "hpc-help hpc-status-danger";
   el.textContent = text;
 }
 function hpcOllamaPull(btn) {
