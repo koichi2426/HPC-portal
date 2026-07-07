@@ -8,6 +8,10 @@
       - litellm_salt_key | length > 0
       - litellm_database_password is defined
       - litellm_database_password | length > 0
+      - litellm_ui_username is defined
+      - litellm_ui_username | length > 0
+      - litellm_ui_password is defined
+      - litellm_ui_password | length > 0
     fail_msg: "LiteLLM secrets が未設定です。group_vars/all/secret.yml を作成してください。"
 
 - name: LiteLLM 用 OS ユーザーを作成

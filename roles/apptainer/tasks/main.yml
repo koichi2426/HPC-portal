@@ -24,15 +24,6 @@
     filename: apptainer-ppa
     state: present
 
-- name: 旧形式のApptainer PPA定義を削除
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "/etc/apt/sources.list.d/apptainer-ubuntu-ppa-{{ ansible_distribution_release }}.list"
-    - /etc/apt/sources.list.d/apptainer-ubuntu-ppa.list
-    - /etc/apt/sources.list.d/apptainer-ubuntu-ppa.sources
-
 - name: Apptainerをインストール
   ansible.builtin.package:
     name: apptainer
