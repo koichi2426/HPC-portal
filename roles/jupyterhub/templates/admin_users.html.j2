@@ -27,10 +27,11 @@
     .gx10-admin-table tr:last-child td { border-bottom:none; }
     .gx10-admin-input { width:100%; box-sizing:border-box; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; border-radius:8px; padding:8px 10px; font-size:13px; }
     .gx10-admin-btn { border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer; border:1px solid transparent; }
-    .gx10-admin-btn-primary { background:#1f6feb; color:#fff; border-color:#1f6feb; }
-    .gx10-admin-btn-danger { background:transparent; color:#f85149; border-color:#f85149; }
-    .gx10-admin-btn-muted { background:transparent; color:#58a6ff; border-color:#30363d; }
-    .gx10-admin-btn:disabled { opacity:0.55; cursor:wait; }
+	    .gx10-admin-btn-primary { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+	    .gx10-admin-btn-danger { background:transparent; color:#f85149; border-color:#f85149; }
+	    .gx10-admin-btn-muted { background:transparent; color:#58a6ff; border-color:#30363d; }
+	    .gx10-admin-btn-warn { background:transparent; color:#e3b341; border-color:#8b6f2a; }
+	    .gx10-admin-btn:disabled { opacity:0.55; cursor:wait; }
     .gx10-admin-msg { font-size:13px; margin-top:10px; padding:10px 12px; border-radius:8px; display:none; }
     .gx10-admin-msg.ok { display:block; background:rgba(63,185,80,0.12); border:1px solid rgba(63,185,80,0.35); color:#3fb950; }
     .gx10-admin-msg.err { display:block; background:rgba(248,81,73,0.12); border:1px solid rgba(248,81,73,0.35); color:#f85149; }
@@ -133,9 +134,11 @@
             <td>{{ u.uid }}</td>
             <td><code style="color:#8b949e;">{{ u.home }}</code></td>
             <td>
-              {% if not u.protected %}
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード変更</button>
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}" style="margin-left:6px;">削除</button>
+	              {% if not u.protected %}
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード変更</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}" style="margin-left:6px;">API無効化</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}" style="margin-left:6px;">API有効化</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}" style="margin-left:6px;">削除</button>
               {% else %}
               <span style="color:#8b949e; font-size:12px;">—</span>
               {% endif %}
@@ -260,12 +263,44 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           });
       };
     });
-    document.querySelectorAll(".hpc-pw-btn").forEach(function (btn) {
-      btn.onclick = function () {
-        openPwModal(btn.getAttribute("data-username"));
-      };
-    });
-  }
+	    document.querySelectorAll(".hpc-pw-btn").forEach(function (btn) {
+	      btn.onclick = function () {
+	        openPwModal(btn.getAttribute("data-username"));
+	      };
+	    });
+	    document.querySelectorAll(".hpc-api-disable-btn").forEach(function (btn) {
+	      btn.onclick = function () {
+	        var name = btn.getAttribute("data-username");
+	        if (!confirm(name + " の LiteLLM API key を無効化しますか？")) return;
+	        btn.disabled = true;
+	        postAction({ action: "api_disable", username: name })
+	          .then(function () {
+	            showMsg(document.getElementById("list-msg"), name + " の API key を無効化しました", true);
+	          })
+	          .catch(function (e) {
+	            showMsg(document.getElementById("list-msg"), e.message, false);
+	            failOp(e.message);
+	          })
+	          .finally(function () { btn.disabled = false; });
+	      };
+	    });
+	    document.querySelectorAll(".hpc-api-enable-btn").forEach(function (btn) {
+	      btn.onclick = function () {
+	        var name = btn.getAttribute("data-username");
+	        if (!confirm(name + " の LiteLLM API key を有効化しますか？")) return;
+	        btn.disabled = true;
+	        postAction({ action: "api_enable", username: name })
+	          .then(function () {
+	            showMsg(document.getElementById("list-msg"), name + " の API key を有効化しました", true);
+	          })
+	          .catch(function (e) {
+	            showMsg(document.getElementById("list-msg"), e.message, false);
+	            failOp(e.message);
+	          })
+	          .finally(function () { btn.disabled = false; });
+	      };
+	    });
+	  }
   function postAction(payload) {
     return fetch(apiUrl(), {
       method: "POST",
@@ -328,10 +363,12 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
         (data.users || []).forEach(function (u) {
           var tr = document.createElement("tr");
           tr.setAttribute("data-username", u.username);
-          var ops = u.protected
-            ? '<span style="color:#8b949e;font-size:12px;">—</span>'
-            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード変更</button>'
-              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '" style="margin-left:6px;">削除</button>';
+	        var ops = u.protected
+	            ? '<span style="color:#8b949e;font-size:12px;">—</span>'
+	            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード変更</button>'
+	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '" style="margin-left:6px;">API無効化</button>'
+	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '" style="margin-left:6px;">API有効化</button>'
+	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '" style="margin-left:6px;">削除</button>';
           tr.innerHTML = '<td><strong>' + u.username + '</strong>'
             + (u.protected ? ' <span class="gx10-admin-badge" style="margin-left:6px;">保護</span>' : '') + '</td>'
             + '<td>' + u.uid + '</td>'

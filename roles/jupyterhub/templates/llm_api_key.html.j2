@@ -1,0 +1,163 @@
+{% raw %}
+{% extends "page.html" %}
+
+{% block main %}
+<div style="max-width: 900px; margin: 24px auto; padding: 0 16px 32px; color:#c9d1d9;">
+  <div style="margin-bottom:20px;">
+    <a href="/hub/home" style="color:#8b949e; text-decoration:none; font-size:13px;">← Home</a>
+    <h2 style="margin:10px 0 4px; color:#c9d1d9;">LLM API Key</h2>
+    <div style="font-size:12px; color:#8b949e;">OpenAI 互換 API を使うための自分用 key を管理します。</div>
+  </div>
+
+  <style>
+    .gx10-key-card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:16px; margin-bottom:16px; }
+    .gx10-key-label { color:#8b949e; font-size:12px; margin-bottom:6px; }
+    .gx10-key-code { display:block; color:#c9d1d9; background:#010409; border:1px solid #30363d; border-radius:8px; padding:10px; overflow-wrap:anywhere; }
+    .gx10-key-pre { margin:10px 0 0; white-space:pre-wrap; color:#8b949e; background:#010409; border:1px solid #30363d; border-radius:8px; padding:10px; font-size:12px; }
+    .gx10-key-btn { border-radius:8px; padding:9px 14px; font-size:13px; font-weight:700; cursor:pointer; border:1px solid transparent; }
+    .gx10-key-btn-primary { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+    .gx10-key-btn-muted { background:transparent; color:#58a6ff; border-color:#30363d; }
+    .gx10-key-btn:disabled { opacity:0.55; cursor:wait; }
+    .gx10-key-msg { display:none; font-size:13px; margin-top:12px; padding:10px 12px; border-radius:8px; }
+    .gx10-key-msg.ok { display:block; background:rgba(63,185,80,0.12); border:1px solid rgba(63,185,80,0.35); color:#3fb950; }
+    .gx10-key-msg.err { display:block; background:rgba(248,81,73,0.12); border:1px solid rgba(248,81,73,0.35); color:#f85149; }
+    .gx10-key-msg.warn { display:block; background:rgba(227,179,65,0.12); border:1px solid rgba(227,179,65,0.35); color:#e3b341; }
+    .gx10-key-box { display:none; margin-top:14px; background:#0d1117; border:1px solid #30363d; border-radius:10px; padding:12px; }
+    .gx10-key-box.visible { display:block; }
+    .gx10-key-line { display:flex; gap:8px; align-items:center; margin-top:8px; }
+    .gx10-key-value { flex:1; min-width:0; overflow-wrap:anywhere; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; color:#c9d1d9; background:#010409; border:1px solid #30363d; border-radius:8px; padding:8px; }
+  </style>
+
+  {% if api_disabled %}
+  <div class="gx10-key-msg warn" style="display:block; margin-bottom:16px;">
+    API key は管理者により無効化されています。再発行はできません。
+  </div>
+  {% elif status_error %}
+  <div class="gx10-key-msg warn" style="display:block; margin-bottom:16px;">
+    API key 状態の確認に失敗しました: {{ status_error }}
+  </div>
+  {% endif %}
+
+  <div class="gx10-key-card">
+    <div class="gx10-key-label">API Base URL</div>
+    <code class="gx10-key-code">{{ hpc_litellm_public_base_url or "未設定" }}</code>
+    <div class="gx10-key-label" style="margin-top:14px;">model 例</div>
+    <code class="gx10-key-code">ollama-default</code>
+  </div>
+
+  <div class="gx10-key-card">
+    <div style="font-weight:700; margin-bottom:8px;">使い方</div>
+    <pre class="gx10-key-pre">curl {{ hpc_litellm_public_base_url }}/chat/completions \
+  -H "Authorization: Bearer LITELLM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama-default",
+    "messages": [{"role": "user", "content": "こんにちは"}]
+  }'</pre>
+    <pre class="gx10-key-pre">from openai import OpenAI
+
+client = OpenAI(
+    api_key="LITELLM_API_KEY",
+    base_url="{{ hpc_litellm_public_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="ollama-default",
+    messages=[{"role": "user", "content": "こんにちは"}],
+)
+print(response.choices[0].message.content)</pre>
+  </div>
+
+  <div class="gx10-key-card">
+    <div style="font-weight:700;">API key 再発行</div>
+    <div style="font-size:12px; color:#8b949e; margin-top:6px;">
+      再発行すると既存の自分用 API key は無効化されます。新しい key はこの画面で一度だけ表示されます。
+    </div>
+    <div style="margin-top:12px;">
+      <button type="button" id="regen-btn" class="gx10-key-btn gx10-key-btn-primary" {% if api_disabled or status_error %}disabled{% endif %}>再発行</button>
+    </div>
+    <div id="key-msg" class="gx10-key-msg"></div>
+    <div id="key-box" class="gx10-key-box" aria-live="polite">
+      <div style="font-weight:700;">新しい API key（一度だけ表示）</div>
+      <div style="font-size:12px; color:#e3b341; margin-top:4px;">この key は保存されません。画面を閉じる前に控えてください。</div>
+      <div class="gx10-key-line">
+        <div id="key-value" class="gx10-key-value"></div>
+        <button type="button" id="copy-key-btn" class="gx10-key-btn gx10-key-btn-muted">コピー</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+window.HPC_XSRF = {{ xsrf_token|tojson }};
+(function () {
+  function readXsrfCookie() {
+    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+  function xsrfToken() {
+    return window.HPC_XSRF || readXsrfCookie() || "";
+  }
+  function apiUrl() {
+    var xsrf = xsrfToken();
+    return xsrf ? "/hub/llm-api-key/api?_xsrf=" + encodeURIComponent(xsrf) : "/hub/llm-api-key/api";
+  }
+  function apiHeaders() {
+    var xsrf = xsrfToken();
+    var h = { "Content-Type": "application/json", "Accept": "application/json" };
+    if (xsrf) h["X-XSRFToken"] = xsrf;
+    return h;
+  }
+  function showMsg(text, ok) {
+    var msg = document.getElementById("key-msg");
+    msg.textContent = text;
+    msg.className = "gx10-key-msg " + (ok ? "ok" : "err");
+  }
+  function copyKey() {
+    var key = document.getElementById("key-value").textContent || "";
+    if (!key) return;
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      window.prompt("API key をコピーしてください", key);
+      return;
+    }
+    navigator.clipboard.writeText(key).then(function () {
+      showMsg("API key をコピーしました", true);
+    }).catch(function () {
+      window.prompt("API key をコピーしてください", key);
+    });
+  }
+  document.getElementById("copy-key-btn").onclick = copyKey;
+  document.getElementById("regen-btn").onclick = function () {
+    var btn = document.getElementById("regen-btn");
+    var box = document.getElementById("key-box");
+    var value = document.getElementById("key-value");
+    if (!confirm("既存の自分用 API key を無効化して、新しい key を発行しますか？")) return;
+    btn.disabled = true;
+    box.className = "gx10-key-box";
+    value.textContent = "";
+    fetch(apiUrl(), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: apiHeaders(),
+      body: JSON.stringify({ action: "regenerate" })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (!r.ok) throw new Error(body.error || body.message || ("HTTP " + r.status));
+        return body;
+      });
+    }).then(function (body) {
+      value.textContent = body.api_key || "";
+      box.className = "gx10-key-box visible";
+      showMsg("API key を再発行しました", true);
+    }).catch(function (e) {
+      showMsg(e.message, false);
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  };
+})();
+</script>
+{% endblock %}
+{% endraw %}
