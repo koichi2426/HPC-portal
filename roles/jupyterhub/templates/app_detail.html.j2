@@ -123,6 +123,11 @@
       <button type="button" class="gx10-primary-btn" onclick="hpcOllamaPull(this)">Pull</button>
     </div>
     <div id="ollama-action-msg" class="hpc-help" style="margin-top:10px;"></div>
+    <div id="ollama-pull-progress" class="gx10-pull-progress" hidden aria-live="polite">
+      <div id="ollama-pull-progress-text" class="hpc-help">ダウンロードを準備中…</div>
+      <div class="hpc-progress"><div id="ollama-pull-progress-fill" class="hpc-progress-fill"></div></div>
+    </div>
+    <div class="hpc-help" style="margin-top:10px; font-size:12px;">Pull 完了後、LLM API で使うには LiteLLM 側でモデル登録が必要です。</div>
   </div>
   {% endif %}
 
@@ -209,14 +214,66 @@ function hpcOllamaPull(btn) {
   if (!model) return hpcOllamaMsg("モデル名を入力してください", false);
   btn.disabled = true;
   hpcOllamaPost({action: "ollama_pull", model: model}).then(function (body) {
-    var data = body.data || {};
-    hpcOllamaMsg(data.output || data.raw || JSON.stringify(data), true);
+    hpcOllamaMsg(model + " のダウンロードを開始しました", true);
+    hpcOllamaPollPull(model, btn);
   }).catch(function (e) {
     hpcOllamaMsg(e.message, false);
-  }).finally(function () {
-    btn.disabled = false;
   });
 }
+function hpcFormatBytes(value) {
+  if (typeof value !== "number" || value < 0) return "";
+  var units = ["B", "KB", "MB", "GB", "TB"], i = 0;
+  while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+  return value.toFixed(i >= 3 ? 1 : 0) + " " + units[i];
+}
+function hpcOllamaRenderProgress(data) {
+  var box = document.getElementById("ollama-pull-progress");
+  var text = document.getElementById("ollama-pull-progress-text");
+  var fill = document.getElementById("ollama-pull-progress-fill");
+  if (!box || !text || !fill) return;
+  box.hidden = false;
+  var total = data.total, completed = data.completed;
+  var pct = total > 0 && completed != null ? Math.min(100, completed / total * 100) : 0;
+  fill.style.width = pct + "%";
+  var amount = total > 0 && completed != null ? " " + hpcFormatBytes(completed) + " / " + hpcFormatBytes(total) : "";
+  text.textContent = (data.status || "ダウンロード中") + (total > 0 ? " " + pct.toFixed(0) + "%" : "") + amount;
+}
+function hpcOllamaPollPull(model, btn) {
+  hpcOllamaPost({action: "ollama_pull_status", model: model}).then(function (body) {
+    var data = body.data || {};
+    if (data.state === "pulling") {
+      hpcOllamaRenderProgress(data);
+      window.setTimeout(function () { hpcOllamaPollPull(model, btn); }, 1200);
+      return;
+    }
+    if (data.state === "completed") {
+      hpcOllamaRenderProgress({status: "完了", completed: 1, total: 1});
+      hpcOllamaMsg(model + " のダウンロードが完了しました", true);
+      if (btn) btn.disabled = false;
+      window.setTimeout(function () { window.location.reload(); }, 900);
+      return;
+    }
+    if (data.state === "busy") {
+      hpcOllamaMsg((data.active_model || "別のモデル") + " をダウンロード中です", false);
+    } else if (data.state === "failed") {
+      hpcOllamaMsg(data.error || model + " のダウンロードに失敗しました", false);
+    } else {
+      hpcOllamaMsg("ダウンロード状態を確認できません", false);
+    }
+    if (btn) btn.disabled = false;
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+    if (btn) btn.disabled = false;
+  });
+}
+{% if d.shared_ollama %}
+document.addEventListener("DOMContentLoaded", function () {
+  hpcOllamaPost({action: "ollama_pull_status"}).then(function (body) {
+    var data = body.data || {};
+    if (data.state === "pulling" && data.model) hpcOllamaPollPull(data.model, null);
+  }).catch(function () {});
+});
+{% endif %}
 function hpcOllamaDelete(btn) {
   var model = btn.getAttribute("data-model") || "";
   if (!model || !confirm(model + " を削除しますか？")) return;

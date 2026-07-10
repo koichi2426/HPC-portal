@@ -22,8 +22,6 @@
   <div class="gx10-key-card">
     <div class="gx10-key-label">API Base URL</div>
     <code class="gx10-key-code">{{ hpc_litellm_public_base_url or "未設定" }}</code>
-    <div class="gx10-key-label" style="margin-top:14px;">model 例</div>
-    <code class="gx10-key-code">{{ default_model }}</code>
   </div>
 
   <div class="gx10-key-card">
@@ -34,12 +32,9 @@
     {% elif models %}
     <div class="gx10-model-list">
       {% for model in models %}
-      <div class="gx10-model-item">
+      <button type="button" class="gx10-model-item gx10-model-select{% if model.id == default_model %} selected{% endif %}" data-model="{{ model.id }}">
         <div class="gx10-model-name">{{ model.id }}</div>
-        {% if model.owned_by %}
-        <div class="gx10-model-meta">{{ model.owned_by }}</div>
-        {% endif %}
-      </div>
+      </button>
       {% endfor %}
     </div>
     {% else %}
@@ -49,22 +44,25 @@
 
   <div class="gx10-key-card">
     <div class="hpc-section-title" style="margin-bottom:8px;">使い方</div>
-    <pre class="gx10-key-pre">curl {{ hpc_litellm_public_base_url }}/chat/completions \
-  -H "Authorization: Bearer LITELLM_API_KEY" \
+    <div class="hpc-help" style="margin-bottom:8px;">黄色の部分だけを、この画面で発行した API key に置き換えてください。モデル名は上の一覧を押すと切り替わります。</div>
+    <div class="gx10-code-heading"><span>curl</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="curl-example">コピー</button></div>
+    <pre id="curl-example" class="gx10-key-pre">curl {{ hpc_litellm_public_base_url }}/chat/completions \
+  -H "Authorization: Bearer <span class="gx10-api-key-placeholder">YOUR_LITELLM_API_KEY</span>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "{{ default_model }}",
+    "model": "<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
     "messages": [{"role": "user", "content": "こんにちは"}]
   }'</pre>
-    <pre class="gx10-key-pre">from openai import OpenAI
+    <div class="gx10-code-heading"><span>Python</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="python-example">コピー</button></div>
+    <pre id="python-example" class="gx10-key-pre">from openai import OpenAI
 
 client = OpenAI(
-    api_key="LITELLM_API_KEY",
+    api_key="<span class="gx10-api-key-placeholder">YOUR_LITELLM_API_KEY</span>",
     base_url="{{ hpc_litellm_public_base_url }}",
 )
 
 response = client.chat.completions.create(
-    model="{{ default_model }}",
+    model="<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
     messages=[{"role": "user", "content": "こんにちは"}],
 )
 print(response.choices[0].message.content)</pre>
@@ -117,6 +115,24 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     msg.textContent = text;
     msg.className = "gx10-key-msg " + (ok ? "ok" : "err");
   }
+  function copyExample(id) {
+    var text = (document.getElementById(id).textContent || "").trim();
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return window.prompt("コピーしてください", text);
+    navigator.clipboard.writeText(text).then(function () {
+      showMsg("使い方をコピーしました", true);
+    }).catch(function () { window.prompt("コピーしてください", text); });
+  }
+  document.querySelectorAll(".gx10-model-select").forEach(function (btn) {
+    btn.onclick = function () {
+      var model = btn.getAttribute("data-model") || "";
+      document.querySelectorAll(".gx10-model-select").forEach(function (item) { item.classList.remove("selected"); });
+      btn.classList.add("selected");
+      document.querySelectorAll("[data-model-output]").forEach(function (output) { output.textContent = model; });
+    };
+  });
+  document.querySelectorAll(".gx10-copy-example").forEach(function (btn) {
+    btn.onclick = function () { copyExample(btn.getAttribute("data-copy")); };
+  });
   function copyKey() {
     var key = document.getElementById("key-value").textContent || "";
     if (!key) return;

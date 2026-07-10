@@ -10,6 +10,10 @@ DEFAULT_MEMORY="{{ ollama_slurm_default_memory }}"
 GPUS="{{ ollama_slurm_gpus | default(1) }}"
 ALLOWED_CPUS="{{ ollama_slurm_allowed_cpus | default([4, 8, 12, 16, 20]) | join(' ') }}"
 ALLOWED_MEMORY="{{ ollama_slurm_allowed_memory | default(['16G', '32G', '64G', '96G', '112G']) | join(' ') }}"
+PULL_STATE_DIR="/run/hpc-ollama"
+PULL_LOCK_DIR="$PULL_STATE_DIR/pull.lock"
+PULL_PID_FILE="$PULL_STATE_DIR/pull.pid"
+PULL_MODEL_FILE="$PULL_STATE_DIR/pull.model"
 
 cmd="${1:-}"
 model="${2:-}"
@@ -124,10 +128,48 @@ case "$cmd" in
     fi
     safe_model="$(printf '%s' "$model" | tr '/:' '__')"
     log="/var/log/hpc-ollama/pull-${safe_model}.log"
-    sudo -u "$SERVICE_USER" nohup curl -fsS "$OLLAMA_URL/api/pull" \
-      -H 'Content-Type: application/json' \
-      -d "{\"name\":\"$model\"}" >"$log" 2>&1 &
-    echo "{\"status\":\"pulling\",\"model\":\"$model\",\"log\":\"$log\"}"
+    mkdir -p "$PULL_STATE_DIR"
+    if [ -f "$PULL_PID_FILE" ] && ! kill -0 "$(cat "$PULL_PID_FILE")" 2>/dev/null; then
+      rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+      rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+    fi
+    if ! mkdir "$PULL_LOCK_DIR" 2>/dev/null; then
+      active_model="$(cat "$PULL_MODEL_FILE" 2>/dev/null || true)"
+      echo "another model pull is already running: ${active_model:-unknown}" >&2
+      exit 1
+    fi
+    rm -f "$log" "$PULL_STATE_DIR/pull-${safe_model}.result"
+    (
+      printf '%s' "$BASHPID" >"$PULL_PID_FILE"
+      printf '%s' "$model" >"$PULL_MODEL_FILE"
+      set +e
+      sudo -u "$SERVICE_USER" curl -fsSN "$OLLAMA_URL/api/pull" \
+        -H 'Content-Type: application/json' \
+        -d "{\"name\":\"$model\"}" >"$log" 2>&1
+      rc=$?
+      printf '%s' "$rc" >"$PULL_STATE_DIR/pull-${safe_model}.result"
+      rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+      rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+      exit "$rc"
+    ) &
+    echo "{\"status\":\"pulling\",\"model\":\"$(json_escape "$model")\"}"
+    ;;
+  pull-status)
+    active=false
+    active_model="$(cat "$PULL_MODEL_FILE" 2>/dev/null || true)"
+    if [ -f "$PULL_PID_FILE" ] && kill -0 "$(cat "$PULL_PID_FILE")" 2>/dev/null; then
+      active=true
+    fi
+    status_model="${model:-$active_model}"
+    safe_model="$(printf '%s' "$status_model" | tr '/:' '__')"
+    last=""
+    result=""
+    if [ -n "$status_model" ]; then
+      last="$(tail -n 1 "/var/log/hpc-ollama/pull-${safe_model}.log" 2>/dev/null || true)"
+      result="$(cat "$PULL_STATE_DIR/pull-${safe_model}.result" 2>/dev/null || true)"
+    fi
+    printf '{"active":%s,"active_model":"%s","model":"%s","result":"%s","last":"%s"}\n' \
+      "$active" "$(json_escape "$active_model")" "$(json_escape "$status_model")" "$(json_escape "$result")" "$(json_escape "$last")"
     ;;
   delete)
     if [ -z "$model" ]; then
@@ -139,7 +181,7 @@ case "$cmd" in
       -d "{\"name\":\"$model\"}"
     ;;
   *)
-    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|delete <model>" >&2
+    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|pull-status [model]|delete <model>" >&2
     exit 2
     ;;
 esac

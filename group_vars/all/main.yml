@@ -70,9 +70,8 @@ litellm_public_base_url: "{{ hpc_llm_public_base_url }}"
 litellm_proxy_base_url: "{{ hpc_llm_admin_base_url }}"
 litellm_admin_url: "{{ hpc_llm_admin_url }}"
 litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
-litellm_initial_models:
-  - name: ollama-default
-    backend: ollama/llama3.1
+# 宣言的に同梱するモデルはなし。利用モデルは LiteLLM 管理画面で登録する。
+litellm_initial_models: []
 
 # shared Ollama
 ollama_version: "0.31.1"

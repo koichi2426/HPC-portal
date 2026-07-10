@@ -2393,7 +2393,7 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
             return json.loads(body), None
         except json.JSONDecodeError:
             return {"raw": body}, None
-    if action in {"tags", "ps"} and body:
+    if action in {"tags", "ps", "pull-status"} and body:
         try:
             return json.loads(body), None
         except json.JSONDecodeError:
@@ -2408,6 +2408,51 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
         except json.JSONDecodeError:
             return {"ok": True, "output": body, "cpus": cpus or HPC_OLLAMA_DEFAULT_CPUS, "memory": memory or HPC_OLLAMA_DEFAULT_MEMORY, "gpus": HPC_OLLAMA_GPUS}, None
     return {"ok": True, "output": body}, None
+
+
+def _hpc_ollama_pull_progress(model: str | None = None) -> tuple[dict | None, str | None]:
+    """バックグラウンド pull の最終進捗行を、安全な表示用データに正規化する。"""
+    data, err = _hpc_ollama_cmd("pull-status", model)
+    if err or data is None:
+        return None, err or "pull 状態を取得できません"
+    active = bool(data.get("active"))
+    active_model = str(data.get("active_model") or "")
+    selected_model = str(data.get("model") or model or active_model or "")
+    last = str(data.get("last") or "")
+    record = {}
+    if last:
+        try:
+            parsed = json.loads(last)
+            if isinstance(parsed, dict):
+                record = parsed
+        except json.JSONDecodeError:
+            record = {"error": last[:300]}
+    total = record.get("total")
+    completed = record.get("completed")
+    try:
+        total = max(0, int(total)) if total is not None else None
+    except (TypeError, ValueError):
+        total = None
+    try:
+        completed = max(0, int(completed)) if completed is not None else None
+    except (TypeError, ValueError):
+        completed = None
+    state = "idle"
+    if active:
+        state = "pulling" if not model or active_model == model else "busy"
+    elif str(data.get("result") or "") not in ("", "0"):
+        state = "failed"
+    elif str(record.get("status") or "").lower() == "success" or str(data.get("result") or "") == "0":
+        state = "completed"
+    return {
+        "state": state,
+        "model": selected_model,
+        "active_model": active_model,
+        "status": str(record.get("status") or ""),
+        "completed": completed,
+        "total": total,
+        "error": str(record.get("error") or "")[:300],
+    }, None
 
 
 def _hpc_shared_ollama_detail_context(user=None) -> dict:
@@ -2516,7 +2561,7 @@ class HpcLlmApiPageHandler(BaseHandler):
         else:
             status_error = "LiteLLM Admin API が未設定です"
         models, models_error = _hpc_litellm_list_models()
-        default_model = models[0]["id"] if models else "ollama-default"
+        default_model = models[0]["id"] if models else ""
         html_out = await self.render_template(
             "llm_api.html",
             xsrf_token=xsrf_token,
@@ -2700,22 +2745,26 @@ class HpcAdminUsersApiHandler(BaseHandler):
             self.write({"ok": True, "enabled": enabled})
             return
 
-        if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_delete"}:
+        if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_status", "ollama_delete"}:
             mapping = {
                 "ollama_start": "start",
                 "ollama_stop": "stop",
                 "ollama_status": "status",
                 "ollama_tags": "tags",
                 "ollama_pull": "pull",
+                "ollama_pull_status": "pull-status",
                 "ollama_delete": "delete",
             }
             model = str(body.get("model", "")).strip()
-            data, err = _hpc_ollama_cmd(
-                mapping[action],
-                model if action in {"ollama_pull", "ollama_delete"} else None,
-                str(body.get("cpus", "")).strip() if action == "ollama_start" else None,
-                str(body.get("memory", "")).strip() if action == "ollama_start" else None,
-            )
+            if action == "ollama_pull_status":
+                data, err = _hpc_ollama_pull_progress(model or None)
+            else:
+                data, err = _hpc_ollama_cmd(
+                    mapping[action],
+                    model if action in {"ollama_pull", "ollama_delete"} else None,
+                    str(body.get("cpus", "")).strip() if action == "ollama_start" else None,
+                    str(body.get("memory", "")).strip() if action == "ollama_start" else None,
+                )
             if err:
                 return self._api_error(400, err)
             self.write({"ok": True, "data": data})
