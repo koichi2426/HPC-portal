@@ -31,6 +31,7 @@
   loop:
     - { path: /opt/litellm, owner: root, group: root, mode: "0755" }
     - { path: /etc/litellm, owner: root, group: "{{ litellm_user }}", mode: "0750" }
+    - { path: "{{ openwebui_litellm_key_dir }}", owner: root, group: root, mode: "0700" }
     - { path: /var/lib/litellm, mode: "0750" }
 
 - name: LiteLLM Python venv とパッケージを用意
@@ -146,67 +147,10 @@
     - not ansible_check_mode
     - not (hpc_skip_service_restarts | default(false) | bool)
 
-- name: Open WebUI 用 LiteLLM key の存在確認
-  ansible.builtin.stat:
-    path: "{{ openwebui_litellm_api_key_file }}"
-  register: openwebui_litellm_key_file
-
-- name: LiteLLM API 起動待ち
-  ansible.builtin.uri:
-    url: "http://{{ litellm_host }}:{{ litellm_port }}/health"
-    method: GET
-    status_code: [200, 401, 404]
-  register: litellm_health
-  retries: 20
-  delay: 3
-  until: litellm_health.status in [200, 401, 404]
-  when:
-    - not ansible_check_mode
-    - not (hpc_skip_service_restarts | default(false) | bool)
-    - not openwebui_litellm_key_file.stat.exists
-
-- name: Open WebUI 用 LiteLLM key を初回発行
-  ansible.builtin.uri:
-    url: "http://{{ litellm_host }}:{{ litellm_port }}/key/generate"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ litellm_master_key }}"
-      Content-Type: application/json
-    body_format: json
-    body:
-      key_alias: "{{ openwebui_litellm_key_alias }}"
-      metadata:
-        source: hpc-portal
-        service: openwebui
-    return_content: true
-    status_code: 200
-  register: openwebui_litellm_key_response
-  no_log: true
-  when:
-    - not ansible_check_mode
-    - not (hpc_skip_service_restarts | default(false) | bool)
-    - not openwebui_litellm_key_file.stat.exists
-
-- name: Open WebUI 用 LiteLLM key を root-only で保存
-  ansible.builtin.copy:
-    content: "{{ openwebui_litellm_key_response.json.get('key', openwebui_litellm_key_response.json.get('token', '')) }}\n"
-    dest: "{{ openwebui_litellm_api_key_file }}"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  when:
-    - not ansible_check_mode
-    - not (hpc_skip_service_restarts | default(false) | bool)
-    - not openwebui_litellm_key_file.stat.exists
-
-- name: Open WebUI 用 key 未生成を通知
-  ansible.builtin.debug:
-    msg: "hpc_skip_service_restarts=true のため Open WebUI 用 LiteLLM key は未生成です。通常デプロイ（site.yml）で生成してください。"
-  when:
-    - not ansible_check_mode
-    - hpc_skip_service_restarts | default(false) | bool
-    - not openwebui_litellm_key_file.stat.exists
+- name: 廃止した共有 Open WebUI key を削除
+  ansible.builtin.file:
+    path: /etc/litellm/openwebui.key
+    state: absent
 
 - name: 再起動抑止モード時は LiteLLM 設定変更が未反映であることを通知
   ansible.builtin.debug:

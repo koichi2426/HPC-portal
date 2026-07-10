@@ -19,6 +19,10 @@
     ここで作成・変更したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
   </div>
 
+  <div class="hpc-note">
+    API利用の有効化・無効化・ユーザー削除は、このHPCポータルから行ってください。LiteLLMでVirtual Keyを直接変更すると、管理状態が一致しなくなる場合があります。
+  </div>
+
   <div class="gx10-admin-card">
     <div class="hpc-section-title" style="margin-bottom:12px;">新規ユーザー作成</div>
     <form id="hpc-create-user-form" class="gx10-admin-form-grid" method="post" action="#" onsubmit="return false;" data-default-sudo="{% if grant_sudo_default %}true{% else %}false{% endif %}">

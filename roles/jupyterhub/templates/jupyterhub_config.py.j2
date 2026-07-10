@@ -1,6 +1,7 @@
 import asyncio
 import html
 import json
+import logging
 import secrets
 import time
 
@@ -136,14 +137,9 @@ HPC_LITELLM_PUBLIC_BASE_URL = os.environ.get("HPC_LITELLM_PUBLIC_BASE_URL", "")
 HPC_LITELLM_ADMIN_URL = os.environ.get("HPC_LITELLM_ADMIN_URL", "")
 HPC_LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
 OPENWEBUI_LITELLM_BASE_URL = os.environ.get("OPENWEBUI_LITELLM_BASE_URL", "")
-OPENWEBUI_LITELLM_API_KEY_FILE = os.environ.get("OPENWEBUI_LITELLM_API_KEY_FILE", "")
-OPENWEBUI_LITELLM_API_KEY = os.environ.get("OPENWEBUI_LITELLM_API_KEY", "")
-if not OPENWEBUI_LITELLM_API_KEY and OPENWEBUI_LITELLM_API_KEY_FILE:
-    try:
-        with open(OPENWEBUI_LITELLM_API_KEY_FILE, "r", encoding="utf-8") as _f:
-            OPENWEBUI_LITELLM_API_KEY = _f.read().strip()
-    except OSError:
-        OPENWEBUI_LITELLM_API_KEY = ""
+OPENWEBUI_LITELLM_KEY_DIR = os.environ.get("OPENWEBUI_LITELLM_KEY_DIR", "/etc/litellm/openwebui-keys")
+HPC_LITELLM_LOG = logging.getLogger("jupyterhub.hpc-litellm")
+_HPC_OPENWEBUI_KEY_LOCKS: dict[str, asyncio.Lock] = {}
 
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
 c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
@@ -753,6 +749,23 @@ class HPCSlurmSpawner(SlurmSpawner):
                     check=False,
                     timeout=5,
                 )
+
+    async def start(self):
+        """Open WebUI には、ユーザー専用の永続 Virtual Key を渡す。"""
+        if _is_openwebui_spawner(self):
+            username = self.user.name if getattr(self, "user", None) else ""
+            if not username:
+                raise RuntimeError("Open WebUI 用のユーザー情報を取得できません")
+            lock = _HPC_OPENWEBUI_KEY_LOCKS.setdefault(username, asyncio.Lock())
+            async with lock:
+                key, err = _hpc_litellm_get_openwebui_key(username)
+            if err:
+                raise RuntimeError(f"Open WebUI を起動できません: {err}")
+            self.environment = {
+                **dict(getattr(self, "environment", {}) or {}),
+                "OPENWEBUI_LITELLM_API_KEY": key or "",
+            }
+        return await super().start()
 
     async def submit_batch_script(self):
         if getattr(self, "_hpc_job_submitted", False):
@@ -1879,6 +1892,195 @@ def _hpc_litellm_generate_key(username: str) -> tuple[str | None, str | None]:
     return key, None
 
 
+def _hpc_openwebui_key_path(username: str) -> str:
+    if _hpc_validate_username(username):
+        raise ValueError("Open WebUI key 用のユーザー名が不正です")
+    return os.path.join(OPENWEBUI_LITELLM_KEY_DIR, f"{username}.key")
+
+
+def _hpc_read_openwebui_key(username: str) -> str:
+    try:
+        with open(_hpc_openwebui_key_path(username), "r", encoding="utf-8") as key_file:
+            return key_file.read().strip()
+    except OSError:
+        return ""
+
+
+def _hpc_safe_litellm_error(error) -> str:
+    """ログや画面へ返すエラーから Virtual Key らしい文字列を除去する。"""
+    return re.sub(r"sk-[A-Za-z0-9._~-]+", "sk-[REDACTED]", str(error or ""))[:500]
+
+
+def _hpc_log_litellm_action(action: str, username: str, result: str, error=None) -> None:
+    message = "action=%s user=%s result=%s"
+    args = [action, username, result]
+    if error:
+        message += " error=%s"
+        args.append(_hpc_safe_litellm_error(error))
+    if result == "ok":
+        HPC_LITELLM_LOG.info(message, *args)
+    else:
+        HPC_LITELLM_LOG.warning(message, *args)
+
+
+def _hpc_write_openwebui_key(username: str, key: str) -> str | None:
+    if not key:
+        return "Open WebUI 用 key が空です"
+    try:
+        os.makedirs(OPENWEBUI_LITELLM_KEY_DIR, mode=0o700, exist_ok=True)
+        path = _hpc_openwebui_key_path(username)
+        tmp_path = f"{path}.tmp-{os.getpid()}-{secrets.token_hex(6)}"
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, (key + "\n").encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        try:
+            if "tmp_path" in locals():
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+        return f"Open WebUI 用 key の保存に失敗しました: {exc}"
+    return None
+
+
+def _hpc_remove_openwebui_key(username: str) -> None:
+    try:
+        os.unlink(_hpc_openwebui_key_path(username))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _hpc_litellm_generate_openwebui_key(username: str) -> tuple[str | None, str | None]:
+    """ユーザーごとに再利用する Open WebUI 専用 Virtual Key を初回だけ発行する。"""
+    if not _hpc_litellm_enabled():
+        return None, "LiteLLM Admin API が未設定です"
+    user_err = _hpc_litellm_ensure_user(username)
+    if user_err:
+        return None, user_err
+    disabled, err = _hpc_litellm_user_admin_disabled(username)
+    if err:
+        return None, err
+    if disabled:
+        return None, "API 利用が管理者により停止されています"
+    payload = {
+        "user_id": username,
+        "key_alias": f"openwebui-{username}",
+        "metadata": {
+            "linux_username": username,
+            "source": "hpc-portal-openwebui",
+            "admin_disabled": False,
+        },
+    }
+    try:
+        data = _hpc_litellm_request("/key/generate", payload)
+    except RuntimeError as exc:
+        return None, str(exc)
+    key = data.get("key") or data.get("token")
+    if not key:
+        return None, "Open WebUI 用 key 発行レスポンスに key が含まれていません"
+    _hpc_log_litellm_action("openwebui_key_generate", username, "ok")
+    return key, None
+
+
+def _hpc_litellm_openwebui_key_info(username: str, key: str) -> tuple[dict | None, str, str | None]:
+    """保存keyのLiteLLM状態を返す: valid / missing / blocked / mismatch / error。"""
+    quoted = urllib.parse.quote(key, safe="")
+    try:
+        data = _hpc_litellm_request(f"/key/info?key={quoted}", method="GET")
+    except RuntimeError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if any(marker in lowered for marker in ("http 401", "http 404", "token_not_found", "not found")):
+            return None, "missing", None
+        return None, "error", _hpc_safe_litellm_error(exc)
+    info = data.get("info") if isinstance(data, dict) else None
+    if not isinstance(info, dict):
+        info = data if isinstance(data, dict) else {}
+    record_user_id = str(info.get("user_id") or data.get("user_id") or "")
+    if not record_user_id:
+        return info, "mismatch", "保存keyにuser_idが設定されていません"
+    if record_user_id != username:
+        return info, "mismatch", "保存keyのuser_idがログインユーザーと一致しません"
+    blocked_value = info.get("blocked", data.get("blocked"))
+    blocked = blocked_value is True or str(blocked_value).strip().lower() in {"true", "1", "yes"}
+    if blocked:
+        return info, "blocked", None
+    return info, "valid", None
+
+
+def _hpc_litellm_set_openwebui_key_blocked(username: str, blocked: bool) -> str | None:
+    key = _hpc_read_openwebui_key(username)
+    if not key:
+        return None
+    endpoint = "/key/block" if blocked else "/key/unblock"
+    action = "openwebui_key_block" if blocked else "openwebui_key_unblock"
+    try:
+        _hpc_litellm_request(endpoint, {"key": key})
+    except RuntimeError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        if any(marker in lowered for marker in ("http 401", "http 404", "token_not_found", "not found")):
+            _hpc_remove_openwebui_key(username)
+            _hpc_log_litellm_action(action, username, "missing")
+            return None
+        safe_error = _hpc_safe_litellm_error(exc)
+        _hpc_log_litellm_action(action, username, "failed", safe_error)
+        return safe_error
+    _hpc_log_litellm_action(action, username, "ok")
+    return None
+
+
+def _hpc_litellm_get_openwebui_key(username: str) -> tuple[str | None, str | None]:
+    """API 利用が有効なユーザーに対して、永続 Open WebUI key を返す。"""
+    if not _hpc_litellm_enabled():
+        return None, "LiteLLM Admin API が未設定です"
+    user_err = _hpc_litellm_ensure_user(username)
+    if user_err:
+        return None, user_err
+    disabled, err = _hpc_litellm_user_admin_disabled(username)
+    if err:
+        return None, err
+    if disabled:
+        return None, "API 利用が管理者により停止されています"
+    existing_key = _hpc_read_openwebui_key(username)
+    if existing_key:
+        _info, state, info_error = _hpc_litellm_openwebui_key_info(username, existing_key)
+        if state == "valid":
+            return existing_key, None
+        if state == "missing":
+            _hpc_remove_openwebui_key(username)
+            _hpc_log_litellm_action("openwebui_key_validate", username, "missing")
+        elif state == "blocked":
+            _hpc_log_litellm_action("openwebui_key_validate", username, "blocked")
+            return None, "Open WebUI 用 API key が無効化されています"
+        elif state == "mismatch":
+            _hpc_log_litellm_action("openwebui_key_validate", username, "mismatch", info_error)
+            return None, info_error or "Open WebUI 用 API key の所有者が一致しません"
+        else:
+            _hpc_log_litellm_action("openwebui_key_validate", username, "failed", info_error)
+            return None, info_error or "Open WebUI 用 API key の確認に失敗しました"
+    key, err = _hpc_litellm_generate_openwebui_key(username)
+    if err:
+        return None, err
+    write_err = _hpc_write_openwebui_key(username, key or "")
+    if write_err:
+        try:
+            _hpc_litellm_request("/key/block", {"key": key})
+        except RuntimeError:
+            pass
+        _hpc_log_litellm_action("openwebui_key_store", username, "failed", write_err)
+        return None, write_err
+    _hpc_log_litellm_action("openwebui_key_store", username, "ok")
+    return key, None
+
+
 def _hpc_litellm_metadata(value) -> dict:
     if isinstance(value, dict):
         return value
@@ -1989,15 +2191,9 @@ def _hpc_litellm_user_admin_disabled(username: str) -> tuple[bool, str | None]:
     metadata, err = _hpc_litellm_user_metadata(username)
     if err:
         return False, err
-    if metadata.get("admin_disabled") is True:
-        return True, None
-    records, err = _hpc_litellm_list_user_keys(username)
-    if err:
-        return False, err
-    for record in records:
-        if _hpc_litellm_metadata(record.get("metadata")).get("admin_disabled") is True:
-            return True, None
-    return False, None
+    # ユーザーmetadataを正本にする。過去にblockしたキーのmetadataを参照すると、
+    # API利用を再有効化しても古いキーの停止フラグで誤って拒否されるため。
+    return metadata.get("admin_disabled") is True, None
 
 
 def _hpc_litellm_set_key_metadata(record: dict, disabled: bool) -> str | None:
@@ -2017,13 +2213,23 @@ def _hpc_litellm_set_key_metadata(record: dict, disabled: bool) -> str | None:
         return str(exc)
 
 
-def _hpc_litellm_set_user_keys_blocked(username: str, blocked: bool, *, mark_admin_disabled: bool | None = None) -> str | None:
+def _hpc_litellm_set_user_keys_blocked(
+    username: str,
+    blocked: bool,
+    *,
+    mark_admin_disabled: bool | None = None,
+    include_openwebui: bool = True,
+) -> str | None:
     records, err = _hpc_litellm_list_user_keys(username)
     if err:
         return err
     endpoint = "/key/block" if blocked else "/key/unblock"
+    action = "user_keys_block" if blocked else "user_keys_unblock"
     errors = []
     for record in records:
+        metadata = _hpc_litellm_metadata(record.get("metadata"))
+        if not include_openwebui and metadata.get("source") == "hpc-portal-openwebui":
+            continue
         key_id = _hpc_litellm_key_identifier(record)
         if not key_id:
             errors.append("LiteLLM key の識別子が取得できません")
@@ -2039,7 +2245,12 @@ def _hpc_litellm_set_user_keys_blocked(username: str, blocked: bool, *, mark_adm
                 # 管理者停止フラグの正本は user metadata。key metadata は一覧確認用の補助なので、
                 # LiteLLM のバージョン差で更新に失敗しても block/unblock 成功を優先する。
                 pass
-    return "; ".join(errors) if errors else None
+    if errors:
+        joined = "; ".join(_hpc_safe_litellm_error(error) for error in errors)
+        _hpc_log_litellm_action(action, username, "failed", joined)
+        return joined
+    _hpc_log_litellm_action(action, username, "ok")
+    return None
 
 
 def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | None:
@@ -2049,17 +2260,54 @@ def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | Non
         pwd.getpwnam(username)
     except KeyError:
         return "ユーザーが見つかりません"
-    disabled = not enabled
-    user_err = _hpc_litellm_set_user_admin_disabled(username, disabled)
-    if user_err:
-        return user_err
-    key_err = _hpc_litellm_set_user_keys_blocked(
+    if not enabled:
+        # 先にユーザーを停止状態へし、新規Open WebUI起動を拒否する。
+        user_err = _hpc_litellm_set_user_admin_disabled(username, True)
+        if user_err:
+            _hpc_log_litellm_action("api_disable", username, "failed", user_err)
+            return user_err
+        external_err = _hpc_litellm_set_user_keys_blocked(
+            username,
+            blocked=True,
+            mark_admin_disabled=True,
+            include_openwebui=False,
+        )
+        openwebui_err = _hpc_litellm_set_openwebui_key_blocked(username, True)
+        errors = [error for error in (external_err, openwebui_err) if error]
+        if errors:
+            joined = "; ".join(errors)
+            _hpc_log_litellm_action("api_disable", username, "partial", joined)
+            return joined
+        _hpc_log_litellm_action("api_disable", username, "ok")
+        return None
+
+    # 再有効化では保存済みの同じOpen WebUI keyをunblockする。どれかが失敗したら
+    # user metadataは停止状態のままにし、部分的な有効化を避ける。
+    external_err = _hpc_litellm_set_user_keys_blocked(
         username,
-        blocked=disabled,
-        mark_admin_disabled=disabled,
+        blocked=False,
+        mark_admin_disabled=False,
+        include_openwebui=False,
     )
-    if key_err:
-        return key_err
+    openwebui_err = _hpc_litellm_set_openwebui_key_blocked(username, False)
+    errors = [error for error in (external_err, openwebui_err) if error]
+    if errors:
+        joined = "; ".join(errors)
+        _hpc_log_litellm_action("api_enable", username, "failed", joined)
+        return joined
+    user_err = _hpc_litellm_set_user_admin_disabled(username, False)
+    if user_err:
+        # user metadata更新失敗時は、先に有効化したkeyを再停止する。
+        _hpc_litellm_set_user_keys_blocked(
+            username,
+            blocked=True,
+            mark_admin_disabled=True,
+            include_openwebui=False,
+        )
+        _hpc_litellm_set_openwebui_key_blocked(username, True)
+        _hpc_log_litellm_action("api_enable", username, "failed", user_err)
+        return user_err
+    _hpc_log_litellm_action("api_enable", username, "ok")
     return None
 
 
@@ -2075,13 +2323,19 @@ def _hpc_litellm_regenerate_own_key(username: str) -> tuple[str | None, str | No
         return None, err
     if disabled:
         return None, "API key は管理者により無効化されています"
-    err = _hpc_litellm_set_user_keys_blocked(username, blocked=True, mark_admin_disabled=False)
+    err = _hpc_litellm_set_user_keys_blocked(
+        username,
+        blocked=True,
+        mark_admin_disabled=False,
+        include_openwebui=False,
+    )
     if err:
         return None, err
     return _hpc_litellm_generate_key(username)
 
 
 def _hpc_litellm_delete_user_keys(username: str) -> str | None:
+    _hpc_remove_openwebui_key(username)
     if not _hpc_litellm_enabled():
         return "LiteLLM Admin API が未設定のため key 無効化は未確認です"
     block_err = _hpc_litellm_set_user_keys_blocked(username, blocked=True, mark_admin_disabled=True)
@@ -2311,6 +2565,44 @@ class HpcLlmApiApiHandler(BaseHandler):
         })
 
 
+async def _hpc_stop_user_openwebui_servers(handler, username: str) -> str | None:
+    """管理中spawnerと残存Slurm jobの両方からOpen WebUIを停止する。"""
+    errors = []
+    try:
+        target_user = handler.find_user(username)
+    except Exception as exc:
+        target_user = None
+        errors.append(_hpc_safe_litellm_error(exc))
+    if target_user is not None:
+        for server_name, spawner in list(target_user.spawners.items()):
+            if not _is_openwebui_spawner(spawner):
+                continue
+            if not (getattr(spawner, "active", False) or getattr(spawner, "pending", None)):
+                continue
+            try:
+                await target_user.stop(server_name)
+            except Exception as exc:
+                errors.append(_hpc_safe_litellm_error(exc))
+
+    # Hub stateに残っていないjobも、Open WebUI専用job名で回収する。
+    queue = _hpc_run_cmd(["squeue", "-h", "-u", username, "-n", "jhub-openwebui", "-o", "%A"])
+    if queue.returncode == 0:
+        job_ids = [line.strip() for line in queue.stdout.splitlines() if line.strip().isdigit()]
+        if job_ids:
+            canceled = _hpc_run_cmd(["scancel", *job_ids])
+            if canceled.returncode != 0:
+                errors.append((canceled.stderr or canceled.stdout or "scancel failed").strip())
+    else:
+        errors.append((queue.stderr or queue.stdout or "squeue failed").strip())
+
+    if errors:
+        joined = "; ".join(_hpc_safe_litellm_error(error) for error in errors)
+        _hpc_log_litellm_action("openwebui_stop", username, "failed", joined)
+        return joined
+    _hpc_log_litellm_action("openwebui_stop", username, "ok")
+    return None
+
+
 class HpcAdminUsersApiHandler(BaseHandler):
     """Linux ユーザー管理 API"""
 
@@ -2398,8 +2690,13 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 return self._api_error(400, "username が必要です")
             enabled = action == "api_enable"
             err = _hpc_litellm_admin_set_api_access(username, enabled)
-            if err:
-                return self._api_error(400, err)
+            stop_err = None
+            if not enabled:
+                # key blockが一部失敗しても、起動中Open WebUIの停止は必ず試行する。
+                stop_err = await _hpc_stop_user_openwebui_servers(self, username)
+            errors = [error for error in (err, stop_err) if error]
+            if errors:
+                return self._api_error(400, "; ".join(errors))
             self.write({"ok": True, "enabled": enabled})
             return
 
@@ -2738,6 +3035,7 @@ def options_from_form(formdata):
     except ValueError:
         g = 0
     g = max(0, min(gpu_max, g))
+    app_choice = str(formdata.get("app_choice", ["ubuntu-cli"])[0])
     return {
         "nprocs": str(formdata.get("cpu", ["2"])[0]),
         "memory": f"{formdata.get('mem', ['4'])[0]}G",
@@ -2745,7 +3043,8 @@ def options_from_form(formdata):
         "runtime_line": runtime_line,
         "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
         "gpu": str(g),
-        "app_choice": str(formdata.get("app_choice", ["ubuntu-cli"])[0]),
+        "app_choice": app_choice,
+        "job_name": "jhub-openwebui" if app_choice == "open-webui" else "jhub-app",
     }
 
 
@@ -2759,6 +3058,7 @@ def apply_user_options(spawner, user_options):
     spawner.user_options["gpu"] = str(user_options.get("gpu", "0"))
     app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
     spawner.user_options["app_choice"] = app_choice
+    spawner.user_options["job_name"] = "jhub-openwebui" if app_choice == "open-webui" else "jhub-app"
     if app_choice == "open-webui":
         # BatchSpawner の service_url が :0 になると pending から進めないため、
         # server_name ベースで Hub 側ポートを事前確定する
@@ -2787,7 +3087,6 @@ c.Spawner.start_timeout = 300
 c.Spawner.cmd = ["jupyterhub-singleuser"]
 c.Spawner.environment = {
     "OPENWEBUI_LITELLM_BASE_URL": OPENWEBUI_LITELLM_BASE_URL,
-    "OPENWEBUI_LITELLM_API_KEY": OPENWEBUI_LITELLM_API_KEY,
 }
 c.Spawner.apply_user_options = apply_user_options
 
@@ -2827,7 +3126,7 @@ Proxy.delete_user = _hpc_proxy_delete_user
 
 
 c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
-#SBATCH --job-name=jhub-app
+#SBATCH --job-name={bs}job_name{be}
 #SBATCH --partition={bs}partition{be}
 #SBATCH --cpus-per-task={bs}nprocs{be}
 #SBATCH --mem={bs}memory{be}
@@ -2924,14 +3223,19 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
       PORT="$((20000 + ($(printenv SLURM_JOB_ID || echo 0) % 20000)))"
       echo "dynamic port unavailable, fallback to PORT=$PORT (service_port=$SERVICE_PORT service_url=$SERVICE_URL)" >&2
     fi
+    port_is_listening() {bs}
+      # ss の式フィルタは環境によって解釈差があるため、標準の一覧出力を awk で判定する。
+      # Local Address の末尾が :<port> の LISTEN socket だけを対象にする。
+      ss -H -ltn | awk -v port="$1" '$4 ~ (":" port "$") {bs} found=1; exit {be} END {bs} exit !found {be}'
+    {be}
     # 以前の失敗ジョブの残骸で同一ポートが占有されると OpenWebUI が即終了するため、
     # 同ユーザーの同一ポート open_webui プロセスを掃除してから起動する。
-    if ss -ltn "( sport = :$PORT )" | rg -q LISTEN; then
+    if port_is_listening "$PORT"; then
       echo "PORT $PORT already in use; cleaning stale open_webui process" >&2
       pkill -u "$USER" -f "open_webui.main:app --host 0.0.0.0 --port $PORT" || true
       sleep 1
     fi
-    if ss -ltn "( sport = :$PORT )" | rg -q LISTEN; then
+    if port_is_listening "$PORT"; then
       echo "PORT $PORT still busy after cleanup; abort startup to avoid immediate crash" >&2
       exit 1
     fi
