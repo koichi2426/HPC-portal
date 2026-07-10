@@ -9,13 +9,13 @@
       tags: [slurm]
     - role: postgres
       tags: [postgres, litellm]
+    - role: apptainer
+      tags: [apptainer]
     - role: ollama
       tags: [ollama]
     - role: litellm
       tags: [litellm]
     - role: jupyterhub
       tags: [jupyterhub]
-    - role: apptainer
-      tags: [apptainer]
     - role: cloudflared
       tags: [cloudflared]

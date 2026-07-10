@@ -8,8 +8,8 @@
     - common
     - slurm
     - postgres
+    - apptainer
     - ollama
     - litellm
     - jupyterhub
-    - apptainer
     - cloudflared
