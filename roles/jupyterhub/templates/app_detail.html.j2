@@ -276,14 +276,13 @@ function hpcOllamaPollPull(model, btn) {
     if (btn) btn.disabled = false;
   });
 }
-{% if d.shared_ollama %}
 document.addEventListener("DOMContentLoaded", function () {
+  if (!document.getElementById("ollama-pull-progress")) return;
   hpcOllamaPost({action: "ollama_pull_status"}).then(function (body) {
     var data = body.data || {};
     if (data.state === "pulling" && data.model) hpcOllamaPollPull(data.model, null);
   }).catch(function () {});
 });
-{% endif %}
 function hpcOllamaDelete(btn) {
   var model = btn.getAttribute("data-model") || "";
   if (!model || !confirm(model + " を削除しますか？")) return;
