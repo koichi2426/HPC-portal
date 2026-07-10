@@ -3096,6 +3096,10 @@ js = "{" + "{"
 je = "}" + "}"
 bs = js[0]
 be = je[0]
+# batchspawner が後段で str.format() を行うため、シェル／awk のリテラル波括弧は
+# 二重にして渡す。str.format() 後に通常の一組の波括弧になる。
+lbs = js
+lbe = je
 
 # CHP の削除 API は既定で user.proxy_spec（ユーザー名サブドメイン）を使うため、
 # job<JOBID>.<domain> に差し替えた spawner.proxy_spec を確実に削除する
@@ -3223,11 +3227,11 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
       PORT="$((20000 + ($(printenv SLURM_JOB_ID || echo 0) % 20000)))"
       echo "dynamic port unavailable, fallback to PORT=$PORT (service_port=$SERVICE_PORT service_url=$SERVICE_URL)" >&2
     fi
-    port_is_listening() {bs}
+    port_is_listening() {lbs}
       # ss の式フィルタは環境によって解釈差があるため、標準の一覧出力を awk で判定する。
       # Local Address の末尾が :<port> の LISTEN socket だけを対象にする。
-      ss -H -ltn | awk -v port="$1" '$4 ~ (":" port "$") {bs} found=1; exit {be} END {bs} exit !found {be}'
-    {be}
+      ss -H -ltn | awk -v port="$1" '$4 ~ (":" port "$") {lbs} found=1; exit {lbe} END {lbs} exit !found {lbe}'
+    {lbe}
     # 以前の失敗ジョブの残骸で同一ポートが占有されると OpenWebUI が即終了するため、
     # 同ユーザーの同一ポート open_webui プロセスを掃除してから起動する。
     if port_is_listening "$PORT"; then
