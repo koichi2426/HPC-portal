@@ -127,7 +127,17 @@
       <div id="ollama-pull-progress-text" class="hpc-help">ダウンロードを準備中…</div>
       <div class="hpc-progress"><div id="ollama-pull-progress-fill" class="hpc-progress-fill"></div></div>
     </div>
-    <div class="hpc-help" style="margin-top:10px; font-size:12px;">Pull 完了後、LLM API で使うには LiteLLM 側でモデル登録が必要です。</div>
+    <div class="hpc-note" style="margin-top:14px;">
+      <strong>Pull 完了後に LiteLLM へモデル登録してください。</strong>
+      <ol style="margin:8px 0 0; padding-left:20px;">
+        <li><a href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面を開く ↗</a></li>
+        <li><code>Models + Endpoints</code> → <code>Add Model</code> を選ぶ</li>
+        <li><code>Provider</code>: <code>ollama</code></li>
+        <li><code>LiteLLM Model Name(s)</code>: Pull したモデル名</li>
+        <li><code>API Base</code>: <code>http://127.0.0.1:11434</code></li>
+        <li><code>Add Model</code> を押す</li>
+      </ol>
+    </div>
   </div>
   {% endif %}
 
