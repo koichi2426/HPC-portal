@@ -45,7 +45,7 @@
   <div class="gx10-key-card">
     <div class="hpc-section-title" style="margin-bottom:8px;">使い方</div>
     <div class="hpc-help" style="margin-bottom:8px;">黄色の部分だけを、この画面で発行した API key に置き換えてください。モデル名は上の一覧を押すと切り替わります。</div>
-    <div class="gx10-code-heading"><span>curl</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="curl-example">コピー</button></div>
+    <div class="gx10-code-heading"><span>curl</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="curl-example" data-copy-status="curl-copy-status">コピー</button></div>
     <pre id="curl-example" class="gx10-key-pre">curl {{ hpc_litellm_public_base_url }}/chat/completions \
   -H "Authorization: Bearer <span class="gx10-api-key-placeholder">YOUR_LITELLM_API_KEY</span>" \
   -H "Content-Type: application/json" \
@@ -53,7 +53,8 @@
     "model": "<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
     "messages": [{"role": "user", "content": "こんにちは"}]
   }'</pre>
-    <div class="gx10-code-heading"><span>Python</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="python-example">コピー</button></div>
+    <div id="curl-copy-status" class="gx10-copy-status" aria-live="polite"></div>
+    <div class="gx10-code-heading"><span>Python</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="python-example" data-copy-status="python-copy-status">コピー</button></div>
     <pre id="python-example" class="gx10-key-pre">from openai import OpenAI
 
 client = OpenAI(
@@ -66,6 +67,7 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "こんにちは"}],
 )
 print(response.choices[0].message.content)</pre>
+    <div id="python-copy-status" class="gx10-copy-status" aria-live="polite"></div>
   </div>
 
   <div class="gx10-key-card">
@@ -115,12 +117,26 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     msg.textContent = text;
     msg.className = "gx10-key-msg " + (ok ? "ok" : "err");
   }
-  function copyExample(id) {
+  function copyExample(id, btn) {
     var text = (document.getElementById(id).textContent || "").trim();
-    if (!navigator.clipboard || !navigator.clipboard.writeText) return window.prompt("コピーしてください", text);
+    var status = document.getElementById(btn.getAttribute("data-copy-status") || "");
+    function copied() {
+      var original = btn.textContent;
+      btn.textContent = "✓ コピー済み";
+      btn.disabled = true;
+      if (status) status.textContent = "";
+      window.setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1600);
+    }
+    function failed() {
+      if (status) status.textContent = "コピーできませんでした。コードを選択してコピーしてください。";
+    }
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      window.prompt("コードをコピーしてください", text);
+      return;
+    }
     navigator.clipboard.writeText(text).then(function () {
-      showMsg("使い方をコピーしました", true);
-    }).catch(function () { window.prompt("コピーしてください", text); });
+      copied();
+    }).catch(failed);
   }
   document.querySelectorAll(".gx10-model-select").forEach(function (btn) {
     btn.onclick = function () {
@@ -131,7 +147,7 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     };
   });
   document.querySelectorAll(".gx10-copy-example").forEach(function (btn) {
-    btn.onclick = function () { copyExample(btn.getAttribute("data-copy")); };
+    btn.onclick = function () { copyExample(btn.getAttribute("data-copy"), btn); };
   });
   function copyKey() {
     var key = document.getElementById("key-value").textContent || "";

@@ -709,10 +709,47 @@ body[data-theme="dark"] {
 
 .gx10-api-key-placeholder { color: #f5c451; font-weight: 700; }
 .gx10-api-model { color: #63c5ff; font-weight: 700; }
+.gx10-copy-status { min-height: 1.2em; margin-top: 5px; color: var(--hpc-danger); font-size: 12px; }
 
 .gx10-pull-progress { margin-top: 12px; }
 .gx10-pull-progress[hidden] { display: none; }
 .gx10-pull-progress .hpc-progress-fill { width: 0; background: var(--hpc-accent); transition: width .25s ease; }
+
+.gx10-model-register-guide {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--hpc-border);
+  border-radius: 12px;
+  background: var(--hpc-surface-muted);
+}
+
+.gx10-model-register-link { display: inline-block; margin-top: 12px; }
+.gx10-model-register-steps { margin: 16px 0 8px; padding-left: 20px; }
+.gx10-model-register-steps li + li { margin-top: 8px; }
+
+.gx10-model-register-values {
+  margin: 8px 0 0;
+  border: 1px solid var(--hpc-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.gx10-model-register-values > div {
+  display: grid;
+  grid-template-columns: minmax(150px, 38%) 1fr;
+  border-top: 1px solid var(--hpc-border);
+}
+
+.gx10-model-register-values > div:first-child { border-top: 0; }
+.gx10-model-register-values dt,
+.gx10-model-register-values dd { margin: 0; padding: 10px 12px; }
+.gx10-model-register-values dt { background: var(--hpc-code-bg); font-weight: 600; }
+
+@media (max-width: 560px) {
+  .gx10-model-register-values > div { grid-template-columns: 1fr; }
+  .gx10-model-register-values dt { padding-bottom: 4px; }
+  .gx10-model-register-values dd { padding-top: 4px; }
+}
 
 .gx10-model-name {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;

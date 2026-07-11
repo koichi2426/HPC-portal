@@ -127,16 +127,20 @@
       <div id="ollama-pull-progress-text" class="hpc-help">ダウンロードを準備中…</div>
       <div class="hpc-progress"><div id="ollama-pull-progress-fill" class="hpc-progress-fill"></div></div>
     </div>
-    <div class="hpc-note" style="margin-top:14px;">
-      <strong>Pull 完了後に LiteLLM へモデル登録してください。</strong>
-      <ol style="margin:8px 0 0; padding-left:20px;">
-        <li><a href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面を開く ↗</a></li>
-        <li><code>Models + Endpoints</code> → <code>Add Model</code> を選ぶ</li>
-        <li><code>Provider</code>: <code>ollama</code></li>
-        <li><code>LiteLLM Model Name(s)</code>: Pull したモデル名</li>
-        <li><code>API Base</code>: <code>http://127.0.0.1:11434</code></li>
-        <li><code>Add Model</code> を押す</li>
+    <div class="gx10-model-register-guide">
+      <div class="hpc-section-title">Pullしたモデルを API / Open WebUI で使うには</div>
+      <div class="hpc-help" style="margin-top:6px;">LiteLLM に一度だけモデルを登録します。</div>
+      <a class="gx10-primary-btn gx10-model-register-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面を開く ↗</a>
+      <ol class="gx10-model-register-steps">
+        <li><code>Models + Endpoints</code> から <code>Add Model</code> を選ぶ</li>
+        <li>次の値を入力する</li>
       </ol>
+      <dl class="gx10-model-register-values">
+        <div><dt>Provider</dt><dd><code>ollama</code></dd></div>
+        <div><dt>LiteLLM Model Name(s)</dt><dd>Pullしたモデル名 <span class="hpc-muted">（例: <code>qwen3.5:4b</code>）</span></dd></div>
+        <div><dt>API Base</dt><dd><code>http://127.0.0.1:11434</code></dd></div>
+      </dl>
+      <div class="hpc-help" style="margin-top:10px;">最後に <code>Add Model</code> を押すと、LLM API と Open WebUI で選べるようになります。</div>
     </div>
   </div>
   {% endif %}
