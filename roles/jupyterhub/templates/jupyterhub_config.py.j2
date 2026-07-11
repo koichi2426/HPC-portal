@@ -750,23 +750,6 @@ class HPCSlurmSpawner(SlurmSpawner):
                     timeout=5,
                 )
 
-    async def start(self):
-        """Open WebUI には、ユーザー専用の永続 Virtual Key を渡す。"""
-        if _is_openwebui_spawner(self):
-            username = self.user.name if getattr(self, "user", None) else ""
-            if not username:
-                raise RuntimeError("Open WebUI 用のユーザー情報を取得できません")
-            lock = _HPC_OPENWEBUI_KEY_LOCKS.setdefault(username, asyncio.Lock())
-            async with lock:
-                key, err = _hpc_litellm_get_openwebui_key(username)
-            if err:
-                raise RuntimeError(f"Open WebUI を起動できません: {err}")
-            self.environment = {
-                **dict(getattr(self, "environment", {}) or {}),
-                "OPENWEBUI_LITELLM_API_KEY": key or "",
-            }
-        return await super().start()
-
     async def submit_batch_script(self):
         if getattr(self, "_hpc_job_submitted", False):
             if getattr(self, "_hpc_job_id", ""):
@@ -880,6 +863,19 @@ class HPCSlurmSpawner(SlurmSpawner):
     async def start(self):
         try:
             if _is_openwebui_spawner(self):
+                # Open WebUI には、ユーザー専用の永続 Virtual Key を渡す。
+                username = self.user.name if getattr(self, "user", None) else ""
+                if not username:
+                    raise RuntimeError("Open WebUI 用のユーザー情報を取得できません")
+                lock = _HPC_OPENWEBUI_KEY_LOCKS.setdefault(username, asyncio.Lock())
+                async with lock:
+                    key, err = _hpc_litellm_get_openwebui_key(username)
+                if err:
+                    raise RuntimeError(f"Open WebUI を起動できません: {err}")
+                self.environment = {
+                    **dict(getattr(self, "environment", {}) or {}),
+                    "OPENWEBUI_LITELLM_API_KEY": key or "",
+                }
                 await self.submit_batch_script()
                 p = getattr(self, "port", 0) or 0
                 try:
