@@ -3140,15 +3140,11 @@ c.Spawner.environment = {
 c.Spawner.apply_user_options = apply_user_options
 
 # 5. 起動スクリプト (Apptainer版・多重エスケープ回避)
-# 文字列結合で波括弧を生成して、テンプレート干渉を防ぐ
+# BatchSpawner は Jinja で展開するため、変数は Jinja 方式、シェルの波括弧は通常の一組にする。
 js = "{" + "{"
 je = "}" + "}"
-bs = js[0]
-be = je[0]
-# batchspawner が後段で str.format() を行うため、シェル／awk のリテラル波括弧は
-# 二重にして渡す。str.format() 後に通常の一組の波括弧になる。
-lbs = js
-lbe = je
+lbrace = "{"
+rbrace = "}"
 
 # CHP の削除 API は既定で user.proxy_spec（ユーザー名サブドメイン）を使うため、
 # job<JOBID>.<domain> に差し替えた spawner.proxy_spec を確実に削除する
@@ -3179,14 +3175,14 @@ Proxy.delete_user = _hpc_proxy_delete_user
 
 
 c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
-#SBATCH --job-name={bs}job_name{be}
-#SBATCH --partition={bs}partition{be}
-#SBATCH --cpus-per-task={bs}nprocs{be}
-#SBATCH --mem={bs}memory{be}
-{bs}runtime_line{be}
-#SBATCH --chdir={bs}homedir{be}
-#SBATCH --output={bs}homedir{be}/.jupyterhub-slurm-%j.log
-{bs}gres_line{be}
+#SBATCH --job-name={js} job_name {je}
+#SBATCH --partition={js} partition {je}
+#SBATCH --cpus-per-task={js} nprocs {je}
+#SBATCH --mem={js} memory {je}
+{js} runtime_line {je}
+#SBATCH --chdir={js} homedir {je}
+#SBATCH --output={js} homedir {je}/.jupyterhub-slurm-%j.log
+{js} gres_line {je}
 
 set -euo pipefail
 export PATH=/opt/jupyterhub/venv/bin:$PATH
@@ -3252,12 +3248,12 @@ elif [ -n "$_hpc_nvcc_path" ]; then
     done
 fi
 
-APP_CHOICE="{bs}app_choice{be}"
+APP_CHOICE="{js} app_choice {je}"
 if [ "$APP_CHOICE" = "open-webui" ]; then
     OPENWEBUI_IMAGE="/opt/images/openwebui.sif"
     SERVICE_PORT="$(printenv JUPYTERHUB_SERVICE_PORT || true)"
     SERVICE_URL="$(printenv JUPYTERHUB_SERVICE_URL || true)"
-    CMDLINE="{bs}cmd{be}"
+    CMDLINE="{js} cmd {je}"
     PORT="$SERVICE_PORT"
     case "$PORT" in
       ''|*[!0-9]*|0) PORT="" ;;
@@ -3276,11 +3272,11 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
       PORT="$((20000 + ($(printenv SLURM_JOB_ID || echo 0) % 20000)))"
       echo "dynamic port unavailable, fallback to PORT=$PORT (service_port=$SERVICE_PORT service_url=$SERVICE_URL)" >&2
     fi
-    port_is_listening() {lbs}
+    port_is_listening() {lbrace}
       # ss の式フィルタは環境によって解釈差があるため、標準の一覧出力を awk で判定する。
       # Local Address の末尾が :<port> の LISTEN socket だけを対象にする。
-      ss -H -ltn | awk -v port="$1" '$4 ~ (":" port "$") {lbs} found=1; exit {lbe} END {lbs} exit !found {lbe}'
-    {lbe}
+      ss -H -ltn | awk -v port="$1" '$4 ~ (":" port "$") {lbrace} found=1; exit {rbrace} END {lbrace} exit !found {rbrace}'
+    {rbrace}
     # 以前の失敗ジョブの残骸で同一ポートが占有されると OpenWebUI が即終了するため、
     # 同ユーザーの同一ポート open_webui プロセスを掃除してから起動する。
     if port_is_listening "$PORT"; then
@@ -3305,6 +3301,6 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
     exec apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static WEBUI_AUTH=False ENABLE_OPENAI_API=True OPENAI_API_BASE_URL=$LITELLM_BASE_URL OPENAI_API_KEY=$LITELLM_API_KEY ENABLE_OLLAMA_API=False WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
 else
     IMAGE_PATH="/opt/images/jupyter-cpu.sif"
-    exec apptainer exec --nv $HPC_APPTAINER_BIND "$IMAGE_PATH" {bs}cmd{be} --ip=0.0.0.0
+    exec apptainer exec --nv $HPC_APPTAINER_BIND "$IMAGE_PATH" {js} cmd {je} --ip=0.0.0.0
 fi
 """
