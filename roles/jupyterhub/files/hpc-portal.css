@@ -564,6 +564,26 @@ body[data-theme="dark"] {
   color: #fff;
 }
 
+/* ページ固有の一般リンク色より優先し、主ボタンの文字コントラストを維持する。 */
+.gx10-admin-users a.gx10-primary-btn,
+.gx10-admin-users a.hpc-primary-btn,
+.gx10-app-detail-page a.gx10-primary-btn,
+.gx10-app-detail-page a.hpc-primary-btn,
+.gx10-key-page a.gx10-primary-btn,
+.gx10-key-page a.hpc-primary-btn,
+#resource-dashboard a.gx10-primary-btn,
+#resource-dashboard a.hpc-primary-btn,
+.gx10-admin-users a.gx10-primary-btn:hover,
+.gx10-admin-users a.hpc-primary-btn:hover,
+.gx10-app-detail-page a.gx10-primary-btn:hover,
+.gx10-app-detail-page a.hpc-primary-btn:hover,
+.gx10-key-page a.gx10-primary-btn:hover,
+.gx10-key-page a.hpc-primary-btn:hover,
+#resource-dashboard a.gx10-primary-btn:hover,
+#resource-dashboard a.hpc-primary-btn:hover {
+  color: #fff;
+}
+
 .gx10-admin-btn-muted,
 .gx10-key-btn-muted {
   background: transparent;
@@ -694,8 +714,8 @@ body[data-theme="dark"] {
 
 .gx10-model-select:hover,
 .gx10-model-select.selected {
-  border-color: var(--hpc-accent);
-  box-shadow: 0 0 0 1px var(--hpc-accent);
+  border-color: var(--hpc-primary);
+  box-shadow: 0 0 0 1px var(--hpc-primary);
 }
 
 .gx10-code-heading {
@@ -713,7 +733,7 @@ body[data-theme="dark"] {
 
 .gx10-pull-progress { margin-top: 12px; }
 .gx10-pull-progress[hidden] { display: none; }
-.gx10-pull-progress .hpc-progress-fill { width: 0; background: var(--hpc-accent); transition: width .25s ease; }
+.gx10-pull-progress .hpc-progress-fill { width: 0; background: var(--hpc-primary); transition: width .25s ease; }
 
 .gx10-model-register-guide {
   margin-top: 16px;
