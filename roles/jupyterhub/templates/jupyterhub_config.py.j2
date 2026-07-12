@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import secrets
+import threading
 import time
 
 from batchspawner import SlurmSpawner
@@ -140,6 +141,8 @@ OPENWEBUI_LITELLM_BASE_URL = os.environ.get("OPENWEBUI_LITELLM_BASE_URL", "")
 OPENWEBUI_LITELLM_KEY_DIR = os.environ.get("OPENWEBUI_LITELLM_KEY_DIR", "/etc/litellm/openwebui-keys")
 HPC_LITELLM_LOG = logging.getLogger("jupyterhub.hpc-litellm")
 _HPC_OPENWEBUI_KEY_LOCKS: dict[str, asyncio.Lock] = {}
+_HPC_EXTERNAL_API_KEY_LOCKS = {}
+_HPC_EXTERNAL_API_KEY_LOCKS_GUARD = threading.Lock()
 
 # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
 c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
@@ -2128,19 +2131,86 @@ def _hpc_litellm_list_user_keys(username: str) -> tuple[list[dict], str | None]:
         return [], "LiteLLM Admin API が未設定です"
     quoted = urllib.parse.quote(username, safe="")
     errors = []
+    succeeded = False
     for path in (f"/key/list?user_id={quoted}", "/key/list", f"/user/info?user_id={quoted}"):
         try:
             data = _hpc_litellm_request(path, method="GET")
         except RuntimeError as exc:
             errors.append(str(exc))
             continue
+        succeeded = True
         records = [
             rec for rec in _hpc_litellm_iter_key_records(data)
             if _hpc_litellm_key_belongs_to_user(rec, username)
         ]
-        if records or path != "/key/list":
+        if records:
             return records, None
-    return [], errors[-1] if errors else None
+    return [], errors[-1] if errors and not succeeded else None
+
+
+def _hpc_litellm_is_portal_external_key(record: dict, username: str) -> bool:
+    """ポータルで予約した外部API keyのaliasだけを再発行対象にする。"""
+    # LiteLLMの一覧APIはバージョンによってmetadataを返さないことがあるため、
+    # metadata.sourceではなく予約済みのaliasを正本にする。
+    # Open WebUI用は常に ``openwebui-<username>`` であり、この条件に一致しない。
+    return str(record.get("key_alias") or "") == username
+
+
+def _hpc_litellm_external_api_key_lock(username: str):
+    """同じユーザーの外部API key再発行を直列化する。"""
+    with _HPC_EXTERNAL_API_KEY_LOCKS_GUARD:
+        return _HPC_EXTERNAL_API_KEY_LOCKS.setdefault(username, threading.Lock())
+
+
+def _hpc_litellm_delete_portal_external_keys(username: str) -> str | None:
+    """再発行前にポータル発行の外部API keyをblockして削除・確認する。
+
+    Open WebUI用（source=hpc-portal-openwebui）のkeyには一切触れない。
+    """
+    records, err = _hpc_litellm_list_user_keys(username)
+    if err:
+        return err
+    targets = [
+        record for record in records
+        if _hpc_litellm_is_portal_external_key(record, username)
+    ]
+    if not targets:
+        return None
+
+    key_ids = []
+    for record in targets:
+        key_id = _hpc_litellm_key_identifier(record)
+        if key_id:
+            key_ids.append(key_id)
+
+    for key_id in key_ids:
+        try:
+            _hpc_litellm_request("/key/block", {"key": key_id})
+        except RuntimeError as exc:
+            safe_error = _hpc_safe_litellm_error(exc)
+            _hpc_log_litellm_action("api_key_regenerate_block", username, "failed", safe_error)
+            return safe_error
+
+    try:
+        # LiteLLMはalias指定で削除できる。key値やhashの形式差に依存しないため、
+        # 旧バージョンの一覧レスポンスでも確実に同じaliasを解放できる。
+        _hpc_litellm_request("/key/delete", {"key_aliases": [username]})
+    except RuntimeError as exc:
+        safe_error = _hpc_safe_litellm_error(exc)
+        _hpc_log_litellm_action("api_key_regenerate_delete", username, "failed", safe_error)
+        return safe_error
+
+    remaining, list_err = _hpc_litellm_list_user_keys(username)
+    if list_err:
+        safe_error = _hpc_safe_litellm_error(list_err)
+        _hpc_log_litellm_action("api_key_regenerate_verify", username, "failed", safe_error)
+        return safe_error
+    if any(_hpc_litellm_is_portal_external_key(record, username) for record in remaining):
+        message = "古い外部API keyの削除を確認できません"
+        _hpc_log_litellm_action("api_key_regenerate_verify", username, "failed", message)
+        return message
+    _hpc_log_litellm_action("api_key_regenerate_delete", username, "ok")
+    return None
 
 
 def _hpc_litellm_user_metadata(username: str) -> tuple[dict, str | None]:
@@ -2308,26 +2378,27 @@ def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | Non
 
 
 def _hpc_litellm_regenerate_own_key(username: str) -> tuple[str | None, str | None]:
-    if not _hpc_litellm_enabled():
-        return None, "LiteLLM Admin API が未設定です"
-    try:
-        pwd.getpwnam(username)
-    except KeyError:
-        return None, "ユーザーが見つかりません"
-    disabled, err = _hpc_litellm_user_admin_disabled(username)
-    if err:
-        return None, err
-    if disabled:
-        return None, "API key は管理者により無効化されています"
-    err = _hpc_litellm_set_user_keys_blocked(
-        username,
-        blocked=True,
-        mark_admin_disabled=False,
-        include_openwebui=False,
-    )
-    if err:
-        return None, err
-    return _hpc_litellm_generate_key(username)
+    with _hpc_litellm_external_api_key_lock(username):
+        if not _hpc_litellm_enabled():
+            return None, "LiteLLM Admin API が未設定です"
+        try:
+            pwd.getpwnam(username)
+        except KeyError:
+            return None, "ユーザーが見つかりません"
+        disabled, err = _hpc_litellm_user_admin_disabled(username)
+        if err:
+            return None, err
+        if disabled:
+            return None, "API key は管理者により無効化されています"
+        err = _hpc_litellm_delete_portal_external_keys(username)
+        if err:
+            return None, err
+        key, err = _hpc_litellm_generate_key(username)
+        if err:
+            _hpc_log_litellm_action("api_key_regenerate_generate", username, "failed", err)
+            return None, err
+        _hpc_log_litellm_action("api_key_regenerate_generate", username, "ok")
+        return key, None
 
 
 def _hpc_litellm_delete_user_keys(username: str) -> str | None:
