@@ -2,6 +2,7 @@
 
 from .common import (
     BaseHandler,
+    HPC_APP_STATUS_JS,
     HPC_GPU_COUNT,
     HPC_PORTAL_CSS,
     HPC_RESOURCE_METER_JS,
@@ -300,6 +301,21 @@ class HpcResourceMeterJsHandler(BaseHandler):
         except OSError:
             self.set_status(404)
             self.write("/* hpc-resource-meter.js not found */")
+
+
+class HpcAppStatusJsHandler(BaseHandler):
+    """アプリ起動状態の自動更新スクリプトを配信する。"""
+
+    async def get(self):
+        """アプリ状態ポーリング用JavaScriptを返す。"""
+        self.set_header("Content-Type", "application/javascript; charset=UTF-8")
+        self.set_header("Cache-Control", "public, max-age=300")
+        try:
+            with open(HPC_APP_STATUS_JS, encoding="utf-8") as f:
+                self.write(f.read())
+        except OSError:
+            self.set_status(404)
+            self.write("/* hpc-app-status.js not found */")
 
 
 class HpcPortalCssHandler(BaseHandler):

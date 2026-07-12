@@ -30,6 +30,7 @@
       - nodejs
       - npm
       - git
+      - util-linux
     state: present
 
 - name: configurable-http-proxyをインストール
@@ -183,6 +184,14 @@
   ansible.builtin.copy:
     src: hpc-resource-meter.js
     dest: /etc/jupyterhub/static/hpc-resource-meter.js
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: アプリ状態自動更新用JSを配置
+  ansible.builtin.copy:
+    src: hpc-app-status.js
+    dest: /etc/jupyterhub/static/hpc-app-status.js
     owner: root
     group: root
     mode: '0644'

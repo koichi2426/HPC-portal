@@ -203,6 +203,18 @@ body[data-theme="dark"] {
   overflow: hidden;
 }
 
+.gx10-app-card.failed {
+  border-color: color-mix(in srgb, var(--hpc-danger) 45%, var(--hpc-border));
+  background: color-mix(in srgb, var(--hpc-danger-bg) 55%, var(--hpc-surface-muted));
+}
+
+.gx10-app-error-detail {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .gx10-app-card-link {
   display: block;
   padding: 12px;
@@ -792,9 +804,43 @@ body[data-theme="dark"] {
 
 .hpc-progress-fill {
   height: 100%;
-  width: 55%;
+  width: 0;
   background: var(--hpc-warning);
   border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.hpc-progress[hidden] {
+  display: none;
+}
+
+.hpc-progress-indeterminate .hpc-progress-fill {
+  width: 38%;
+  background: linear-gradient(90deg, var(--hpc-warning), var(--hpc-primary));
+  animation: hpc-progress-sweep 1.25s ease-in-out infinite;
+  will-change: transform;
+}
+
+.hpc-progress-error .hpc-progress-fill {
+  width: 100%;
+  background: var(--hpc-danger);
+}
+
+@keyframes hpc-progress-sweep {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(280%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hpc-progress-fill {
+    transition: none;
+  }
+
+  .hpc-progress-indeterminate .hpc-progress-fill {
+    width: 55%;
+    animation: none;
+    transform: none;
+  }
 }
 
 .hpc-inline-actions {

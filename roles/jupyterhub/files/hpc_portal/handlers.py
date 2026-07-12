@@ -1,5 +1,7 @@
 """HPCポータルの画面とJSON APIハンドラを登録する。"""
 
+from jupyterhub.handlers.pages import SpawnHandler
+
 from .apps import HpcAppDetailHandler, _is_openwebui_spawner
 from .common import (
     BaseHandler,
@@ -23,6 +25,7 @@ from .litellm import (
 )
 from .ollama import _hpc_ollama_cmd, _hpc_ollama_pull_progress
 from .resources import (
+    HpcAppStatusJsHandler,
     HpcPortalCssHandler,
     HpcResourceMeterJsHandler,
     HpcResourceStatusHandler,
@@ -355,6 +358,22 @@ class HpcAdminRedirectHandler(BaseHandler):
             self.redirect(url_path_join(self.hub.base_url, "home"))
 
 
+class HpcSpawnHandler(SpawnHandler):
+    """起動要求後の遷移先をポータルHomeへ変更する。"""
+
+    def _get_pending_url(self, user, server_name):
+        """標準Pending画面ではなく、状態監視機能を持つHomeを返す。
+
+        Args:
+            user: 起動対象のJupyterHubユーザー。
+            server_name: 起動対象のnamed server名。
+
+        Returns:
+            ポータルHomeのURL。
+        """
+        return url_path_join(self.hub.base_url, "home")
+
+
 import jupyterhub.handlers as _jh_handlers
 import jupyterhub.handlers.pages as _jh_pages_handlers
 
@@ -362,10 +381,12 @@ for _handlers in (_jh_pages_handlers.default_handlers, _jh_handlers.default_hand
     for _idx, (_route, _handler_cls) in enumerate(_handlers):
         if _route == "/admin":
             _handlers[_idx] = (_route, HpcAdminRedirectHandler)
-            break
+        elif _handler_cls is SpawnHandler:
+            _handlers[_idx] = (_route, HpcSpawnHandler)
 
 
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
+c.JupyterHub.extra_handlers.append((r"/hpc-app-status.js", HpcAppStatusJsHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-portal.css", HpcPortalCssHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
@@ -373,4 +394,3 @@ c.JupyterHub.extra_handlers.append((r"/llm-api/api", HpcLlmApiApiHandler))
 c.JupyterHub.extra_handlers.append((r"/llm-api", HpcLlmApiPageHandler))
 c.JupyterHub.extra_handlers.append((r"/admin/users/api", HpcAdminUsersApiHandler))
 c.JupyterHub.extra_handlers.append((r"/admin/users", HpcAdminUsersPageHandler))
-

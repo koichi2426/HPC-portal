@@ -7,6 +7,7 @@ from .common import (
     _HPC_OPENWEBUI_KEY_LOCKS,
     _oauth_job_host_ctx,
     asyncio,
+    re,
     subprocess,
     url_escape_path,
     url_path_join,
@@ -25,6 +26,27 @@ from .routing import (
 class HPCSlurmSpawner(SlurmSpawner):
     """Slurm JOBIDごとの公開URLとCHPルートを管理するSpawner。"""
 
+    @property
+    def hpc_failure_message(self) -> str:
+        """直近の起動失敗をHome表示用の短いメッセージへ変換する。
+
+        Returns:
+            起動失敗がなければ空文字列、失敗していれば改行を除いた説明。
+        """
+        try:
+            failure = getattr(self, "_failed", None)
+        except asyncio.CancelledError:
+            return "起動処理が中断されました"
+        except Exception:
+            return "起動状態を取得できませんでした"
+        if not failure:
+            return ""
+        message = getattr(failure, "jupyterhub_message", "") or str(failure)
+        message = " ".join(str(message or "").split())
+        message = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-***", message)
+        message = re.sub(r"\bBearer\s+\S+", "Bearer ***", message, flags=re.IGNORECASE)
+        return message[:300] or "起動処理が完了しませんでした"
+
     def clear_state(self):
         """spawn 前に一時状態を初期化"""
         try:
@@ -35,9 +57,59 @@ class HPCSlurmSpawner(SlurmSpawner):
         self._hpc_submit_out = ""
         self._hpc_job_id = ""
         self._hpc_public_alias_routespec = None
+        self._hpc_progress_message = "起動要求を受け付けました"
+        self._hpc_progress_revision = 0
         super().clear_state()
         # ここでは sbatch しない。先行提出すると get_env が api_token 付与前に走り、
         # ジョブ内の JUPYTERHUB_API_TOKEN が空のまま固定され Hub の ready 判定が進まない。
+
+    def _hpc_set_progress(self, message: str):
+        """Spawn Pending画面へ表示する現在の起動工程を更新する。
+
+        Args:
+            message: 利用者へ表示する起動工程の説明。
+        """
+        message = str(message or "").strip()
+        if not message or message == getattr(self, "_hpc_progress_message", ""):
+            return
+        self._hpc_progress_message = message
+        self._hpc_progress_revision = (
+            int(getattr(self, "_hpc_progress_revision", 0)) + 1
+        )
+
+    async def progress(self):
+        """JupyterHub標準の起動待機画面へ工程メッセージを配信する。
+
+        Yields:
+            JupyterHub progress API形式のイベント辞書。実時間に基づく正確な
+            割合は取得できないため、進捗率を付けず工程名だけを返す。
+        """
+        last_revision = -1
+        last_message = None
+        while self.pending:
+            revision = int(getattr(self, "_hpc_progress_revision", 0))
+            message = getattr(
+                self,
+                "_hpc_progress_message",
+                "起動要求を処理しています",
+            )
+            job_id = str(getattr(self, "job_id", "") or "")
+            if message.startswith("Slurmジョブ") and job_id:
+                try:
+                    if self.state_ispending():
+                        message = f"Slurmジョブ {job_id} は実行待ちです"
+                    elif self.state_isrunning():
+                        message = (
+                            f"Slurmジョブ {job_id} を実行中です。アプリの応答を待っています"
+                        )
+                except Exception:
+                    # 状態判定に失敗しても、直前の具体的な工程メッセージは維持する。
+                    pass
+            if revision != last_revision or message != last_message:
+                yield {"message": message}
+                last_revision = revision
+                last_message = message
+            await asyncio.sleep(0.75)
 
     async def stop(self, now=False):
         """Slurm ジョブ停止後、同一ポートの Open WebUI 残骸を掃除して GPU/ポートを解放する"""
@@ -70,10 +142,17 @@ class HPCSlurmSpawner(SlurmSpawner):
             if getattr(self, "_hpc_job_id", ""):
                 self.job_id = self._hpc_job_id
             return getattr(self, "_hpc_submit_out", "") or ""
+        self._hpc_set_progress("Slurmへ起動ジョブを投入しています")
         out = await super().submit_batch_script()
         self._hpc_job_submitted = True
         self._hpc_submit_out = out
         self._hpc_job_id = getattr(self, "job_id", "") or ""
+        if self._hpc_job_id:
+            self._hpc_set_progress(
+                f"Slurmジョブ {self._hpc_job_id} の実行とアプリ応答を待っています"
+            )
+        else:
+            self._hpc_set_progress("Slurmジョブの実行とアプリ応答を待っています")
         # super().start() 内の proxy 追加処理より前に job routespec を持たせる
         _sync_job_proxy_and_public(self)
         jid = _spawner_job_id(self)
@@ -200,11 +279,21 @@ class HPCSlurmSpawner(SlurmSpawner):
             RuntimeError: Open WebUI Key、ポート、起動待機に失敗した場合。
         """
         try:
+            self._hpc_set_progress("起動設定を確認しています")
             if _is_openwebui_spawner(self):
                 # Open WebUI には、ユーザー専用の永続 Virtual Key を渡す。
+                self._hpc_set_progress("Open WebUIの利用権限を確認しています")
                 username = self.user.name if getattr(self, "user", None) else ""
                 if not username:
                     raise RuntimeError("Open WebUI 用のユーザー情報を取得できません")
+                for other in (getattr(self.user, "spawners", {}) or {}).values():
+                    if other is self or not _is_openwebui_spawner(other):
+                        continue
+                    if getattr(other, "active", False) or getattr(other, "pending", None):
+                        raise RuntimeError(
+                            "Open WebUIはユーザーごとに1つだけ起動できます。"
+                            "起動中のOpen WebUIを停止してから再試行してください"
+                        )
                 lock = _HPC_OPENWEBUI_KEY_LOCKS.setdefault(username, asyncio.Lock())
                 async with lock:
                     key, err = _hpc_litellm_get_openwebui_key(username)
@@ -230,10 +319,12 @@ class HPCSlurmSpawner(SlurmSpawner):
                     )
                 self.port = p
                 self.ip = "127.0.0.1"
+                self._hpc_set_progress("Open WebUIの応答を待っています")
                 if not await _wait_for_tcp_port(self.ip, int(self.port), timeout=120.0):
                     raise RuntimeError(
                         f"HPC: OpenWebUI TCP not reachable on {self.ip}:{self.port}"
                     )
+                self._hpc_set_progress("接続経路を準備しています")
                 _sync_job_proxy_and_public(self)
                 proxy = (getattr(self.user, "settings", {}) or {}).get("proxy") if hasattr(self, "user") else None
                 target = f"http://{self.ip}:{self.port}"
@@ -281,9 +372,12 @@ class HPCSlurmSpawner(SlurmSpawner):
                     alias = _hpc_public_alias_routespec_for(self)
                     if alias and alias != spec:
                         self._hpc_public_alias_routespec = alias
+                self._hpc_set_progress("Open WebUIを利用できます")
                 return (self.ip, self.port)
 
+            self._hpc_set_progress("Slurmへ起動ジョブを投入しています")
             ret = await super().start()
+            self._hpc_set_progress("接続経路を準備しています")
             _sync_job_proxy_and_public(self)
             srv = getattr(self, "server", None)
             h = getattr(srv, "host", None) if srv else None
@@ -432,10 +526,10 @@ class HPCSlurmSpawner(SlurmSpawner):
                         "HPC: failed post-start route sync (%s)",
                         getattr(self, "proxy_spec", ""),
                     )
+            self._hpc_set_progress("アプリを利用できます")
             return ret
         finally:
             try:
                 _oauth_job_host_ctx.set(None)
             except Exception:
                 pass
-

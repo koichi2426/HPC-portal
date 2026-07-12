@@ -107,17 +107,18 @@ def make_options_form(spawner):
 
         alloc_html = _hpc_allocation_html(getattr(s, "user_options", None) or {})
         stop_btn = _hpc_stop_button_html(name)
+        server_name_attr = html.escape(str(name or ""), quote=True)
 
         if getattr(s, "pending", None):
             pending_state = str(getattr(s, "pending", "spawn"))
             active_sessions_html += (
-                f'<div class="gx10-app-card" style="padding:12px;margin-top:10px;">'
+                f'<div class="gx10-app-card" data-hpc-app-status data-server-name="{server_name_attr}" '
+                f'data-hpc-app-state="pending" data-hpc-reload-on-change="false" style="padding:12px;margin-top:10px;">'
                 f'<div class="hpc-row-between">'
-                f'<div>● {app_label} <span class="hpc-status-warn">起動中...</span></div>'
+                f'<div>● {app_label} <span data-hpc-app-status-text class="hpc-status-warn">起動中（{pending_state}）</span></div>'
                 f'<div>{stop_btn}</div></div>'
                 f'{alloc_html}'
-                f'<div class="hpc-muted" style="margin-top:8px;font-size:0.78rem;">status: {pending_state}</div>'
-                f'<div class="hpc-progress"><div class="hpc-progress-fill"></div></div>'
+                f'<div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" role="progressbar" aria-label="アプリを起動しています"><div class="hpc-progress-fill"></div></div>'
                 f'</div>'
             )
         elif s.active:
@@ -299,7 +300,10 @@ def make_options_form(spawner):
     </script>
     """
     )
-    static_js = '<script src="/hub/hpc-resource-meter.js?v=2"></script>'
+    static_js = (
+        '<script src="/hub/hpc-resource-meter.js?v=2"></script>'
+        '<script src="/hub/hpc-app-status.js?v=1"></script>'
+    )
     return header_html + static_js + js_code
 
 
@@ -357,4 +361,3 @@ def apply_user_options(spawner, user_options):
         seed = str(getattr(spawner, "name", "") or "")
         h = sum(ord(c) for c in seed) % 20000
         spawner.port = 20000 + h
-

@@ -106,6 +106,7 @@ nest_asyncio.apply()
 _oauth_job_host_ctx = contextvars.ContextVar("hpc_oauth_job_host", default=None)
 
 HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
+HPC_APP_STATUS_JS = "/etc/jupyterhub/static/hpc-app-status.js"
 HPC_PORTAL_CSS = "/etc/jupyterhub/static/hpc-portal.css"
 HPC_LITELLM_INTERNAL_BASE_URL = os.environ.get(
     "HPC_LITELLM_INTERNAL_BASE_URL", "http://127.0.0.1:4000"

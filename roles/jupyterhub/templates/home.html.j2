@@ -2,7 +2,7 @@
 {% extends "page.html" %}
 
 {% block main %}
-<div class="hpc-page">
+<div class="hpc-page" data-hpc-app-list>
   <div class="hpc-page-header">
     <h2 class="hpc-page-title">Home</h2>
     <div class="hpc-row">
@@ -65,12 +65,15 @@
   {% if user and user.name in hpc_portal_admin_users %}
     {% set shared = hpc_shared_ollama_detail %}
     {% if shared.active %}
-    <div class="gx10-app-card">
+    <div class="gx10-app-card"
+         data-hpc-shared-ollama-status
+         data-hpc-app-state="{% if shared.api %}running{% else %}pending{% endif %}">
       <a class="gx10-app-card-link" href="/hub/apps/shared-ollama">
         <div>
           <div class="hpc-section-title">Ollama{% if shared.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ shared.job_id }})</span>{% endif %}</div>
           <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ shared.allocation.cpu }} vCPU · {{ shared.allocation.memory }} RAM · 1 GPU · {{ shared.allocation.hours }}</div>
-          <div class="hpc-status-ok" style="font-size:12px; margin-top:4px;">Running{% if shared.api %} / API OK{% else %} / API 起動待ち{% endif %}</div>
+          <div data-hpc-app-status-text class="{% if shared.api %}hpc-status-ok{% else %}hpc-status-warn{% endif %}" style="font-size:12px; margin-top:4px;">{% if shared.api %}実行中 / API OK{% else %}起動中 / API応答待ち{% endif %}</div>
+          <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" {% if shared.api %}hidden{% endif %} role="progressbar" aria-label="Ollamaを起動しています"><div class="hpc-progress-fill"></div></div>
           <div class="gx10-detail-hint">詳細を見る →</div>
         </div>
       </a>
@@ -81,7 +84,8 @@
   {% if user and user.spawners %}
     {% set has_any = false %}
     {% for name, spawner in user.spawners.items() %}
-      {% if spawner.active or spawner.pending %}
+      {% set spawn_error = spawner.hpc_failure_message|default('') %}
+      {% if spawner.active or spawner.pending or spawn_error %}
         {% set has_any = true %}
         {% set sp_public_url = spawner.public_url if spawner.public_url is defined else '' %}
         {% set _uo = spawner.user_options if spawner.user_options is defined else {} %}
@@ -139,21 +143,36 @@
           {% endif %}
         {% endif %}
 
-        <div class="gx10-app-card" {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
-          <a class="gx10-app-card-link" href="/hub/apps/{{ sn_path }}">
+        <div class="gx10-app-card{% if spawn_error %} failed{% endif %}"
+             {% if not spawn_error %}
+             data-hpc-app-status
+             data-server-name="{{ name }}"
+             data-hpc-app-state="{% if spawner.pending %}pending{% else %}running{% endif %}"
+             {% else %}
+             data-hpc-app-state="failed"
+             {% endif %}
+             {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
+          <a class="gx10-app-card-link" href="{% if spawn_error %}/hub/spawn/{{ user.escaped_name }}/{{ name }}{% else %}/hub/apps/{{ sn_path }}{% endif %}">
             <div>
               <div class="hpc-section-title">{{ app_label }}{% if spawner.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
               <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ alloc_line }}</div>
-              {% if spawner.pending %}
-                <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">Pending / Starting… ({{ spawner.pending }})</div>
-                <div class="hpc-progress"><div class="hpc-progress-fill"></div></div>
+              {% if spawn_error %}
+                <div class="hpc-status-danger" style="font-size:12px; margin-top:4px;">起動に失敗しました</div>
+                <div class="hpc-muted gx10-app-error-detail">{{ spawn_error }}</div>
+              {% elif spawner.pending %}
+                <div data-hpc-app-status-text class="hpc-status-warn" style="font-size:12px; margin-top:4px;">起動中（{{ spawner.pending }}）</div>
               {% else %}
-                <div class="hpc-status-ok" style="font-size:12px; margin-top:4px;">Running</div>
+                <div data-hpc-app-status-text class="hpc-status-ok" style="font-size:12px; margin-top:4px;">実行中</div>
               {% endif %}
-              <div class="gx10-detail-hint">詳細を見る →</div>
+              <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" {% if not spawner.pending %}hidden{% endif %} role="progressbar" aria-label="アプリを起動しています"><div class="hpc-progress-fill"></div></div>
+              <div class="gx10-detail-hint">{% if spawn_error %}設定を確認する →{% else %}詳細を見る →{% endif %}</div>
             </div>
           </a>
-          {% if spawner.active %}
+          {% if spawn_error %}
+          <div class="gx10-app-card-actions">
+            <a class="hpc-primary-btn" href="/hub/spawn/{{ user.escaped_name }}/{{ name }}">設定を確認して再試行</a>
+          </div>
+          {% elif spawner.active %}
           <div class="gx10-app-card-actions">
             <a class="hpc-page-link" href="{{ job_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">
               JUMP ↗
@@ -171,37 +190,6 @@
 
 {% block script %}
 <script src="/hub/hpc-resource-meter.js?v=2"></script>
-<script>
-(function () {
-  var pollMs = 4000;
-  var lastSig = null;
-  function readXsrfCookie() {
-    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
-    return m ? decodeURIComponent(m[1]) : "";
-  }
-  function tick() {
-    var xsrf = readXsrfCookie();
-    fetch("/hub/api/user", {
-      credentials: "same-origin",
-      headers: xsrf ? { "X-XSRFToken": xsrf } : {}
-    })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-      .then(function (data) {
-        var servers = data.servers || {};
-        var sig = JSON.stringify(servers);
-        if (lastSig === null) {
-          lastSig = sig;
-        } else if (lastSig !== sig) {
-          window.location.reload();
-          return;
-        }
-        lastSig = sig;
-      })
-      .catch(function () {});
-  }
-  tick();
-  setInterval(tick, pollMs);
-})();
-</script>
+<script src="/hub/hpc-app-status.js?v=1"></script>
 {% endblock %}
 {% endraw %}

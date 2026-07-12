@@ -4,7 +4,11 @@
 {% block main %}
 {% set d = detail %}
 {% set res = node_resources %}
-<div class="gx10-app-detail-page">
+{% set live_status = 'pending' if (d.status == 'pending' or (d.shared_ollama and d.active and not d.api)) else d.status %}
+{% set live_status_label = '起動中 / API応答待ち' if (d.shared_ollama and d.active and not d.api) else d.status_label %}
+<div class="gx10-app-detail-page"
+     {% if d.shared_ollama %}data-hpc-shared-ollama-status{% else %}data-hpc-app-status data-server-name="{{ d.server_name }}"{% endif %}
+     data-hpc-app-state="{{ live_status }}">
   <div style="margin-bottom: 20px;">
     <a class="hpc-back-link" href="/hub/home">← Home</a>
   </div>
@@ -14,8 +18,8 @@
       <h2 class="hpc-page-title">{{ d.app_label }}</h2>
       <div class="hpc-help">サーバー名: <code>{{ d.server_name or '(default)' }}</code></div>
     </div>
-    <span class="hpc-status-badge {% if d.status == 'running' %}running{% elif d.status == 'pending' %}pending{% endif %}">
-      {{ d.status_label }}
+    <span data-hpc-app-status-badge class="hpc-status-badge {% if live_status == 'running' %}running{% elif live_status == 'pending' %}pending{% endif %}">
+      {{ live_status_label }}
     </span>
   </div>
 
@@ -77,7 +81,7 @@
     <table class="gx10-detail-table">
       <tr><th>Slurm JOB ID</th><td>{% if d.job_id %}{{ d.job_id }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       {% if d.shared_ollama %}
-      <tr><th>API</th><td>{% if d.api %}<span class="hpc-status-ok">OK</span>{% else %}<span class="hpc-status-warn">起動待ち / 未応答</span>{% endif %}</td></tr>
+      <tr><th>API</th><td><span data-hpc-ollama-api-status class="{% if d.api %}hpc-status-ok{% else %}hpc-status-warn{% endif %}">{% if d.api %}OK{% else %}起動待ち / 未応答{% endif %}</span></td></tr>
       <tr><th>Port</th><td>{{ d.port }}</td></tr>
       <tr><th>Models dir</th><td><code style="font-size:11px;">{{ d.models_dir }}</code></td></tr>
       {% if d.status_error %}
@@ -145,9 +149,7 @@
   </div>
   {% endif %}
 
-  {% if d.status == 'pending' %}
-  <div class="hpc-progress"><div class="hpc-progress-fill"></div></div>
-  {% endif %}
+  <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" {% if live_status != 'pending' %}hidden{% endif %} role="progressbar" aria-label="アプリを起動しています"><div class="hpc-progress-fill"></div></div>
 
   <div class="gx10-actions">
     {% if d.shared_ollama %}
@@ -166,6 +168,7 @@
 
 {% block script %}
 <script src="/hub/hpc-resource-meter.js?v=2"></script>
+<script src="/hub/hpc-app-status.js?v=1"></script>
 <script>
 window.HPC_HUB_USER = {{ user.name|tojson }};
 function hpcReadXsrf() {
@@ -227,11 +230,14 @@ function hpcOllamaPull(btn) {
   var model = input ? input.value.trim() : "";
   if (!model) return hpcOllamaMsg("モデル名を入力してください", false);
   btn.disabled = true;
+  hpcOllamaRenderProgress({status: "ダウンロードを開始しています"});
   hpcOllamaPost({action: "ollama_pull", model: model}).then(function (body) {
     hpcOllamaMsg(model + " のダウンロードを開始しました", true);
-    hpcOllamaPollPull(model, btn);
+    hpcOllamaPollPull(model, btn, 0, 0);
   }).catch(function (e) {
+    hpcOllamaFinishProgress("開始に失敗しました", false);
     hpcOllamaMsg(e.message, false);
+    btn.disabled = false;
   });
 }
 function hpcFormatBytes(value) {
@@ -248,34 +254,80 @@ function hpcOllamaRenderProgress(data) {
   box.hidden = false;
   var total = data.total, completed = data.completed;
   var pct = total > 0 && completed != null ? Math.min(100, completed / total * 100) : 0;
-  fill.style.width = pct + "%";
+  var progress = fill.parentElement;
+  progress.classList.remove("hpc-progress-error");
+  if (total > 0 && completed != null) {
+    progress.classList.remove("hpc-progress-indeterminate");
+    fill.style.width = pct + "%";
+    progress.setAttribute("role", "progressbar");
+    progress.setAttribute("aria-valuemin", "0");
+    progress.setAttribute("aria-valuemax", "100");
+    progress.setAttribute("aria-valuenow", pct.toFixed(0));
+  } else {
+    progress.classList.add("hpc-progress-indeterminate");
+    fill.style.width = "";
+    progress.setAttribute("role", "progressbar");
+    progress.removeAttribute("aria-valuenow");
+  }
   var amount = total > 0 && completed != null ? " " + hpcFormatBytes(completed) + " / " + hpcFormatBytes(total) : "";
   text.textContent = (data.status || "ダウンロード中") + (total > 0 ? " " + pct.toFixed(0) + "%" : "") + amount;
 }
-function hpcOllamaPollPull(model, btn) {
+function hpcOllamaFinishProgress(message, ok) {
+  var box = document.getElementById("ollama-pull-progress");
+  var text = document.getElementById("ollama-pull-progress-text");
+  var fill = document.getElementById("ollama-pull-progress-fill");
+  if (!box || !text || !fill) return;
+  var progress = fill.parentElement;
+  box.hidden = false;
+  progress.classList.remove("hpc-progress-indeterminate");
+  progress.classList.toggle("hpc-progress-error", !ok);
+  fill.style.width = ok ? "100%" : "";
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", ok ? "100" : "0");
+  text.textContent = message;
+}
+function hpcOllamaPollPull(model, btn, attempts, failures) {
+  attempts = attempts || 0;
+  failures = failures || 0;
   hpcOllamaPost({action: "ollama_pull_status", model: model}).then(function (body) {
     var data = body.data || {};
     if (data.state === "pulling") {
       hpcOllamaRenderProgress(data);
-      window.setTimeout(function () { hpcOllamaPollPull(model, btn); }, 1200);
+      window.setTimeout(function () { hpcOllamaPollPull(model, btn, attempts + 1, 0); }, 1200);
       return;
     }
     if (data.state === "completed") {
-      hpcOllamaRenderProgress({status: "完了", completed: 1, total: 1});
+      hpcOllamaFinishProgress("ダウンロード完了 100%", true);
       hpcOllamaMsg(model + " のダウンロードが完了しました", true);
       if (btn) btn.disabled = false;
       window.setTimeout(function () { window.location.reload(); }, 900);
       return;
     }
+    if (data.state === "idle" && attempts < 10) {
+      hpcOllamaRenderProgress({status: "ダウンロードを準備しています"});
+      window.setTimeout(function () { hpcOllamaPollPull(model, btn, attempts + 1, 0); }, 1200);
+      return;
+    }
     if (data.state === "busy") {
+      hpcOllamaFinishProgress("別のモデルをダウンロード中です", false);
       hpcOllamaMsg((data.active_model || "別のモデル") + " をダウンロード中です", false);
     } else if (data.state === "failed") {
+      hpcOllamaFinishProgress("ダウンロードに失敗しました", false);
       hpcOllamaMsg(data.error || model + " のダウンロードに失敗しました", false);
     } else {
+      hpcOllamaFinishProgress("状態を確認できません", false);
       hpcOllamaMsg("ダウンロード状態を確認できません", false);
     }
     if (btn) btn.disabled = false;
   }).catch(function (e) {
+    if (failures < 3) {
+      hpcOllamaRenderProgress({status: "通信を再試行しています"});
+      window.setTimeout(function () { hpcOllamaPollPull(model, btn, attempts, failures + 1); }, 2000);
+      return;
+    }
+    hpcOllamaFinishProgress("進捗の取得に失敗しました", false);
     hpcOllamaMsg(e.message, false);
     if (btn) btn.disabled = false;
   });
@@ -284,7 +336,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (!document.getElementById("ollama-pull-progress")) return;
   hpcOllamaPost({action: "ollama_pull_status"}).then(function (body) {
     var data = body.data || {};
-    if (data.state === "pulling" && data.model) hpcOllamaPollPull(data.model, null);
+    if (data.state === "pulling" && data.model) hpcOllamaPollPull(data.model, null, 0, 0);
   }).catch(function () {});
 });
 function hpcOllamaDelete(btn) {
