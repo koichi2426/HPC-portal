@@ -1,22 +1,43 @@
 {% raw %}
 {% extends "templates/page.html" %}
 
-{% block script %}
+{% block stylesheet %}
 {{ super() }}
-<script>
-(function () {
-  function isJupyterHubAdminHref(href) {
-    if (!href) return false;
-    var path = href.split("?")[0].split("#")[0];
-    return path === "/hub/admin" || path === "/hub/admin/";
-  }
-  document.querySelectorAll("a[href]").forEach(function (a) {
-    if (!isJupyterHubAdminHref(a.getAttribute("href"))) return;
-    var li = a.closest("li");
-    if (li) li.style.display = "none";
-    a.style.display = "none";
-  });
-})();
-</script>
-{% endblock %}
+<link rel="stylesheet" href="{{ base_url }}hpc-portal.css?v=3">
+{% endblock stylesheet %}
+
+{% block nav_bar_left_items %}
+  <li class="nav-item">
+    <a class="nav-link" href="{{ base_url }}home">Home</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="{{ base_url }}token">Token</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="{{ base_url }}llm-api">LLM API</a>
+  </li>
+  {% if 'admin-ui' in parsed_scopes %}
+    <li class="nav-item">
+      <a class="nav-link" href="{{ base_url }}admin">Admin</a>
+    </li>
+  {% endif %}
+  {% if services %}
+    <li class="nav-item dropdown">
+      <a href="#"
+         class="nav-link dropdown-toggle"
+         data-bs-toggle="dropdown"
+         role="button"
+         aria-expanded="false">Services</a>
+      <ul class="dropdown-menu">
+        {% for service in services %}
+          {% block service scoped %}
+            <li>
+              <a class="dropdown-item" href="{{ service.href }}">{{ service.name }}</a>
+            </li>
+          {% endblock service %}
+        {% endfor %}
+      </ul>
+    </li>
+  {% endif %}
+{% endblock nav_bar_left_items %}
 {% endraw %}

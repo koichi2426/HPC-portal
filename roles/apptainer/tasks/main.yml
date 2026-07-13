@@ -2,6 +2,28 @@
 - name: apt ロック解放待ち
   ansible.builtin.import_tasks: ../../common/tasks/wait_for_apt.yml
 
+- name: apt keyring ディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Apptainer PPA signing key を配置
+  ansible.builtin.get_url:
+    url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6B0F5193D4F3301EF491FF0AFE36534FC6218AE"
+    dest: /etc/apt/keyrings/apptainer-ppa.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apptainer PPA を signed-by 付きで配置
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/apptainer-ppa.asc] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu {{ ansible_distribution_release }} main"
+    filename: apptainer-ppa
+    state: present
+
 - name: Apptainerをインストール
   ansible.builtin.package:
     name: apptainer
@@ -27,29 +49,42 @@
     mode: "0644"
   loop:
     - { src: jupyter-cpu.def }
-    - { src: openwebui-ollama.def }
+    - { src: openwebui.def }
     - { src: ubuntu-22.04-ttyd.def }
   register: apptainer_def_copy
+
+- name: Ollama Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: ollama.def.j2
+    dest: /opt/apptainer/ollama.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: ollama_def_template
 
 - name: 既存SIFの有無を確認
   ansible.builtin.stat:
     path: "{{ item.image }}"
   loop:
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
-    - { src: openwebui-ollama.def, image: /opt/images/openwebui-ollama.sif, def: /opt/apptainer/openwebui-ollama.def }
+    - { src: ollama.def, image: /opt/images/ollama.sif, def: /opt/apptainer/ollama.def }
+    - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
   register: apptainer_image_stat
 
 - name: SIFイメージをビルド（定義更新時は再作成）
   ansible.builtin.command: "apptainer build --force {{ item.image }} {{ item.def }}"
   loop:
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
-    - { src: openwebui-ollama.def, image: /opt/images/openwebui-ollama.sif, def: /opt/apptainer/openwebui-ollama.def }
+    - { src: ollama.def, image: /opt/images/ollama.sif, def: /opt/apptainer/ollama.def }
+    - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
   when: >
     (apptainer_def_copy.results
       | selectattr('item.src', 'equalto', item.src)
       | map(attribute='changed')
       | first
       | default(false))
+    or
+    (item.src == 'ollama.def' and ollama_def_template.changed)
     or
     not
     (apptainer_image_stat.results
@@ -63,6 +98,7 @@
   loop:
     - { image: /opt/images/jupyter-cpu.sif, cmd: batchspawner-singleuser }
     - { image: /opt/images/jupyter-cpu.sif, cmd: jupyterhub-singleuser }
-    - { image: /opt/images/openwebui-ollama.sif, cmd: python3 }
-    - { image: /opt/images/openwebui-ollama.sif, cmd: uvicorn }
+    - { image: /opt/images/ollama.sif, cmd: ollama }
+    - { image: /opt/images/openwebui.sif, cmd: python3 }
+    - { image: /opt/images/openwebui.sif, cmd: uvicorn }
   changed_when: false

@@ -1,0 +1,189 @@
+#!/bin/bash
+set -euo pipefail
+
+JOB_NAME="{{ ollama_slurm_job_name }}"
+SERVICE_USER="{{ ollama_service_user }}"
+SBATCH_SCRIPT="/opt/hpc-portal/ollama/shared-ollama.sbatch"
+OLLAMA_URL="http://{{ ollama_host }}:{{ ollama_port }}"
+DEFAULT_CPUS="{{ ollama_slurm_default_cpus }}"
+DEFAULT_MEMORY="{{ ollama_slurm_default_memory }}"
+GPUS="{{ ollama_slurm_gpus | default(1) }}"
+ALLOWED_CPUS="{{ ollama_slurm_allowed_cpus | default([4, 8, 12, 16, 20]) | join(' ') }}"
+ALLOWED_MEMORY="{{ ollama_slurm_allowed_memory | default(['16G', '32G', '64G', '96G', '112G']) | join(' ') }}"
+PULL_STATE_DIR="/run/hpc-ollama"
+PULL_LOCK_DIR="$PULL_STATE_DIR/pull.lock"
+PULL_PID_FILE="$PULL_STATE_DIR/pull.pid"
+PULL_MODEL_FILE="$PULL_STATE_DIR/pull.model"
+
+cmd="${1:-}"
+model="${2:-}"
+
+running_job_ids() {
+  squeue -h -u "$SERVICE_USER" -n "$JOB_NAME" -o '%A' || true
+}
+
+contains_word() {
+  value="$1"
+  shift
+  for candidate in "$@"; do
+    if [ "$value" = "$candidate" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+parse_start_args() {
+  cpus="$DEFAULT_CPUS"
+  memory="$DEFAULT_MEMORY"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cpus)
+        cpus="${2:-}"
+        shift 2
+        ;;
+      --memory)
+        memory="${2:-}"
+        shift 2
+        ;;
+      *)
+        echo "unknown start option: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+  # shellcheck disable=SC2086
+  if ! contains_word "$cpus" $ALLOWED_CPUS; then
+    echo "invalid cpus: $cpus" >&2
+    exit 2
+  fi
+  # shellcheck disable=SC2086
+  if ! contains_word "$memory" $ALLOWED_MEMORY; then
+    echo "invalid memory: $memory" >&2
+    exit 2
+  fi
+}
+
+case "$cmd" in
+  start)
+    shift || true
+    parse_start_args "$@"
+    ids="$(running_job_ids)"
+    if [ -n "$ids" ]; then
+      ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
+      printf '{"status":"already_running","job_ids":"%s"}\n' "$(json_escape "$ids_csv")"
+      exit 0
+    fi
+    exec sudo -u "$SERVICE_USER" sbatch \
+      --cpus-per-task="$cpus" \
+      --mem="$memory" \
+      --gres="gpu:$GPUS" \
+      "$SBATCH_SCRIPT"
+    ;;
+  stop)
+    ids="$(running_job_ids)"
+    if [ -z "$ids" ]; then
+      echo "shared ollama is not running"
+      exit 0
+    fi
+    exec scancel $ids
+    ;;
+  status)
+    ids="$(running_job_ids)"
+    if [ -z "$ids" ]; then
+      echo '{"running":false,"api":false}'
+      exit 0
+    fi
+    ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
+    first_id="$(printf '%s\n' "$ids" | head -n 1)"
+    job_info="$(squeue -h -j "$first_id" -o '%C|%m|%b' 2>/dev/null | head -n 1 || true)"
+    job_cpus="$(printf '%s' "$job_info" | awk -F'|' '{print $1}')"
+    job_memory="$(printf '%s' "$job_info" | awk -F'|' '{print $2}')"
+    job_gres="$(printf '%s' "$job_info" | awk -F'|' '{print $3}')"
+    if printf '%s' "$job_gres" | grep -q 'gpu'; then
+      job_gpus="$GPUS"
+    else
+      job_gpus="$GPUS"
+    fi
+    if curl -fsS "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
+      printf '{"running":true,"api":true,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")"
+    else
+      printf '{"running":true,"api":false,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")"
+    fi
+    ;;
+  tags)
+    exec curl -fsS "$OLLAMA_URL/api/tags"
+    ;;
+  ps)
+    exec curl -fsS "$OLLAMA_URL/api/ps"
+    ;;
+  pull)
+    if [ -z "$model" ]; then
+      echo "model required" >&2
+      exit 2
+    fi
+    safe_model="$(printf '%s' "$model" | tr '/:' '__')"
+    log="/var/log/hpc-ollama/pull-${safe_model}.log"
+    mkdir -p "$PULL_STATE_DIR"
+    if [ -f "$PULL_PID_FILE" ] && ! kill -0 "$(cat "$PULL_PID_FILE")" 2>/dev/null; then
+      rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+      rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+    fi
+    if ! mkdir "$PULL_LOCK_DIR" 2>/dev/null; then
+      active_model="$(cat "$PULL_MODEL_FILE" 2>/dev/null || true)"
+      echo "another model pull is already running: ${active_model:-unknown}" >&2
+      exit 1
+    fi
+    rm -f "$log" "$PULL_STATE_DIR/pull-${safe_model}.result"
+    # 親プロセス（JupyterHub の HTTP 要求）が stdout/stderr の EOF を待たないよう、
+    # バックグラウンド処理のファイル記述子を完全に切り離す。
+    (
+      printf '%s' "$BASHPID" >"$PULL_PID_FILE"
+      printf '%s' "$model" >"$PULL_MODEL_FILE"
+      set +e
+      sudo -u "$SERVICE_USER" curl -fsSN "$OLLAMA_URL/api/pull" \
+        -H 'Content-Type: application/json' \
+        -d "{\"name\":\"$model\"}" >"$log" 2>&1
+      rc=$?
+      printf '%s' "$rc" >"$PULL_STATE_DIR/pull-${safe_model}.result"
+      rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+      rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+      exit "$rc"
+    ) </dev/null >/dev/null 2>&1 &
+    echo "{\"status\":\"pulling\",\"model\":\"$(json_escape "$model")\"}"
+    ;;
+  pull-status)
+    active=false
+    active_model="$(cat "$PULL_MODEL_FILE" 2>/dev/null || true)"
+    if [ -f "$PULL_PID_FILE" ] && kill -0 "$(cat "$PULL_PID_FILE")" 2>/dev/null; then
+      active=true
+    fi
+    status_model="${model:-$active_model}"
+    safe_model="$(printf '%s' "$status_model" | tr '/:' '__')"
+    last=""
+    result=""
+    if [ -n "$status_model" ]; then
+      last="$(tail -n 1 "/var/log/hpc-ollama/pull-${safe_model}.log" 2>/dev/null || true)"
+      result="$(cat "$PULL_STATE_DIR/pull-${safe_model}.result" 2>/dev/null || true)"
+    fi
+    printf '{"active":%s,"active_model":"%s","model":"%s","result":"%s","last":"%s"}\n' \
+      "$active" "$(json_escape "$active_model")" "$(json_escape "$status_model")" "$(json_escape "$result")" "$(json_escape "$last")"
+    ;;
+  delete)
+    if [ -z "$model" ]; then
+      echo "model required" >&2
+      exit 2
+    fi
+    exec sudo -u "$SERVICE_USER" curl -fsS -X DELETE "$OLLAMA_URL/api/delete" \
+      -H 'Content-Type: application/json' \
+      -d "{\"name\":\"$model\"}"
+    ;;
+  *)
+    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|pull-status [model]|delete <model>" >&2
+    exit 2
+    ;;
+esac

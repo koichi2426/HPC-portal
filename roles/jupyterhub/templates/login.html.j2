@@ -2,8 +2,8 @@
 {% extends "templates/login.html" %}
 
 {% block login_container %}
-<div style="max-width:420px; margin:0 auto 18px; padding:14px 16px; background:#161b22; border:1px solid #30363d; border-radius:10px; color:#8b949e; font-size:13px; line-height:1.55;">
-  <strong style="color:#c9d1d9; display:block; margin-bottom:6px;">Linux アカウントでログイン</strong>
+<div class="gx10-login-note">
+  <strong>Linux アカウントでログイン</strong>
   サーバー OS のユーザー名とパスワードを入力してください。JupyterHub 専用のアカウントではなく、Linux ユーザーと同じです。
 </div>
 {{ super() }}

@@ -14,49 +14,91 @@
 
 ---
 
-### 2. システムアーキテクチャ（詳細設計）
-単一OS内における各プロセスの連携と、使用ポートの詳細は以下の通りです。
+### 2. システムアーキテクチャ
+
+単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM を連携させます。外部公開は Cloudflare Tunnel 経由だけで、Ollama と PostgreSQL はホスト内部からのみ利用します。
+
+#### 全体構成
+
+```mermaid
+flowchart LR
+    User[利用者]
+    CF[Cloudflare Tunnel]
+
+    subgraph Host[単一ノード]
+        Proxy[configurable-http-proxy<br/>公開入口 :8000]
+        JHub[JupyterHub<br/>ポータル]
+        Slurm[Slurm]
+        Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
+        LiteLLM[LiteLLM<br/>API Gateway]
+        Ollama[共有 Ollama]
+        DB[(PostgreSQL)]
+        Models[(共有モデル保存領域)]
+    end
+
+    User --> CF
+    CF -->|Hub・アプリURL| Proxy
+    Proxy --> JHub
+    Proxy --> Apps
+    JHub -->|動的ルートを登録| Proxy
+    JHub -->|ジョブ投入| Slurm
+    Slurm --> Apps
+    Apps -->|利用者別 Virtual Key| LiteLLM
+    CF -->|LLM API・管理UI| LiteLLM
+    LiteLLM <--> DB
+    LiteLLM --> Ollama
+    Ollama --> Models
+```
+
+#### 起動・推論の流れ
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant User as 👤 User (Browser)
-    participant CF as 🚀 cloudflared (*.<base-domain>)
+    participant User as 利用者（ブラウザ）
+    participant CF as Cloudflare Tunnel
 
-    box "Host OS (gx10-ac12)"
-        participant Proxy as 🌐 Proxy (CHP入口)<br/>(Port: 8000)
-        participant JHub as 🧡 JupyterHub (Hub内部API)<br/>(Port: 8081)
-        participant SlurmC as 👮 slurmctld<br/>(Port: 6817)
-        participant SlurmD as 🖥️ slurmd<br/>(Port: 6818)
+    box "単一ノード"
+        participant Proxy as configurable-http-proxy<br/>公開入口: 8000
+        participant JHub as JupyterHub / ポータル<br/>Hub内部: 8081
+        participant Slurm as Slurm<br/>slurmctld / slurmd
+        participant App as 利用者ごとの Slurm ジョブ<br/>JupyterLab / Open WebUI
+        participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
+        participant Ollama as 共有 Ollama Slurm ジョブ<br/>127.0.0.1:11434
+        participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
 
-    box "Isolated Container"
-        participant App as 📦 App (JOBID: 4)<br/>(Port: 動的割当 例: 20004)
-    end
-
-    Note over User, JHub: 【フェーズ1：アプリケーションの起動プロセス】
-    User->>CF: https://<hub-subdomain>.<base-domain> へアクセス
-    CF->>Proxy: リクエスト転送 (8000番へ)
-    Proxy->>JHub: ログイン・ダッシュボード表示
-    User->>JHub: アプリ選択 & 「Start」ボタン押下
-    JHub->>SlurmC: sbatch 実行指示 (JOBID 4発行)
-    SlurmC->>SlurmD: ジョブ開始命令 (Port: 6817 -> 6818)
-    SlurmD->>App: apptainer exec 起動 (動的ポートで待機)
-
-    Note over JHub, App: 【フェーズ2：内部疎通とURLマッピング】
+    Note over User,App: フェーズ1：ポータルからアプリを起動
+    User->>CF: Hub またはアプリ用URLへアクセス
+    CF->>Proxy: Hub / job用ワイルドカードを転送
+    Proxy->>JHub: ログイン・ダッシュボードを転送
+    JHub->>User: ログイン・ダッシュボードを表示
+    User->>JHub: JupyterLab または Open WebUI を起動
+    JHub->>Slurm: sbatch で利用者のジョブを投入
+    Slurm->>App: Apptainer コンテナを起動
     loop 起動待ち
-        JHub->>App: localhost:動的ポート へ疎通確認
+        JHub->>App: 動的ポートへ疎通確認
     end
-    Note right of JHub: JOBID「4」に基づきサブドメイン決定
-    JHub->>Proxy: 「job4.<base-domain>」の転送先を<br/>localhost:動的ポート に同期登録
-    Note right of JHub: routeは起動時/補修時に再同期される
+    JHub->>Proxy: job用URLと動的ポートの対応を登録
+    Proxy->>App: 利用者のアプリ画面を転送
 
-    Note over User, App: 【フェーズ3：専用サブドメインによる個別アクセス】
-    User->>JHub: ダッシュボード上の「job4 リンク」をクリック
-    User->>CF: https://job4.<base-domain> へアクセス
-    CF->>Proxy: ワイルドカード転送 (*.<base-domain> -> 8000)
-    Proxy->>App: Host: job4.<base-domain> を識別して<br/>内部の動的ポートへ転送
-    App-->>User: 透過的にアプリ画面を表示 (別タブ)
+    Note over JHub,DB: フェーズ2：Open WebUI の利用者別認可
+    JHub->>LiteLLM: 利用者の Virtual Key 状態を確認・必要時に発行
+    LiteLLM->>DB: Key・利用量・設定を保存
+    JHub->>App: 有効な利用者別 Key を渡して Open WebUI を起動
+
+    Note over User,Ollama: フェーズ3：モデルへのリクエスト
+    User->>App: Open WebUI でメッセージを送信
+    App->>LiteLLM: OpenAI互換 API（利用者別 Virtual Key）
+    LiteLLM->>DB: 利用量・Key状態を確認・記録
+    LiteLLM->>Ollama: モデル推論を要求
+    Ollama-->>LiteLLM: 推論結果
+    LiteLLM-->>App: OpenAI互換レスポンス
+    App-->>User: 応答を表示
+
+    Note over User,LiteLLM: 外部API利用時
+    User->>CF: LLM API / 管理UIへアクセス
+    CF->>LiteLLM: API / 管理UIを転送
 ```
 
 ---
@@ -74,7 +116,7 @@ sequenceDiagram
    ```
 2. **デプロイ先に運用ユーザーを作成**: Playbook は Unix ユーザーを自動作成しません。後述する `inventory/production.ini` の **`ansible_user` と同じ名前のユーザー**を、対象サーバー（gx10 等）にあらかじめ用意してください。
 
-   - **ホームディレクトリ**（`/home/<ansible_user>/`）に、LLM モデル（`~/models`）、Ollama（`~/.ollama`）、Slurm 経由で起動するアプリのデータが置かれます
+   - **ホームディレクトリ**（`/home/<ansible_user>/`）には、Slurm 経由で起動するアプリのデータが置かれます。共有 Ollama のモデルは `/srv/ollama/models` に置かれます
    - 手元の PC から、そのユーザーで **SSH 公開鍵認証**できること
    - `site.yml` は `become: true` で root 昇格するため、**パスワードなし sudo**（`sudo` グループ等）が必要です
 
@@ -106,15 +148,16 @@ sequenceDiagram
 | `make check` | ドライラン（`--check --diff`） |
 | `make deploy` | フルデプロイ（`site.yml`） |
 | `make deploy-safe` | 再起動抑止デプロイ（`site_safe.yml`） |
-| `make cleanup` | クリーンアップ（`cleanup.yml`） |
+| `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
+| `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
 | `make jupyterhub` | JupyterHub ロールのみ |
 | `make slurm` | Slurm ロールのみ |
-| `make models` | LLM / Ollama モデル取得（`target_models` 外のモデル・GGUF・未完 pull も削除） |
+| `make ollama` | shared Ollama ロールのみ |
 | `make apptainer` | Apptainer ロールのみ |
 | `make status` | Slurm ジョブ・ディスク空き |
 | `make gpu` | GPU / VRAM |
-| `make services` | サービス状態・JupyterHub ログ |
-| `make processes` | 残存プロセス確認 |
+| `make services` | サービス・shared Ollama 状態・主要ログ |
+| `make processes` | 実行ユーザー / hpc-ollama の残存プロセス確認 |
 
 別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
 
@@ -128,6 +171,12 @@ make deploy
 
 ```bash
 make cleanup
+```
+
+`make cleanup` は `/srv/ollama/models` や LiteLLM DB などのデータを削除しません。データまで消す場合だけ、確認文に `削除する` と入力して完全削除を実行します。
+
+```bash
+make cleanup-purge-data
 ```
 
 #### 🔍 リモートでの原因調査
@@ -149,11 +198,11 @@ ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node
 # GPU / VRAM
 ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
 
-# JupyterHub / Slurm サービス（-b は root 権限が必要なとき）
-ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd; journalctl -u jupyterhub -n 30 --no-pager"
+# JupyterHub / Slurm / LiteLLM / shared Ollama 状態（-b は root 権限が必要なとき）
+ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
 
 # 残存プロセス（YOUR_USER は ansible_user に置き換え）
-ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true"
+ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
 
 # 部分デプロイ
 ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub

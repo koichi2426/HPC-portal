@@ -1,0 +1,158 @@
+---
+- name: LiteLLM secrets が設定済みか確認
+  ansible.builtin.assert:
+    that:
+      - litellm_master_key is defined
+      - litellm_master_key | length > 0
+      - litellm_salt_key is defined
+      - litellm_salt_key | length > 0
+      - litellm_database_password is defined
+      - litellm_database_password | length > 0
+      - litellm_ui_username is defined
+      - litellm_ui_username | length > 0
+      - litellm_ui_password is defined
+      - litellm_ui_password | length > 0
+    fail_msg: "LiteLLM secrets が未設定です。group_vars/all/secret.yml を作成してください。"
+
+- name: LiteLLM 用 OS ユーザーを作成
+  ansible.builtin.user:
+    name: "{{ litellm_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: LiteLLM 用ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(litellm_user) }}"
+    group: "{{ item.group | default(litellm_user) }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /opt/litellm, owner: root, group: root, mode: "0755" }
+    - { path: /etc/litellm, owner: root, group: "{{ litellm_user }}", mode: "0750" }
+    - { path: "{{ openwebui_litellm_key_dir }}", owner: root, group: root, mode: "0700" }
+    - { path: /var/lib/litellm, mode: "0750" }
+
+- name: LiteLLM Python venv とパッケージを用意
+  ansible.builtin.pip:
+    name:
+      - "litellm[proxy]=={{ litellm_version }}"
+      - prisma
+      - psycopg2-binary
+    virtualenv: /opt/litellm/venv
+    virtualenv_command: python3 -m venv
+    state: present
+  register: litellm_pip
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: LiteLLM Prisma client を生成
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mkdir -p "$PRISMA_BINARY_CACHE_DIR"
+    schema="$(
+      /opt/litellm/venv/bin/python - <<'PY'
+    from pathlib import Path
+    import litellm
+
+    root = Path(litellm.__file__).resolve().parent
+    candidates = [
+        root / "proxy" / "prisma" / "schema.prisma",
+        root / "proxy" / "schema.prisma",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            print(candidate)
+            break
+    else:
+        raise SystemExit("LiteLLM Prisma schema.prisma not found")
+    PY
+    )"
+    /opt/litellm/venv/bin/prisma py fetch
+    /opt/litellm/venv/bin/prisma generate --schema "$schema"
+  args:
+    executable: /bin/bash
+  environment:
+    PATH: "/opt/litellm/venv/bin:{{ ansible_env.PATH }}"
+    HOME: /var/lib/litellm
+    PRISMA_HOME_DIR: /var/lib/litellm
+    PRISMA_BINARY_CACHE_DIR: /var/lib/litellm/.cache/prisma-python/binaries
+  register: litellm_prisma_generate
+  changed_when: >
+    litellm_pip.changed or
+    'Generated Prisma Client' in litellm_prisma_generate.stdout or
+    '✔ Generated' in litellm_prisma_generate.stdout
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: LiteLLM Prisma cache の所有者を修正
+  ansible.builtin.file:
+    path: /var/lib/litellm/.cache
+    state: directory
+    owner: "{{ litellm_user }}"
+    group: "{{ litellm_user }}"
+    recurse: true
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: LiteLLM 設定ファイルを配置
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/litellm/config.yaml
+    owner: root
+    group: "{{ litellm_user }}"
+    mode: "0640"
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: LiteLLM 環境ファイルを配置
+  ansible.builtin.template:
+    src: litellm.env.j2
+    dest: /etc/litellm/litellm.env
+    owner: root
+    group: "{{ litellm_user }}"
+    mode: "0640"
+  notify: LiteLLM を再起動
+  no_log: true
+  when: not ansible_check_mode
+
+- name: LiteLLM systemd ユニットを配置
+  ansible.builtin.template:
+    src: litellm.service.j2
+    dest: /etc/systemd/system/litellm.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: LiteLLM を再起動
+  when: not ansible_check_mode
+
+- name: systemd をリロード
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: LiteLLM を有効化して起動
+  ansible.builtin.systemd:
+    name: litellm
+    enabled: true
+    state: started
+  when:
+    - not ansible_check_mode
+    - not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: LiteLLM の設定変更を起動確認前に反映
+  ansible.builtin.meta: flush_handlers
+  when:
+    - not ansible_check_mode
+    - not (hpc_skip_service_restarts | default(false) | bool)
+
+- name: 廃止した共有 Open WebUI key を削除
+  ansible.builtin.file:
+    path: /etc/litellm/openwebui.key
+    state: absent
+
+- name: 再起動抑止モード時は LiteLLM 設定変更が未反映であることを通知
+  ansible.builtin.debug:
+    msg: "hpc_skip_service_restarts=true のため litellm は再起動していません。反映には通常デプロイ（site.yml）を実行してください。"
+  when: hpc_skip_service_restarts | default(false) | bool

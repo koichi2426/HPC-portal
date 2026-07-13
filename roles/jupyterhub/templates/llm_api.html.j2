@@ -1,0 +1,197 @@
+{% raw %}
+{% extends "page.html" %}
+
+{% block main %}
+<div class="gx10-key-page">
+  <div style="margin-bottom:20px;">
+    <a class="hpc-back-link" href="/hub/home">← Home</a>
+    <h2 class="hpc-page-title" style="margin-top:10px;">LLM API</h2>
+    <div class="hpc-help">OpenAI 互換 API の key、利用可能モデル、使い方を確認します。</div>
+  </div>
+
+  {% if api_disabled %}
+  <div class="gx10-key-msg warn" style="margin-bottom:16px;">
+    API key は管理者により無効化されています。再発行はできません。
+  </div>
+  {% elif status_error %}
+  <div class="gx10-key-msg warn" style="margin-bottom:16px;">
+    API key 状態の確認に失敗しました: {{ status_error }}
+  </div>
+  {% endif %}
+
+  <div class="gx10-key-card">
+    <div class="gx10-key-label">API Base URL</div>
+    <code class="gx10-key-code">{{ hpc_litellm_public_base_url or "未設定" }}</code>
+  </div>
+
+  <div class="gx10-key-card">
+    <div class="hpc-section-title" style="margin-bottom:6px;">利用可能モデル</div>
+    <div class="hpc-help">OpenAI 互換 API の <code>model</code> に指定できる名前です。</div>
+    {% if models_error %}
+    <div class="gx10-key-msg warn">モデル一覧の取得に失敗しました: {{ models_error }}</div>
+    {% elif models %}
+    <div class="gx10-model-list">
+      {% for model in models %}
+      <button type="button" class="gx10-model-item gx10-model-select{% if model.id == default_model %} selected{% endif %}" data-model="{{ model.id }}">
+        <div class="gx10-model-name">{{ model.id }}</div>
+      </button>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="gx10-key-msg warn">現在表示できるモデルがありません。</div>
+    {% endif %}
+  </div>
+
+  <div class="gx10-key-card">
+    <div class="hpc-section-title" style="margin-bottom:8px;">使い方</div>
+    <div class="hpc-help" style="margin-bottom:8px;">黄色の部分だけを、この画面で発行した API key に置き換えてください。モデル名は上の一覧を押すと切り替わります。</div>
+    <div class="gx10-code-heading"><span>curl</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="curl-example" data-copy-status="curl-copy-status">コピー</button></div>
+    <pre id="curl-example" class="gx10-key-pre">curl {{ hpc_litellm_public_base_url }}/chat/completions \
+  -H "Authorization: Bearer <span class="gx10-api-key-placeholder">YOUR_LITELLM_API_KEY</span>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
+    "messages": [{"role": "user", "content": "こんにちは"}]
+  }'</pre>
+    <div id="curl-copy-status" class="gx10-copy-status" aria-live="polite"></div>
+    <div class="gx10-code-heading"><span>Python</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="python-example" data-copy-status="python-copy-status">コピー</button></div>
+    <pre id="python-example" class="gx10-key-pre">from openai import OpenAI
+
+client = OpenAI(
+    api_key="<span class="gx10-api-key-placeholder">YOUR_LITELLM_API_KEY</span>",
+    base_url="{{ hpc_litellm_public_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
+    messages=[{"role": "user", "content": "こんにちは"}],
+)
+print(response.choices[0].message.content)</pre>
+    <div id="python-copy-status" class="gx10-copy-status" aria-live="polite"></div>
+  </div>
+
+  <div class="gx10-key-card">
+    <div class="hpc-section-title">API key 再発行</div>
+    <div class="hpc-help" style="margin-top:6px;">
+      再発行すると既存の自分用 API key は無効化されます。新しい key はこの画面で一度だけ表示されます。
+    </div>
+    <div style="margin-top:12px;">
+      <button type="button" id="regen-btn" class="gx10-key-btn gx10-key-btn-primary" {% if api_disabled or status_error %}disabled{% endif %}>再発行</button>
+    </div>
+    <div id="key-msg" class="gx10-key-msg"></div>
+    <div id="key-box" class="gx10-key-box" aria-live="polite">
+      <div class="hpc-section-title">新しい API key（一度だけ表示）</div>
+      <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">この key は保存されません。画面を閉じる前に控えてください。</div>
+      <div class="gx10-key-line">
+        <div id="key-value" class="gx10-key-value"></div>
+        <button type="button" id="copy-key-btn" class="gx10-key-btn gx10-key-btn-muted">コピー</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+window.HPC_XSRF = {{ xsrf_token|tojson }};
+(function () {
+  function readXsrfCookie() {
+    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+  function xsrfToken() {
+    return window.HPC_XSRF || readXsrfCookie() || "";
+  }
+  function apiUrl() {
+    var xsrf = xsrfToken();
+    return xsrf ? "/hub/llm-api/api?_xsrf=" + encodeURIComponent(xsrf) : "/hub/llm-api/api";
+  }
+  function apiHeaders() {
+    var xsrf = xsrfToken();
+    var h = { "Content-Type": "application/json", "Accept": "application/json" };
+    if (xsrf) h["X-XSRFToken"] = xsrf;
+    return h;
+  }
+  function showMsg(text, ok) {
+    var msg = document.getElementById("key-msg");
+    msg.textContent = text;
+    msg.className = "gx10-key-msg " + (ok ? "ok" : "err");
+  }
+  function copyExample(id, btn) {
+    var text = (document.getElementById(id).textContent || "").trim();
+    var status = document.getElementById(btn.getAttribute("data-copy-status") || "");
+    function copied() {
+      var original = btn.textContent;
+      btn.textContent = "✓ コピー済み";
+      btn.disabled = true;
+      if (status) status.textContent = "";
+      window.setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1600);
+    }
+    function failed() {
+      if (status) status.textContent = "コピーできませんでした。コードを選択してコピーしてください。";
+    }
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      window.prompt("コードをコピーしてください", text);
+      return;
+    }
+    navigator.clipboard.writeText(text).then(function () {
+      copied();
+    }).catch(failed);
+  }
+  document.querySelectorAll(".gx10-model-select").forEach(function (btn) {
+    btn.onclick = function () {
+      var model = btn.getAttribute("data-model") || "";
+      document.querySelectorAll(".gx10-model-select").forEach(function (item) { item.classList.remove("selected"); });
+      btn.classList.add("selected");
+      document.querySelectorAll("[data-model-output]").forEach(function (output) { output.textContent = model; });
+    };
+  });
+  document.querySelectorAll(".gx10-copy-example").forEach(function (btn) {
+    btn.onclick = function () { copyExample(btn.getAttribute("data-copy"), btn); };
+  });
+  function copyKey() {
+    var key = document.getElementById("key-value").textContent || "";
+    if (!key) return;
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      window.prompt("API key をコピーしてください", key);
+      return;
+    }
+    navigator.clipboard.writeText(key).then(function () {
+      showMsg("API key をコピーしました", true);
+    }).catch(function () {
+      window.prompt("API key をコピーしてください", key);
+    });
+  }
+  document.getElementById("copy-key-btn").onclick = copyKey;
+  document.getElementById("regen-btn").onclick = function () {
+    var btn = document.getElementById("regen-btn");
+    var box = document.getElementById("key-box");
+    var value = document.getElementById("key-value");
+    if (!confirm("既存の自分用 API key を無効化して、新しい key を発行しますか？")) return;
+    btn.disabled = true;
+    box.className = "gx10-key-box";
+    value.textContent = "";
+    fetch(apiUrl(), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: apiHeaders(),
+      body: JSON.stringify({ action: "regenerate" })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (!r.ok) throw new Error(body.error || body.message || ("HTTP " + r.status));
+        return body;
+      });
+    }).then(function (body) {
+      value.textContent = body.api_key || "";
+      box.className = "gx10-key-box visible";
+      showMsg("API key を再発行しました", true);
+    }).catch(function (e) {
+      showMsg(e.message, false);
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  };
+})();
+</script>
+{% endblock %}
+{% endraw %}

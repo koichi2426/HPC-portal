@@ -6,3 +6,5 @@ inventory/*
 # Ansible runtime artifacts
 .ansible/
 *.retry
+
+__pycache__

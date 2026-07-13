@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --job-name={{ ollama_slurm_job_name }}
+#SBATCH --partition={{ ollama_slurm_partition }}
+#SBATCH --time={{ ollama_slurm_time }}
+#SBATCH --output=/var/log/hpc-ollama/shared-ollama-%j.log
+
+set -euo pipefail
+
+export OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }}
+export OLLAMA_MODELS={{ ollama_models_dir }}
+export HOME={{ ollama_service_home }}
+
+exec apptainer exec --nv \
+  --bind {{ ollama_models_dir }}:{{ ollama_models_dir }} \
+  --bind {{ ollama_service_home }}:{{ ollama_service_home }} \
+  --env OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }} \
+  --env OLLAMA_MODELS={{ ollama_models_dir }} \
+  --env HOME={{ ollama_service_home }} \
+  {{ ollama_apptainer_image }} \
+  ollama serve

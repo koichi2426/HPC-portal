@@ -2,45 +2,26 @@
 {% extends "page.html" %}
 
 {% block main %}
-<div style="max-width: 980px; margin: 24px auto; padding: 0 16px;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-    <h2 style="margin:0;">Home</h2>
-    <div style="display:flex; gap:10px; align-items:center;">
-      <a id="new-app-btn" href="/hub/new" style="display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#1f6feb; color:#fff; font-weight:600;">
+<div class="hpc-page" data-hpc-app-list>
+  <div class="hpc-page-header">
+    <h2 class="hpc-page-title">Home</h2>
+    <div class="hpc-row">
+      <a id="new-app-btn" class="hpc-primary-btn" href="/hub/new">
         + New Application
       </a>
     </div>
   </div>
 
   {% set res = hpc_resource_snapshot %}
-  <style>
-    .gx10-resource-card { background:#0d1117; border:1px solid #30363d; border-radius:12px; padding:14px; margin-bottom:18px; }
-    .gx10-resource-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-top:12px; }
-    .gx10-resource-meter { background:rgba(255,255,255,0.035); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px; }
-    .gx10-meter-head { display:flex; justify-content:space-between; align-items:center; color:#8b949e; font-size:12px; margin-bottom:8px; }
-    .gx10-meter-status { color:#9be7c7; font-weight:700; }
-    .gx10-meter-track { height:10px; background:#30363d; border-radius:999px; overflow:hidden; }
-    .gx10-meter-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7); }
-    .gx10-meter-numbers { display:flex; justify-content:space-between; margin-top:7px; color:#8b949e; font-size:11px; }
-    .gx10-app-card { border:1px solid #30363d; border-radius:10px; margin-bottom:10px; background:#0d1117; overflow:hidden; }
-    .gx10-app-card-link { display:block; padding:12px; text-decoration:none; color:inherit; }
-    .gx10-app-card-link:hover { background:rgba(88,166,255,0.06); }
-    .gx10-app-card-actions { display:flex; gap:8px; align-items:center; padding:0 12px 12px; justify-content:flex-end; }
-    .gx10-detail-hint { font-size:11px; color:#58a6ff; margin-top:6px; }
-    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live { color:#3fb950; font-weight:600; }
-    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale { color:#f85149; font-weight:600; }
-    [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading { color:#e3b341; }
-    [data-hpc-resource-meter].hpc-resource-refreshed .gx10-meter-fill { filter:brightness(1.15); transition:width 0.35s ease, filter 0.2s ease; }
-  </style>
   <div class="gx10-resource-card" data-hpc-resource-meter>
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+    <div class="hpc-row-between">
       <div>
-        <div style="font-weight:700; color:#c9d1d9;">現在使えるリソース</div>
-        <div style="font-size:12px; color:#8b949e; margin-top:3px;">Node: gx10-ac12</div>
+        <div class="hpc-section-title">現在使えるリソース</div>
+        <div class="hpc-help" style="margin-top:3px;">Node: gx10-ac12</div>
       </div>
       <div style="text-align:right;">
-        <div data-resource-updated-at style="font-size:11px; color:#8b949e; margin-bottom:4px;">5秒ごとに自動更新</div>
-        <a href="/hub/new" style="text-decoration:none; color:#58a6ff; font-weight:700; font-size:12px;">新規起動へ →</a>
+        <div class="hpc-muted" data-resource-updated-at style="font-size:11px; margin-bottom:4px;">5秒ごとに自動更新</div>
+        <a class="hpc-page-link" href="/hub/new">新規起動へ →</a>
       </div>
     </div>
     <div class="gx10-resource-grid" aria-label="現在使えるリソース">
@@ -79,12 +60,32 @@
     </div>
   </div>
 
-  <div style="margin-bottom:10px; color:#8b949e;">起動中のアプリケーション</div>
+  <div class="hpc-muted" style="margin-bottom:10px;">起動中のアプリケーション</div>
+
+  {% if user and user.name in hpc_portal_admin_users %}
+    {% set shared = hpc_shared_ollama_detail %}
+    {% if shared.active %}
+    <div class="gx10-app-card"
+         data-hpc-shared-ollama-status
+         data-hpc-app-state="{% if shared.api %}running{% else %}pending{% endif %}">
+      <a class="gx10-app-card-link" href="/hub/apps/shared-ollama">
+        <div>
+          <div class="hpc-section-title">Ollama{% if shared.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ shared.job_id }})</span>{% endif %}</div>
+          <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ shared.allocation.cpu }} vCPU · {{ shared.allocation.memory }} RAM · 1 GPU · {{ shared.allocation.hours }}</div>
+          <div data-hpc-app-status-text class="{% if shared.api %}hpc-status-ok{% else %}hpc-status-warn{% endif %}" style="font-size:12px; margin-top:4px;">{% if shared.api %}実行中 / API OK{% else %}起動中 / API応答待ち{% endif %}</div>
+          <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" {% if shared.api %}hidden{% endif %} role="progressbar" aria-label="Ollamaを起動しています"><div class="hpc-progress-fill"></div></div>
+          <div class="gx10-detail-hint">詳細を見る →</div>
+        </div>
+      </a>
+    </div>
+    {% endif %}
+  {% endif %}
 
   {% if user and user.spawners %}
     {% set has_any = false %}
     {% for name, spawner in user.spawners.items() %}
-      {% if spawner.active or spawner.pending %}
+      {% set spawn_error = spawner.hpc_failure_message|default('') %}
+      {% if spawner.active or spawner.pending or spawn_error %}
         {% set has_any = true %}
         {% set sp_public_url = spawner.public_url if spawner.public_url is defined else '' %}
         {% set _uo = spawner.user_options if spawner.user_options is defined else {} %}
@@ -142,25 +143,38 @@
           {% endif %}
         {% endif %}
 
-        <div class="gx10-app-card" {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
-          <a class="gx10-app-card-link" href="/hub/apps/{{ sn_path }}">
+        <div class="gx10-app-card{% if spawn_error %} failed{% endif %}"
+             {% if not spawn_error %}
+             data-hpc-app-status
+             data-server-name="{{ name }}"
+             data-hpc-app-state="{% if spawner.pending %}pending{% else %}running{% endif %}"
+             {% else %}
+             data-hpc-app-state="failed"
+             {% endif %}
+             {% if spawner.pending %}data-gx10-pending="1"{% endif %}>
+          <a class="gx10-app-card-link" href="{% if spawn_error %}/hub/spawn/{{ user.escaped_name }}/{{ name }}{% else %}/hub/apps/{{ sn_path }}{% endif %}">
             <div>
-              <div style="font-weight:600; color:#c9d1d9;">{{ app_label }}{% if spawner.job_id %} <span style="color:#8b949e;font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
-              <div style="font-size:11px; color:#8b949e; margin-top:6px;">割り当て: {{ alloc_line }}</div>
-              {% if spawner.pending %}
-                <div style="font-size:12px; color:#e3b341; margin-top:4px;">Pending / Starting… ({{ spawner.pending }})</div>
-                <div style="margin-top:8px; height:6px; background:#30363d; border-radius:999px;">
-                  <div style="width:55%; height:100%; background:#e3b341; border-radius:999px;"></div>
-                </div>
+              <div class="hpc-section-title">{{ app_label }}{% if spawner.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
+              <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ alloc_line }}</div>
+              {% if spawn_error %}
+                <div class="hpc-status-danger" style="font-size:12px; margin-top:4px;">起動に失敗しました</div>
+                <div class="hpc-muted gx10-app-error-detail">{{ spawn_error }}</div>
+              {% elif spawner.pending %}
+                <div data-hpc-app-status-text class="hpc-status-warn" style="font-size:12px; margin-top:4px;">起動中（{{ spawner.pending }}）</div>
               {% else %}
-                <div style="font-size:12px; color:#3fb950; margin-top:4px;">Running</div>
+                <div data-hpc-app-status-text class="hpc-status-ok" style="font-size:12px; margin-top:4px;">実行中</div>
               {% endif %}
-              <div class="gx10-detail-hint">詳細を見る →</div>
+              <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" {% if not spawner.pending %}hidden{% endif %} role="progressbar" aria-label="アプリを起動しています"><div class="hpc-progress-fill"></div></div>
+              <div class="gx10-detail-hint">{% if spawn_error %}設定を確認する →{% else %}詳細を見る →{% endif %}</div>
             </div>
           </a>
-          {% if spawner.active %}
+          {% if spawn_error %}
           <div class="gx10-app-card-actions">
-            <a href="{{ job_url }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none; color:#58a6ff; font-weight:700; font-size:12px;" onclick="event.stopPropagation();">
+            <a class="hpc-primary-btn" href="/hub/spawn/{{ user.escaped_name }}/{{ name }}">設定を確認して再試行</a>
+          </div>
+          {% elif spawner.active %}
+          <div class="gx10-app-card-actions">
+            <a class="hpc-page-link" href="{{ job_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">
               JUMP ↗
             </a>
           </div>
@@ -176,37 +190,6 @@
 
 {% block script %}
 <script src="/hub/hpc-resource-meter.js?v=2"></script>
-<script>
-(function () {
-  var pollMs = 4000;
-  var lastSig = null;
-  function readXsrfCookie() {
-    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
-    return m ? decodeURIComponent(m[1]) : "";
-  }
-  function tick() {
-    var xsrf = readXsrfCookie();
-    fetch("/hub/api/user", {
-      credentials: "same-origin",
-      headers: xsrf ? { "X-XSRFToken": xsrf } : {}
-    })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-      .then(function (data) {
-        var servers = data.servers || {};
-        var sig = JSON.stringify(servers);
-        if (lastSig === null) {
-          lastSig = sig;
-        } else if (lastSig !== sig) {
-          window.location.reload();
-          return;
-        }
-        lastSig = sig;
-      })
-      .catch(function () {});
-  }
-  tick();
-  setInterval(tick, pollMs);
-})();
-</script>
+<script src="/hub/hpc-app-status.js?v=1"></script>
 {% endblock %}
 {% endraw %}

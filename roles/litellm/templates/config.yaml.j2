@@ -1,0 +1,23 @@
+{% set initial_models = litellm_initial_models | default([]) %}
+{% if initial_models | length > 0 %}
+model_list:
+{% for model in initial_models %}
+  - model_name: {{ model.name | to_json }}
+    litellm_params:
+      model: {{ model.backend | to_json }}
+      api_base: {{ model.api_base | default("http://" ~ ollama_host ~ ":" ~ ollama_port) | to_json }}
+{% endfor %}
+{% else %}
+model_list: []
+{% endif %}
+
+general_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  database_url: "os.environ/DATABASE_URL"
+  store_prompts_in_spend_logs: false
+  ui_access_mode: "admin_only"
+  disable_master_key_return: true
+
+litellm_settings:
+  set_verbose: false
+  drop_params: true

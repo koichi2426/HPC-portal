@@ -30,6 +30,7 @@
       - nodejs
       - npm
       - git
+      - util-linux
     state: present
 
 - name: configurable-http-proxyをインストール
@@ -48,6 +49,7 @@
   loop:
     - /opt/jupyterhub
     - /etc/jupyterhub
+    - /etc/jupyterhub/hpc_portal
     - /etc/jupyterhub/templates
     - /etc/jupyterhub/static
     - /var/lib/jupyterhub
@@ -66,14 +68,60 @@
     virtualenv_command: python3 -m venv
     state: latest
 
-- name: jupyterhub_config.pyを配置
-  ansible.builtin.template:
-    src: jupyterhub_config.py.j2
+- name: JupyterHub設定エントリポイントを配置
+  ansible.builtin.copy:
+    src: jupyterhub_config.py
     dest: /etc/jupyterhub/jupyterhub_config.py
     owner: root
     group: root
     mode: '0644'
   register: config_file
+
+- name: HPCポータルのPythonキャッシュを削除
+  ansible.builtin.file:
+    path: /etc/jupyterhub/hpc_portal/__pycache__
+    state: absent
+
+- name: 配置済みHPCポータルPythonモジュールを確認
+  ansible.builtin.find:
+    paths: /etc/jupyterhub/hpc_portal
+    patterns: '*.py'
+    file_type: file
+    recurse: false
+  register: deployed_portal_python_files
+
+- name: 廃止したHPCポータルPythonモジュールを削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ deployed_portal_python_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: >-
+    item.path | basename not in
+    (query('ansible.builtin.fileglob', role_path + '/files/hpc_portal/*.py')
+    | map('basename') | list)
+
+- name: HPCポータルPythonモジュールを配置
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/jupyterhub/hpc_portal/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ query('ansible.builtin.fileglob', role_path + '/files/hpc_portal/*.py') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  register: portal_python_files
+
+- name: JupyterHub 環境ファイルを配置
+  ansible.builtin.template:
+    src: jupyterhub.env.j2
+    dest: /etc/jupyterhub/jupyterhub.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
 
 - name: home.htmlを配置
   ansible.builtin.template:
@@ -95,6 +143,14 @@
   ansible.builtin.template:
     src: admin_users.html.j2
     dest: /etc/jupyterhub/templates/admin_users.html
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: llm_api.htmlを配置
+  ansible.builtin.template:
+    src: llm_api.html.j2
+    dest: /etc/jupyterhub/templates/llm_api.html
     owner: root
     group: root
     mode: '0644'
@@ -132,6 +188,22 @@
     group: root
     mode: '0644'
 
+- name: アプリ状態自動更新用JSを配置
+  ansible.builtin.copy:
+    src: hpc-app-status.js
+    dest: /etc/jupyterhub/static/hpc-app-status.js
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: HPCポータル共通CSSを配置
+  ansible.builtin.copy:
+    src: hpc-portal.css
+    dest: /etc/jupyterhub/static/hpc-portal.css
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: 設定更新時に負の遺産（DB・Cookie）を削除
   ansible.builtin.file:
     path: "{{ item }}"
@@ -139,7 +211,7 @@
   loop:
     - /var/lib/jupyterhub/jupyterhub.sqlite
     - /var/lib/jupyterhub/jupyterhub_cookie_secret
-  when: config_file.changed
+  when: config_file.changed or portal_python_files.changed
 
 - name: JupyterHubのsystemdユニットを配置
   ansible.builtin.copy:
@@ -154,6 +226,7 @@
       WorkingDirectory=/etc/jupyterhub
       Environment="PATH=/opt/jupyterhub/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       Environment="JUPYTERHUB_XSRF_ANONYMOUS_IP_CIDRS=127.0.0.0/8;10.0.0.0/8;172.16.0.0/12;::1/128"
+      EnvironmentFile=/etc/jupyterhub/jupyterhub.env
       ExecStart=/opt/jupyterhub/venv/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
       Restart=always
 
@@ -170,191 +243,3 @@
     enabled: true
     state: started
   when: not (hpc_skip_service_restarts | default(false) | bool)
-
-# ==========================================
-# 2. AIモデル自動セットアップ (IaC化)
-# ==========================================
-- name: 対象LLMモデルの定義 (DRY原則・オープンモデル厳選)
-  ansible.builtin.set_fact:
-    target_models:
-      # --- 【最低限の軽量モデル: 汎用・コーディング・エージェント】 ---
-      - { name: 'llama-3-8b', url: 'https://huggingface.co/QuantFactory/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf' }
-      - { name: 'qwen-2-7b', url: 'https://huggingface.co/Qwen/Qwen2-7B-Instruct-GGUF/resolve/main/qwen2-7b-instruct-q4_k_m.gguf' }
-      - { name: 'phi-3-mini', url: 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf' }
-      - { name: 'deepseek-coder-v2', url: 'https://huggingface.co/bartowski/DeepSeek-Coder-V2-Lite-Instruct-GGUF/resolve/main/DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf' }
-      - { name: 'hermes-2-pro', url: 'https://huggingface.co/NousResearch/Hermes-2-Pro-Llama-3-8B-GGUF/resolve/main/Hermes-2-Pro-Llama-3-8B-Q4_K_M.gguf' }
-
-      # --- 【HPC向け大型モデル: 128GB統合メモリ限界突破・超モンスター級】 ---
-      - { name: 'kimi-k2.6:cloud' }
-      - { name: 'qwen3.6:35b' }
-      - { name: 'mistral-large:123b' }
-      - { name: 'command-r-plus' }
-      - { name: 'deepseek-r1:70b' }
-      - { name: 'llama3.3:70b' }
-  tags: [models]
-
-- name: モデル保存用ディレクトリを作成
-  ansible.builtin.file:
-    path: "/home/{{ ansible_user }}/models"
-    state: directory
-    owner: "{{ ansible_user }}"
-    mode: '0755'
-  tags: [models]
-
-- name: モデルファイルの存在確認
-  ansible.builtin.stat:
-    path: "/home/{{ ansible_user }}/models/{{ item.name }}.gguf"
-  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
-  register: model_files
-  tags: [models]
-
-- name: LLMモデルファイルをダウンロード (未存在の場合のみ)
-  ansible.builtin.get_url:
-    url: "{{ item.item.url }}"
-    dest: "/home/{{ ansible_user }}/models/{{ item.item.name }}.gguf"
-    owner: "{{ ansible_user }}"
-    mode: '0644'
-  loop: "{{ model_files.results }}"
-  when: not item.stat.exists
-  tags: [models]
-
-- name: Modelfileを作成
-  ansible.builtin.copy:
-    content: "FROM /home/{{ ansible_user }}/models/{{ item.name }}.gguf"
-    dest: "/home/{{ ansible_user }}/models/Modelfile-{{ item.name }}"
-    owner: "{{ ansible_user }}"
-    mode: '0644'
-  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
-  tags: [models]
-
-- name: Ollamaにモデルを登録
-  ansible.builtin.shell: |
-    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
-      export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
-      ollama serve > /dev/null 2>&1 &
-      sleep 10
-      ollama create {{ item.name }}-hpc -f /home/{{ ansible_user }}/models/Modelfile-{{ item.name }}
-    "
-  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
-  register: model_creation
-  changed_when: "'success' in model_creation.stdout"
-  failed_when: "'Error' in model_creation.stderr and 'already exists' not in model_creation.stderr"
-  tags: [models]
-
-- name: Ollama公式ライブラリの大型モデルを取得
-  ansible.builtin.shell: |
-    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
-      export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
-      ollama serve > /dev/null 2>&1 &
-      sleep 10
-      if ollama show {{ item.name }} > /dev/null 2>&1; then
-        echo '{{ item.name }} already exists'
-        exit 0
-      fi
-      ollama pull {{ item.name }}
-    "
-  loop: "{{ target_models | rejectattr('url', 'defined') | list }}"
-  register: ollama_model_pull
-  changed_when: "'already exists' not in ollama_model_pull.stdout"
-  failed_when: "'Error' in ollama_model_pull.stderr"
-  tags: [models]
-
-- name: Ollamaに残すモデル名を算出 (pull / cloud)
-  ansible.builtin.set_fact:
-    ollama_keep_names: "{{ target_models | rejectattr('url', 'defined') | map(attribute='name') | list }}"
-  tags: [models]
-
-- name: Ollamaに残すモデル名を算出 (GGUF → *-hpc)
-  ansible.builtin.set_fact:
-    ollama_keep_names: "{{ ollama_keep_names + [item.name + '-hpc'] }}"
-  loop: "{{ target_models | selectattr('url', 'defined') | list }}"
-  tags: [models]
-
-- name: リスト外のOllamaモデルを削除
-  ansible.builtin.shell: |
-    apptainer exec --nv /opt/images/openwebui-ollama.sif bash -c "
-      export OLLAMA_MODELS=/home/{{ ansible_user }}/.ollama/models
-      ollama serve > /dev/null 2>&1 &
-      sleep 10
-      KEEP='{{ ollama_keep_names | join(' ') }}'
-      ollama list | awk 'NR>1 {print \$1}' | while read -r name; do
-        base=\"\${name%:latest}\"
-        keep=0
-        for k in \$KEEP; do
-          if [ \"\$name\" = \"\$k\" ] || [ \"\$base\" = \"\$k\" ]; then
-            keep=1
-            break
-          fi
-        done
-        if [ \"\$keep\" -eq 0 ]; then
-          echo \"removing \$name\"
-          ollama rm \"\$name\" || true
-        fi
-      done
-    "
-  register: ollama_prune
-  changed_when: "'removing' in ollama_prune.stdout"
-  failed_when: false
-  when: hpc_prune_stale_ollama_models | default(true) | bool
-  tags: [models]
-
-- name: 未完のOllama pull残骸 (*-partial) を検索
-  ansible.builtin.find:
-    paths: "/home/{{ ansible_user }}/.ollama/models/blobs"
-    patterns: "*-partial"
-    file_type: any
-  register: ollama_partial_blobs
-  when: hpc_prune_stale_ollama_models | default(true) | bool
-  tags: [models]
-
-- name: 未完のOllama pull残骸を削除
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ ollama_partial_blobs.files | default([]) }}"
-  when:
-    - hpc_prune_stale_ollama_models | default(true) | bool
-    - ollama_partial_blobs.files | default([]) | length > 0
-  tags: [models]
-
-- name: リスト外のGGUFを検索
-  ansible.builtin.find:
-    paths: "/home/{{ ansible_user }}/models"
-    patterns: "*.gguf"
-  register: gguf_on_disk
-  when: hpc_prune_stale_ollama_models | default(true) | bool
-  tags: [models]
-
-- name: リスト外のGGUFを削除
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ gguf_on_disk.files | default([]) }}"
-  when:
-    - hpc_prune_stale_ollama_models | default(true) | bool
-    - (item.path | basename | regex_replace('\\.gguf$', '')) not in (target_models | selectattr('url', 'defined') | map(attribute='name') | list)
-  tags: [models]
-
-- name: リスト外のModelfileを検索
-  ansible.builtin.find:
-    paths: "/home/{{ ansible_user }}/models"
-    patterns: "Modelfile-*"
-  register: modelfiles_on_disk
-  when: hpc_prune_stale_ollama_models | default(true) | bool
-  tags: [models]
-
-- name: リスト外のModelfileを削除
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ modelfiles_on_disk.files | default([]) }}"
-  when:
-    - hpc_prune_stale_ollama_models | default(true) | bool
-    - (item.path | basename | regex_replace('^Modelfile-', '')) not in (target_models | selectattr('url', 'defined') | map(attribute='name') | list)
-  tags: [models]
-
-- name: 登録用のOllama一時プロセスを確実に掃除
-  ansible.builtin.shell: pkill -u {{ ansible_user }} -f "ollama serve"
-  failed_when: false
-  changed_when: false
-  tags: [models]

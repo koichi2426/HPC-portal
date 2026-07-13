@@ -7,6 +7,9 @@
   roles:
     - common
     - slurm
-    - jupyterhub
+    - postgres
     - apptainer
+    - ollama
+    - litellm
+    - jupyterhub
     - cloudflared

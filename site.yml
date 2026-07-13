@@ -7,9 +7,15 @@
       tags: [common]
     - role: slurm
       tags: [slurm]
-    - role: jupyterhub
-      tags: [jupyterhub]
+    - role: postgres
+      tags: [postgres, litellm]
     - role: apptainer
       tags: [apptainer]
+    - role: ollama
+      tags: [ollama]
+    - role: litellm
+      tags: [litellm]
+    - role: jupyterhub
+      tags: [jupyterhub]
     - role: cloudflared
       tags: [cloudflared]

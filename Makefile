@@ -10,8 +10,8 @@ ANSIBLE      ?= ansible
 PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup check ping deploy deploy-safe cleanup \
-	common slurm jupyterhub apptainer cloudflared models \
+.PHONY: help setup check ping deploy deploy-safe cleanup cleanup-purge-data \
+	common slurm postgres litellm ollama jupyterhub apptainer cloudflared \
 	status gpu cuda services processes
 
 help: ## ターゲット一覧
@@ -43,11 +43,30 @@ deploy-safe: check-inv ## 再起動抑止デプロイ (site_safe.yml)
 cleanup: check-inv ## 環境クリーンアップ (cleanup.yml)
 	$(PB) cleanup.yml
 
+cleanup-purge-data: check-inv ## モデル・DBを含む完全削除（要確認）
+	@printf 'モデル・DBを含むデータを完全削除します。続行するには「削除する」と入力してください: '; \
+	read -r confirm; \
+	if [ "$$confirm" != "削除する" ]; then \
+		echo "中止しました"; \
+		exit 1; \
+	fi
+	$(PB) cleanup.yml
+	$(PB) cleanup_purge_data.yml
+
 common: check-inv ## common ロールのみ
 	$(PB) site.yml --tags common
 
 slurm: check-inv ## slurm ロールのみ
 	$(PB) site.yml --tags slurm
+
+postgres: check-inv ## postgres ロールのみ
+	$(PB) site.yml --tags postgres
+
+litellm: check-inv ## LiteLLM / PostgreSQL ロールのみ
+	$(PB) site.yml --tags litellm
+
+ollama: check-inv ## shared Ollama ロールのみ
+	$(PB) site.yml --tags ollama
 
 jupyterhub: check-inv ## jupyterhub ロールのみ
 	$(PB) site.yml --tags jupyterhub
@@ -58,9 +77,6 @@ apptainer: check-inv ## apptainer ロールのみ
 cloudflared: check-inv ## cloudflared ロールのみ
 	$(PB) site.yml --tags cloudflared
 
-models: check-inv ## LLM / Ollama モデル取得のみ
-	$(PB) site.yml --tags models
-
 status: check-inv ## Slurm ジョブ・ディスク空き
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "squeue; echo '---'; df -h /"
 
@@ -70,8 +86,8 @@ gpu: check-inv ## GPU 一覧・VRAM
 cuda: check-inv ## CUDA Toolkit / nvcc 確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "set -e; echo '=== nvcc (PATH) ==='; (command -v nvcc && nvcc --version) || echo 'nvcc: not in PATH'; echo '=== cuda install roots ==='; ls -d /usr/local/cuda* 2>/dev/null || true; for d in /usr/local/cuda /usr/local/cuda-*; do [ -x \"$$d/bin/nvcc\" ] && echo \"found: $$d/bin/nvcc\" && $$d/bin/nvcc --version; done; echo '=== nvidia-smi ==='; nvidia-smi -L"
 
-services: check-inv ## JupyterHub / Slurm サービス状態
-	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared; journalctl -u jupyterhub -n 30 --no-pager"
+services: check-inv ## JupyterHub / Slurm / LiteLLM / shared Ollama 状態
+	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "echo '--- systemd'; systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; echo '--- squeue'; squeue || true; echo '--- hpc-ollama'; if [ -x /usr/local/sbin/hpc-ollama ]; then /usr/local/sbin/hpc-ollama status || true; else echo 'hpc-ollama: not installed'; fi; echo '--- jupyterhub log'; journalctl -u jupyterhub -n 30 --no-pager; echo '--- litellm log'; journalctl -u litellm -n 20 --no-pager"
 
-processes: check-inv ## ユーザーの残存プロセス確認
-	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "pgrep -au \$$(whoami) -f 'open_webui|ollama|apptainer|jupyter' || true"
+processes: check-inv ## 実行ユーザー / hpc-ollama の残存プロセス確認
+	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "echo '--- ansible user'; pgrep -au \$$(whoami) -f 'open_webui|ollama|apptainer|jupyter' || true; echo '--- hpc-ollama'; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"

@@ -15,48 +15,90 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 ---
 
 ### 2. System Architecture
-The following sequence diagram shows the process interactions and port usage within a single OS.
+
+JupyterHub, Slurm, shared Ollama, and LiteLLM run together on one node. External access goes through Cloudflare Tunnel only; Ollama and PostgreSQL remain internal to the host.
+
+#### Overview
+
+```mermaid
+flowchart LR
+    User[User]
+    CF[Cloudflare Tunnel]
+
+    subgraph Host[Single node]
+        Proxy[configurable-http-proxy<br/>public entry :8000]
+        JHub[JupyterHub<br/>Portal]
+        Slurm[Slurm]
+        Apps[Per-user applications<br/>JupyterLab / Open WebUI]
+        LiteLLM[LiteLLM<br/>API Gateway]
+        Ollama[Shared Ollama]
+        DB[(PostgreSQL)]
+        Models[(Shared model storage)]
+    end
+
+    User --> CF
+    CF -->|Hub and application URLs| Proxy
+    Proxy --> JHub
+    Proxy --> Apps
+    JHub -->|Register dynamic routes| Proxy
+    JHub -->|Submit jobs| Slurm
+    Slurm --> Apps
+    Apps -->|Per-user Virtual Key| LiteLLM
+    CF -->|LLM API and admin UI| LiteLLM
+    LiteLLM <--> DB
+    LiteLLM --> Ollama
+    Ollama --> Models
+```
+
+#### Startup and inference flow
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant User as 👤 User (Browser)
-    participant CF as 🚀 cloudflared (*.<base-domain>)
+    participant User as User (browser)
+    participant CF as Cloudflare Tunnel
 
-    box "Host OS (gx10-ac12)"
-        participant Proxy as 🌐 Proxy (CHP entry)<br/>(Port: 8000)
-        participant JHub as 🧡 JupyterHub (Hub internal API)<br/>(Port: 8081)
-        participant SlurmC as 👮 slurmctld<br/>(Port: 6817)
-        participant SlurmD as 🖥️ slurmd<br/>(Port: 6818)
+    box "Single node"
+        participant Proxy as configurable-http-proxy<br/>public entry: 8000
+        participant JHub as JupyterHub / Portal<br/>Hub internal: 8081
+        participant Slurm as Slurm<br/>slurmctld / slurmd
+        participant App as Per-user Slurm job<br/>JupyterLab / Open WebUI
+        participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
+        participant Ollama as Shared Ollama Slurm job<br/>127.0.0.1:11434
+        participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
 
-    box "Isolated Container"
-        participant App as 📦 App (JOBID: 4)<br/>(Port: dynamic, e.g. 20004)
+    Note over User,App: Phase 1: Start an application from the portal
+    User->>CF: Access a Hub or app URL
+    CF->>Proxy: Forward Hub and job wildcard routes
+    Proxy->>JHub: Forward login and dashboard traffic
+    JHub->>User: Display login and dashboard
+    User->>JHub: Start JupyterLab or Open WebUI
+    JHub->>Slurm: Submit a per-user job with sbatch
+    Slurm->>App: Start an Apptainer container
+    loop Wait until ready
+        JHub->>App: Probe the dynamic port
     end
+    JHub->>Proxy: Register the job URL and dynamic port mapping
+    Proxy->>App: Forward the user's application traffic
 
-    Note over User, JHub: Phase 1: Application startup flow
-    User->>CF: Access https://<hub-subdomain>.<base-domain>
-    CF->>Proxy: Forward request to port 8000
-    Proxy->>JHub: Show login and dashboard
-    User->>JHub: Select app and click "Start"
-    JHub->>SlurmC: Execute sbatch (issue JOBID 4)
-    SlurmC->>SlurmD: Start job command (6817 -> 6818)
-    SlurmD->>App: Start via apptainer exec (dynamic port)
+    Note over JHub,DB: Phase 2: Per-user Open WebUI authorization
+    JHub->>LiteLLM: Check or issue the user's Virtual Key
+    LiteLLM->>DB: Store key, usage, and configuration
+    JHub->>App: Start Open WebUI with the active per-user key
 
-    Note over JHub, App: Phase 2: Internal connectivity and URL mapping
-    loop Wait until app is ready
-        JHub->>App: Probe localhost:<dynamic-port>
-    end
-    Note right of JHub: Decide subdomain from JOBID "4"
-    JHub->>Proxy: Sync route "job4.<base-domain>"<br/>to localhost:<dynamic-port>
-    Note right of JHub: Routes are re-synced on startup/recovery
+    Note over User,Ollama: Phase 3: Send a model request
+    User->>App: Send a message in Open WebUI
+    App->>LiteLLM: OpenAI-compatible API with per-user Virtual Key
+    LiteLLM->>DB: Check and record key status and usage
+    LiteLLM->>Ollama: Request model inference
+    Ollama-->>LiteLLM: Inference result
+    LiteLLM-->>App: OpenAI-compatible response
+    App-->>User: Display the response
 
-    Note over User, App: Phase 3: Access via dedicated subdomain
-    User->>JHub: Click "job4" link in dashboard
-    User->>CF: Access https://job4.<base-domain>
-    CF->>Proxy: Wildcard forward (*.<base-domain> -> 8000)
-    Proxy->>App: Match Host: job4.<base-domain><br/>and forward to dynamic port
-    App-->>User: Render app screen transparently (new tab)
+    Note over User,LiteLLM: External API use
+    User->>CF: Access the LLM API or admin UI
+    CF->>LiteLLM: Forward API or admin UI traffic
 ```
 
 ---
@@ -74,7 +116,7 @@ sequenceDiagram
    ```
 2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `inventory/production.ini`.
 
-   - Models (`~/models`), Ollama (`~/.ollama`), and Slurm jobs run under that home directory
+   - Slurm-launched app data lives under that home directory. Shared Ollama models live in `/srv/ollama/models`
    - **SSH public-key login** from your control machine
    - **Passwordless sudo** is required (`site.yml` uses `become: true`)
 
@@ -105,8 +147,9 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make check` | Dry run (`--check --diff`) |
 | `make deploy` | Full deploy (`site.yml`) |
 | `make deploy-safe` | Deploy without service restarts (`site_safe.yml`) |
-| `make cleanup` | Cleanup playbook |
-| `make jupyterhub` / `make slurm` / `make models` | Single role or tag |
+| `make cleanup` | Cleanup services and config while keeping model/DB data |
+| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
+| `make jupyterhub` / `make slurm` / `make ollama` | Single role or tag |
 | `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
 
 Override inventory: `make deploy INV=inventory/staging.ini`
@@ -121,6 +164,12 @@ make deploy
 
 ```bash
 make cleanup
+```
+
+`make cleanup` removes services and configuration but keeps data such as `/srv/ollama/models` and the LiteLLM database. Use the explicit purge target only when you want to delete model and DB data as well.
+
+```bash
+make cleanup-purge-data
 ```
 
 #### 🔍 Remote diagnostics
