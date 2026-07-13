@@ -40,7 +40,9 @@ from .users import (
     _hpc_is_portal_admin,
     _hpc_linux_users_snapshot,
     _hpc_run_cmd,
+    _hpc_set_linux_display_name,
     _hpc_set_linux_password,
+    _hpc_validate_display_name,
     _hpc_validate_password,
     _hpc_validate_username,
     _hpc_verify_linux_password,
@@ -331,9 +333,18 @@ class HpcAdminUsersApiHandler(BaseHandler):
             err = _hpc_validate_username(username)
             if err:
                 return self._api_error(400, err)
+            display_name = str(body.get("display_name") or "").strip()
+            err = _hpc_validate_display_name(display_name)
+            if err:
+                return self._api_error(400, err)
             initial_password = _hpc_generate_password()
             grant_sudo = bool(body.get("sudo", HPC_PORTAL_GRANT_SUDO))
-            err = _hpc_create_linux_user(username, initial_password, grant_sudo)
+            err = _hpc_create_linux_user(
+                username,
+                initial_password,
+                grant_sudo,
+                display_name,
+            )
             if err:
                 return self._api_error(400, err)
             api_key, key_warning = _hpc_litellm_generate_key(username)
@@ -349,6 +360,16 @@ class HpcAdminUsersApiHandler(BaseHandler):
             if key_warning:
                 body["warning"] = "API key 未発行: " + key_warning
             self.write(body)
+            return
+
+        if action == "display_name":
+            if not username:
+                return self._api_error(400, "username が必要です")
+            display_name = str(body.get("display_name") or "").strip()
+            err = _hpc_set_linux_display_name(username, display_name)
+            if err:
+                return self._api_error(400, err)
+            self.write({"ok": True, "username": username, "display_name": display_name})
             return
 
         if action == "delete":

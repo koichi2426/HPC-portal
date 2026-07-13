@@ -1,4 +1,4 @@
-"""Linuxユーザーの検証、作成、削除、パスワード変更を提供する。"""
+"""Linuxユーザーの検証、作成、削除、表示名・パスワード変更を提供する。"""
 
 from .common import (
     HPC_PORTAL_ADMIN_USERS,
@@ -15,6 +15,7 @@ from .common import (
 
 _HPC_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
 _HPC_NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/bin/false", "/sbin/nologin"}
+_HPC_DISPLAY_NAME_MAX_LENGTH = 80
 _HPC_RANDOM_PASSWORD_LENGTH = 12
 _HPC_RANDOM_PASSWORD_UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _HPC_RANDOM_PASSWORD_LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
@@ -24,6 +25,7 @@ _HPC_RANDOM_PASSWORD_ALPHABET = (
     + _HPC_RANDOM_PASSWORD_LOWERCASE
     + _HPC_RANDOM_PASSWORD_DIGITS
 )
+
 
 def _hpc_is_portal_admin(user) -> bool:
     """ログインユーザーがポータル管理者か判定する。
@@ -70,6 +72,18 @@ def _hpc_validate_password(password: str) -> str | None:
     return None
 
 
+def _hpc_validate_display_name(display_name: str) -> str | None:
+    """Linux GECOS欄へ保存する表示名を検証する。"""
+    value = (display_name or "").strip()
+    if len(value) > _HPC_DISPLAY_NAME_MAX_LENGTH:
+        return f"表示名は{_HPC_DISPLAY_NAME_MAX_LENGTH}文字以内にしてください"
+    if any(separator in value for separator in (":", ",")) or any(
+        not char.isprintable() for char in value
+    ):
+        return "表示名にコロン、カンマ、制御文字は使用できません"
+    return None
+
+
 def _hpc_generate_password() -> str:
     """英大文字・英小文字・数字を各1文字以上含む12文字のパスワードを生成する。"""
     while True:
@@ -89,7 +103,7 @@ def _hpc_linux_users_snapshot() -> list[dict]:
     """ポータル管理対象のLinuxユーザー一覧を取得する。
 
     Returns:
-        ユーザー名、UID、ホーム、シェル、保護状態を含む辞書の一覧。
+        ユーザー名、表示名、UID、ホーム、シェル、保護状態を含む辞書の一覧。
     """
     rows = []
     for entry in pwd.getpwall():
@@ -101,6 +115,7 @@ def _hpc_linux_users_snapshot() -> list[dict]:
             {
                 "username": entry.pw_name,
                 "uid": entry.pw_uid,
+                "display_name": entry.pw_gecos.split(",", 1)[0].strip(),
                 "home": entry.pw_dir,
                 "shell": entry.pw_shell,
                 "protected": entry.pw_name in HPC_PORTAL_PROTECTED_USERS,
@@ -160,25 +175,38 @@ def _hpc_ensure_user_home(username: str) -> str | None:
     return None
 
 
-def _hpc_create_linux_user(username: str, password: str, grant_sudo: bool) -> str | None:
+def _hpc_create_linux_user(
+    username: str,
+    password: str,
+    grant_sudo: bool,
+    display_name: str = "",
+) -> str | None:
     """Linuxユーザーを作成して初期パスワードを設定する。
 
     Args:
         username: 作成するLinuxユーザー名。
         password: 設定する初期パスワード。
         grant_sudo: sudoグループへ追加するか。
+        display_name: 管理画面へ表示する任意の名前。
 
     Returns:
         正常ならNone、失敗時はエラーメッセージ。
     """
+    display_name = (display_name or "").strip()
+    display_name_err = _hpc_validate_display_name(display_name)
+    if display_name_err:
+        return display_name_err
     try:
         pwd.getpwnam(username)
         return "ユーザーは既に存在します"
     except KeyError:
         pass
-    cmd = ["useradd", "-m", "-s", "/bin/bash", username]
+    cmd = ["useradd", "-m", "-s", "/bin/bash"]
+    if display_name:
+        cmd.extend(["-c", display_name])
     if grant_sudo and HPC_PORTAL_GRANT_SUDO:
-        cmd[1:1] = ["-G", HPC_PORTAL_SUDO_GROUP]
+        cmd.extend(["-G", HPC_PORTAL_SUDO_GROUP])
+    cmd.append(username)
     result = _hpc_run_cmd(cmd)
     if result.returncode != 0:
         return (result.stderr or result.stdout or "useradd failed").strip()
@@ -189,6 +217,24 @@ def _hpc_create_linux_user(username: str, password: str, grant_sudo: bool) -> st
     err = _hpc_ensure_user_home(username)
     if err:
         return err
+    return None
+
+
+def _hpc_set_linux_display_name(username: str, display_name: str) -> str | None:
+    """Linux GECOS欄の表示名を設定または削除する。"""
+    display_name = (display_name or "").strip()
+    err = _hpc_validate_display_name(display_name)
+    if err:
+        return err
+    try:
+        entry = pwd.getpwnam(username)
+    except KeyError:
+        return "ユーザーが見つかりません"
+    if entry.pw_uid < HPC_PORTAL_USER_MIN_UID or entry.pw_shell in _HPC_NOLOGIN_SHELLS:
+        return "このユーザーはポータルの管理対象ではありません"
+    result = _hpc_run_cmd(["usermod", "-c", display_name, username])
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or "表示名の変更に失敗しました").strip()
     return None
 
 

@@ -31,6 +31,10 @@
         <input class="gx10-admin-input" id="new-username" name="username" pattern="[a-z0-9][a-z0-9_-]{2,31}" required placeholder="例: 22rd092" autocomplete="off">
       </div>
       <div>
+        <label class="gx10-admin-label" for="new-display-name">表示名（任意）</label>
+        <input class="gx10-admin-input" id="new-display-name" name="display_name" maxlength="80" placeholder="例: 山田 太郎" autocomplete="off">
+      </div>
+      <div>
         <label class="gx10-admin-label" style="margin-bottom:10px;">権限</label>
         <label class="hpc-row" style="font-size:13px;">
           <input type="checkbox" id="new-sudo" name="sudo" {% if grant_sudo_default %}checked{% endif %}>
@@ -62,7 +66,29 @@
   <div class="gx10-admin-card">
     <div class="hpc-row-between" style="margin-bottom:12px;">
       <div class="hpc-section-title">登録ユーザー（UID ≥ 1000）</div>
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
+      <div class="hpc-user-list-actions">
+        <details class="hpc-sort-dropdown" id="user-sort-dropdown">
+          <summary class="hpc-sort-trigger" aria-label="ユーザーの並べ替えメニューを開く">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M6 3v14M3.5 5.5 6 3l2.5 2.5M14 17V3m-2.5 11.5L14 17l2.5-2.5"></path>
+            </svg>
+            <span>並べ替え</span>
+            <span class="hpc-sort-caret" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="hpc-sort-panel">
+            <div aria-label="並べ替え項目">
+              <button type="button" class="hpc-sort-option selected" data-sort-key="username" aria-pressed="true">ユーザー名順</button>
+              <button type="button" class="hpc-sort-option" data-sort-key="created" aria-pressed="false">作成順</button>
+            </div>
+            <div class="hpc-sort-divider"></div>
+            <div aria-label="並べ替え方向">
+              <button type="button" class="hpc-sort-option selected" data-sort-direction="asc" aria-pressed="true">昇順</button>
+              <button type="button" class="hpc-sort-option" data-sort-direction="desc" aria-pressed="false">降順</button>
+            </div>
+          </div>
+        </details>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
+      </div>
     </div>
     <div class="hpc-muted" style="margin:-4px 0 12px; font-size:13px;">
       パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。
@@ -72,6 +98,7 @@
         <thead>
           <tr>
             <th>ユーザー名</th>
+            <th>表示名</th>
             <th>UID</th>
             <th>ホーム</th>
             <th>操作</th>
@@ -79,10 +106,14 @@
         </thead>
         <tbody id="users-tbody">
           {% for u in users %}
-          <tr data-username="{{ u.username }}">
+          <tr data-username="{{ u.username }}" data-uid="{{ u.uid }}">
             <td>
               <strong>{{ u.username }}</strong>
               {% if u.protected %}<span class="gx10-admin-badge" style="margin-left:6px;">保護</span>{% endif %}
+            </td>
+            <td>
+              <span class="hpc-display-name-value">{{ u.display_name or '—' }}</span>
+              <button type="button" class="hpc-inline-edit-btn hpc-display-name-btn" data-username="{{ u.username }}" data-display-name="{{ u.display_name }}">変更</button>
             </td>
             <td>{{ u.uid }}</td>
             <td><code>{{ u.home }}</code></td>
@@ -105,12 +136,30 @@
   </div>
 </div>
 
+<div id="hpc-display-name-modal" class="gx10-admin-modal" role="dialog" aria-modal="true" aria-labelledby="hpc-display-name-modal-title" hidden>
+  <div class="gx10-admin-modal-inner">
+    <div class="hpc-section-title" id="hpc-display-name-modal-title" style="margin-bottom:12px;"></div>
+    <form id="hpc-display-name-form">
+      <label class="gx10-admin-label" for="hpc-display-name-input">表示名</label>
+      <input class="gx10-admin-input" id="hpc-display-name-input" maxlength="80" autocomplete="off" placeholder="例: 山田 太郎">
+      <div class="hpc-help" style="margin-top:6px;">空欄で保存すると表示名を削除します。</div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="hpc-display-name-cancel">キャンセル</button>
+        <button type="submit" class="gx10-admin-btn gx10-admin-btn-primary" id="hpc-display-name-save">保存</button>
+      </div>
+    </form>
+    <div id="hpc-display-name-error" class="gx10-admin-msg" aria-live="polite"></div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block script %}
 <script>
 window.HPC_XSRF = {{ xsrf_token|tojson }};
 (function () {
+  var sortKey = "username";
+  var sortDirection = "asc";
   function readXsrfCookie() {
     var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
     return m ? decodeURIComponent(m[1]) : "";
@@ -152,7 +201,112 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     box.className = "gx10-admin-keybox visible";
     box.scrollIntoView({behavior: "smooth", block: "nearest"});
   }
+  function applyUserSort() {
+    var tbody = document.getElementById("users-tbody");
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+    rows.sort(function (a, b) {
+      var result;
+      if (sortKey === "created") {
+        result = Number(a.getAttribute("data-uid")) - Number(b.getAttribute("data-uid"));
+      } else {
+        result = (a.getAttribute("data-username") || "").localeCompare(
+          b.getAttribute("data-username") || "",
+          undefined,
+          {numeric: true, sensitivity: "base"}
+        );
+      }
+      return sortDirection === "desc" ? -result : result;
+    });
+    rows.forEach(function (row) { tbody.appendChild(row); });
+  }
+  function updateSortOptions() {
+    document.querySelectorAll("[data-sort-key]").forEach(function (button) {
+      var selected = button.getAttribute("data-sort-key") === sortKey;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    document.querySelectorAll("[data-sort-direction]").forEach(function (button) {
+      var selected = button.getAttribute("data-sort-direction") === sortDirection;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+  }
+  document.querySelectorAll(".hpc-sort-option").forEach(function (button) {
+    button.onclick = function () {
+      if (button.hasAttribute("data-sort-key")) {
+        sortKey = button.getAttribute("data-sort-key");
+      }
+      if (button.hasAttribute("data-sort-direction")) {
+        sortDirection = button.getAttribute("data-sort-direction");
+      }
+      updateSortOptions();
+      applyUserSort();
+      document.getElementById("user-sort-dropdown").open = false;
+    };
+  });
+  document.addEventListener("click", function (event) {
+    var dropdown = document.getElementById("user-sort-dropdown");
+    if (dropdown.open && !dropdown.contains(event.target)) dropdown.open = false;
+  });
+  var displayNameModal = document.getElementById("hpc-display-name-modal");
+  var displayNameForm = document.getElementById("hpc-display-name-form");
+  var displayNameInput = document.getElementById("hpc-display-name-input");
+  var displayNameError = document.getElementById("hpc-display-name-error");
+  var displayNameUser = "";
+  function closeDisplayNameModal() {
+    displayNameModal.hidden = true;
+    displayNameUser = "";
+    displayNameError.textContent = "";
+    displayNameError.className = "gx10-admin-msg";
+  }
+  function openDisplayNameModal(username, displayName) {
+    displayNameUser = username;
+    document.getElementById("hpc-display-name-modal-title").textContent = username + " の表示名";
+    displayNameInput.value = displayName || "";
+    displayNameError.textContent = "";
+    displayNameError.className = "gx10-admin-msg";
+    displayNameModal.hidden = false;
+    displayNameInput.focus();
+    displayNameInput.select();
+  }
+  document.getElementById("hpc-display-name-cancel").onclick = closeDisplayNameModal;
+  displayNameModal.onclick = function (event) {
+    if (event.target === displayNameModal) closeDisplayNameModal();
+  };
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !displayNameModal.hidden) closeDisplayNameModal();
+  });
+  displayNameForm.onsubmit = function (event) {
+    event.preventDefault();
+    if (!displayNameUser) return;
+    var username = displayNameUser;
+    var button = document.getElementById("hpc-display-name-save");
+    button.disabled = true;
+    postAction({
+      action: "display_name",
+      username: username,
+      display_name: displayNameInput.value.trim()
+    }).then(function () {
+      closeDisplayNameModal();
+      showMsg(document.getElementById("list-msg"), username + " の表示名を更新しました", true);
+      return reloadUsers().catch(function (error) {
+        showMsg(document.getElementById("list-msg"), "表示名は更新しましたが、一覧を再読み込みできませんでした: " + error.message, false);
+      });
+    }).catch(function (error) {
+      showMsg(displayNameError, error.message, false);
+    }).finally(function () {
+      button.disabled = false;
+    });
+  };
   function bindRowButtons() {
+    document.querySelectorAll(".hpc-display-name-btn").forEach(function (btn) {
+      btn.onclick = function () {
+        openDisplayNameModal(
+          btn.getAttribute("data-username"),
+          btn.getAttribute("data-display-name") || ""
+        );
+      };
+    });
     document.querySelectorAll(".hpc-del-btn").forEach(function (btn) {
       btn.onclick = function () {
         var name = btn.getAttribute("data-username");
@@ -238,26 +392,83 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
   }
   function reloadUsers() {
     return fetch(apiUrl(), { credentials: "same-origin", headers: apiHeaders() })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          if (!r.ok) throw new Error(body.error || body.message || ("HTTP " + r.status));
+          return body;
+        });
+      })
       .then(function (data) {
         var tbody = document.getElementById("users-tbody");
         tbody.innerHTML = "";
         (data.users || []).forEach(function (u) {
           var tr = document.createElement("tr");
           tr.setAttribute("data-username", u.username);
-	        var ops = u.protected
-	            ? '<span class="hpc-muted" style="font-size:12px;">—</span>'
-	            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード再発行</button>'
-              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '">LLM API無効化</button>'
-              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '">LLM API有効化</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '">削除</button>';
-          tr.innerHTML = '<td><strong>' + u.username + '</strong>'
-            + (u.protected ? ' <span class="gx10-admin-badge" style="margin-left:6px;">保護</span>' : '') + '</td>'
-            + '<td>' + u.uid + '</td>'
-            + '<td><code>' + u.home + '</code></td>'
-            + '<td>' + ops + '</td>';
+          tr.setAttribute("data-uid", String(u.uid));
+
+          var usernameCell = document.createElement("td");
+          var usernameStrong = document.createElement("strong");
+          usernameStrong.textContent = u.username;
+          usernameCell.appendChild(usernameStrong);
+          if (u.protected) {
+            var badge = document.createElement("span");
+            badge.className = "gx10-admin-badge";
+            badge.style.marginLeft = "6px";
+            badge.textContent = "保護";
+            usernameCell.appendChild(badge);
+          }
+          tr.appendChild(usernameCell);
+
+          var displayNameCell = document.createElement("td");
+          var displayNameValue = document.createElement("span");
+          displayNameValue.className = "hpc-display-name-value";
+          displayNameValue.textContent = u.display_name || "—";
+          displayNameCell.appendChild(displayNameValue);
+          var displayNameButton = document.createElement("button");
+          displayNameButton.type = "button";
+          displayNameButton.className = "hpc-inline-edit-btn hpc-display-name-btn";
+          displayNameButton.setAttribute("data-username", u.username);
+          displayNameButton.setAttribute("data-display-name", u.display_name || "");
+          displayNameButton.textContent = "変更";
+          displayNameCell.appendChild(displayNameButton);
+          tr.appendChild(displayNameCell);
+
+          var uidCell = document.createElement("td");
+          uidCell.textContent = String(u.uid);
+          tr.appendChild(uidCell);
+
+          var homeCell = document.createElement("td");
+          var homeCode = document.createElement("code");
+          homeCode.textContent = u.home;
+          homeCell.appendChild(homeCode);
+          tr.appendChild(homeCell);
+
+          var operationCell = document.createElement("td");
+          if (u.protected) {
+            var protectedMark = document.createElement("span");
+            protectedMark.className = "hpc-muted";
+            protectedMark.style.fontSize = "12px";
+            protectedMark.textContent = "—";
+            operationCell.appendChild(protectedMark);
+          } else {
+            [
+              ["パスワード再発行", "gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn"],
+              ["LLM API無効化", "gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn"],
+              ["LLM API有効化", "gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn"],
+              ["削除", "gx10-admin-btn gx10-admin-btn-danger hpc-del-btn"]
+            ].forEach(function (definition) {
+              var actionButton = document.createElement("button");
+              actionButton.type = "button";
+              actionButton.className = definition[1];
+              actionButton.setAttribute("data-username", u.username);
+              actionButton.textContent = definition[0];
+              operationCell.appendChild(actionButton);
+            });
+          }
+          tr.appendChild(operationCell);
           tbody.appendChild(tr);
         });
+        applyUserSort();
         bindRowButtons();
       });
   }
@@ -291,6 +502,7 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     postAction({
       action: "create",
       username: document.getElementById("new-username").value.trim().toLowerCase(),
+      display_name: document.getElementById("new-display-name").value.trim(),
       sudo: document.getElementById("new-sudo").checked
     }).then(function (body) {
       showCredentials(body.username, body.initial_password, body.api_key || "");
@@ -315,6 +527,8 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
       failOp(e.message);
     });
   };
+  applyUserSort();
+  updateSortOptions();
   bindRowButtons();
 })();
 </script>
