@@ -204,10 +204,12 @@
     group: root
     mode: '0644'
 
-- name: HPCポータル共通CSSを配置
-  ansible.builtin.copy:
-    src: hpc-portal.css
+- name: HPCポータルCSS断片を結合して配置
+  ansible.builtin.assemble:
+    src: hpc-portal-css
     dest: /etc/jupyterhub/static/hpc-portal.css
+    remote_src: false
+    regexp: '^[0-9]+-.*\.css$'
     owner: root
     group: root
     mode: '0644'

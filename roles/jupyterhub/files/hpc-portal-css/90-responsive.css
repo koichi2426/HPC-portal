@@ -1,0 +1,19 @@
+@media (max-width: 720px) {
+  .resource-grid,
+  .gx10-resource-grid,
+  .hpc-form-grid-2,
+  .hpc-form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .hpc-page-header,
+  .hpc-heading-row,
+  .hpc-row-between {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hpc-user-list-actions {
+    width: 100%;
+  }
+}

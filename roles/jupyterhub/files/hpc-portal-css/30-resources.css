@@ -1,0 +1,100 @@
+.gx10-resource-grid,
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.gx10-app-detail-page .gx10-resource-grid,
+.gx10-resource-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.gx10-resource-meter,
+.resource-meter,
+.gx10-model-item {
+  background: var(--hpc-surface);
+  border: 1px solid var(--hpc-border);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.resource-meter {
+  padding: 12px;
+}
+
+.gx10-meter-head,
+.meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.meter-head {
+  margin-bottom: 10px;
+  font-size: 0.78rem;
+}
+
+.gx10-meter-status,
+.meter-status,
+.hpc-status-ok {
+  color: var(--hpc-success);
+  font-weight: 700;
+}
+
+.gx10-meter-track,
+.meter-track {
+  height: 10px;
+  background: var(--hpc-border-muted);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.meter-track {
+  height: 12px;
+}
+
+.gx10-meter-fill,
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--hpc-meter-fill);
+}
+
+.gx10-meter-numbers,
+.meter-numbers {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: 11px;
+}
+
+.meter-numbers {
+  margin-top: 8px;
+  font-size: 0.72rem;
+}
+
+[data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-live {
+  color: var(--hpc-success);
+  font-weight: 600;
+}
+
+[data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-stale {
+  color: var(--hpc-danger);
+  font-weight: 600;
+}
+
+[data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading {
+  color: var(--hpc-warning);
+}
+
+[data-hpc-resource-meter].hpc-resource-refreshed .gx10-meter-fill,
+[data-hpc-resource-meter].hpc-resource-refreshed .meter-fill {
+  filter: brightness(1.12);
+  transition: width 0.35s ease, filter 0.2s ease;
+}
+

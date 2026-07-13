@@ -1,0 +1,52 @@
+:root {
+  --hpc-bg: #ffffff;
+  --hpc-surface: #ffffff;
+  --hpc-surface-muted: #f6f8fa;
+  --hpc-surface-subtle: #eef2f6;
+  --hpc-border: #d0d7de;
+  --hpc-border-muted: #d8dee4;
+  --hpc-text: #24292f;
+  --hpc-muted: #57606a;
+  --hpc-code-bg: #f6f8fa;
+  --hpc-link: #0969da;
+  --hpc-primary: #1f6feb;
+  --hpc-primary-hover: #1a5fd0;
+  --hpc-success: #1a7f37;
+  --hpc-warning: #9a6700;
+  --hpc-danger: #cf222e;
+  --hpc-success-bg: rgba(26, 127, 55, 0.10);
+  --hpc-warning-bg: rgba(154, 103, 0, 0.10);
+  --hpc-danger-bg: rgba(207, 34, 46, 0.10);
+  --hpc-info-bg: rgba(9, 105, 218, 0.08);
+  --hpc-hover: rgba(9, 105, 218, 0.08);
+  --hpc-meter-fill: linear-gradient(90deg, #00c2d6, #2f81f7, #2da44e);
+  --hpc-modal-backdrop: rgba(31, 35, 40, 0.45);
+}
+
+html[data-bs-theme="dark"],
+body[data-bs-theme="dark"],
+body[data-theme="dark"] {
+  --hpc-bg: #0d1117;
+  --hpc-surface: #0d1117;
+  --hpc-surface-muted: #161b22;
+  --hpc-surface-subtle: #21262d;
+  --hpc-border: #30363d;
+  --hpc-border-muted: #21262d;
+  --hpc-text: #c9d1d9;
+  --hpc-muted: #8b949e;
+  --hpc-code-bg: #010409;
+  --hpc-link: #58a6ff;
+  --hpc-primary: #1f6feb;
+  --hpc-primary-hover: #388bfd;
+  --hpc-success: #3fb950;
+  --hpc-warning: #e3b341;
+  --hpc-danger: #f85149;
+  --hpc-success-bg: rgba(63, 185, 80, 0.12);
+  --hpc-warning-bg: rgba(227, 179, 65, 0.12);
+  --hpc-danger-bg: rgba(248, 81, 73, 0.12);
+  --hpc-info-bg: rgba(88, 166, 255, 0.10);
+  --hpc-hover: rgba(88, 166, 255, 0.08);
+  --hpc-meter-fill: linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7);
+  --hpc-modal-backdrop: rgba(0, 0, 0, 0.55);
+}
+
