@@ -147,6 +147,14 @@
     group: root
     mode: '0644'
 
+- name: account_password.htmlを配置
+  ansible.builtin.template:
+    src: account_password.html.j2
+    dest: /etc/jupyterhub/templates/account_password.html
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: llm_api.htmlを配置
   ansible.builtin.template:
     src: llm_api.html.j2

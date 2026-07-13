@@ -9,11 +9,21 @@ from .common import (
     os,
     pwd,
     re,
+    secrets,
     subprocess,
 )
 
 _HPC_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
 _HPC_NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/bin/false", "/sbin/nologin"}
+_HPC_RANDOM_PASSWORD_LENGTH = 12
+_HPC_RANDOM_PASSWORD_UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_HPC_RANDOM_PASSWORD_LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
+_HPC_RANDOM_PASSWORD_DIGITS = "0123456789"
+_HPC_RANDOM_PASSWORD_ALPHABET = (
+    _HPC_RANDOM_PASSWORD_UPPERCASE
+    + _HPC_RANDOM_PASSWORD_LOWERCASE
+    + _HPC_RANDOM_PASSWORD_DIGITS
+)
 
 def _hpc_is_portal_admin(user) -> bool:
     """ログインユーザーがポータル管理者か判定する。
@@ -55,7 +65,24 @@ def _hpc_validate_password(password: str) -> str | None:
     """
     if not password or len(password) < 8:
         return "パスワードは8文字以上にしてください"
+    if any(char in password for char in (":", "\n", "\r")):
+        return "パスワードにコロンや改行は使用できません"
     return None
+
+
+def _hpc_generate_password() -> str:
+    """英大文字・英小文字・数字を各1文字以上含む12文字のパスワードを生成する。"""
+    while True:
+        password = "".join(
+            secrets.choice(_HPC_RANDOM_PASSWORD_ALPHABET)
+            for _ in range(_HPC_RANDOM_PASSWORD_LENGTH)
+        )
+        if (
+            any(char in _HPC_RANDOM_PASSWORD_UPPERCASE for char in password)
+            and any(char in _HPC_RANDOM_PASSWORD_LOWERCASE for char in password)
+            and any(char in _HPC_RANDOM_PASSWORD_DIGITS for char in password)
+        ):
+            return password
 
 
 def _hpc_linux_users_snapshot() -> list[dict]:
@@ -201,6 +228,9 @@ def _hpc_set_linux_password(username: str, password: str) -> str | None:
     Returns:
         正常ならNone、失敗時はエラーメッセージ。
     """
+    password_err = _hpc_validate_password(password)
+    if password_err:
+        return password_err
     try:
         pwd.getpwnam(username)
     except KeyError:
@@ -208,6 +238,19 @@ def _hpc_set_linux_password(username: str, password: str) -> str | None:
     result = _hpc_run_cmd(["chpasswd"], input_text=f"{username}:{password}")
     if result.returncode != 0:
         return (result.stderr or result.stdout or "chpasswd failed").strip()
-    return _hpc_ensure_user_home(username)
+    return None
 
 
+def _hpc_verify_linux_password(
+    username: str, password: str, service: str = "login"
+) -> str | None:
+    """PAMでログイン中ユーザーの現在のパスワードを確認する。"""
+    if not password:
+        return "現在のパスワードを入力してください"
+    try:
+        import pamela
+
+        pamela.authenticate(username, password, service=service)
+    except Exception:
+        return "現在のパスワードが正しくありません"
+    return None

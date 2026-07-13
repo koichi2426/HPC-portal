@@ -7,8 +7,11 @@ from .common import (
     BaseHandler,
     HPC_LITELLM_PUBLIC_BASE_URL,
     HPC_PORTAL_GRANT_SUDO,
+    HPC_PORTAL_PROTECTED_USERS,
     c,
     json,
+    logging,
+    time,
     url_path_join,
     web,
 )
@@ -33,13 +36,29 @@ from .resources import (
 from .users import (
     _hpc_create_linux_user,
     _hpc_delete_linux_user,
+    _hpc_generate_password,
     _hpc_is_portal_admin,
     _hpc_linux_users_snapshot,
     _hpc_run_cmd,
     _hpc_set_linux_password,
     _hpc_validate_password,
     _hpc_validate_username,
+    _hpc_verify_linux_password,
 )
+
+HPC_PASSWORD_LOG = logging.getLogger("jupyterhub.hpc-password")
+
+
+def _hpc_log_password_success(actor: str, target: str) -> None:
+    """パスワードを含めず、変更・再発行の成功を監査ログへ記録する。"""
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    HPC_PASSWORD_LOG.info(
+        "timestamp=%s actor=%s target=%s",
+        timestamp,
+        actor,
+        target,
+    )
+
 
 class HpcAdminUsersPageHandler(BaseHandler):
     """Linux ユーザー管理 UI（/hub/admin/users）"""
@@ -157,6 +176,63 @@ class HpcLlmApiApiHandler(BaseHandler):
         })
 
 
+class HpcPasswordPageHandler(BaseHandler):
+    """ログイン中ユーザー本人のパスワード変更画面。"""
+
+    @web.authenticated
+    async def get(self):
+        """本人用パスワード変更画面を表示する。"""
+        self.set_header("Cache-Control", "no-store")
+        xsrf_token = self.xsrf_token
+        if isinstance(xsrf_token, bytes):
+            xsrf_token = xsrf_token.decode("utf-8", errors="replace")
+        html_out = await self.render_template(
+            "account_password.html",
+            xsrf_token=xsrf_token,
+        )
+        self.finish(html_out)
+
+
+class HpcPasswordApiHandler(BaseHandler):
+    """ログイン中ユーザー本人のパスワード変更API。"""
+
+    def _api_error(self, status: int, message: str):
+        self.set_status(status)
+        self.set_header("Content-Type", "application/json; charset=UTF-8")
+        self.finish({"error": message})
+
+    @web.authenticated
+    async def post(self):
+        """現在のパスワードを確認して本人のLinuxパスワードを変更する。"""
+        self.set_header("Cache-Control", "no-store")
+        username = self.current_user.name
+        try:
+            body = json.loads(self.request.body.decode("utf-8")) if self.request.body else {}
+        except json.JSONDecodeError as exc:
+            return self._api_error(400, f"Invalid JSON: {exc}")
+        current_password = str(body.get("current_password", ""))
+        new_password = str(body.get("new_password", ""))
+        confirm_password = str(body.get("confirm_password", ""))
+        if new_password != confirm_password:
+            return self._api_error(400, "新しいパスワードが確認入力と一致しません")
+        err = _hpc_validate_password(new_password)
+        if err:
+            return self._api_error(400, err)
+        pam_service = str(getattr(self.authenticator, "service", "login") or "login")
+        err = _hpc_verify_linux_password(
+            username,
+            current_password,
+            service=pam_service,
+        )
+        if err:
+            return self._api_error(400, err)
+        err = _hpc_set_linux_password(username, new_password)
+        if err:
+            return self._api_error(400, err)
+        _hpc_log_password_success(username, username)
+        self.write({"ok": True})
+
+
 async def _hpc_stop_user_openwebui_servers(handler, username: str) -> str | None:
     """管理中spawnerと残存Slurm jobの両方からOpen WebUIを停止する。"""
     errors = []
@@ -245,26 +321,28 @@ class HpcAdminUsersApiHandler(BaseHandler):
     async def post(self):
         """ユーザー・APIアクセス・shared Ollamaの管理操作を実行する。"""
         self._require_admin()
+        self.set_header("Cache-Control", "no-store")
         body = self.get_json_body() or {}
         action = str(body.get("action", "")).strip().lower()
         username = str(body.get("username", "")).strip().lower()
-        password = str(body.get("password", ""))
         actor = self.current_user.name
 
         if action == "create":
             err = _hpc_validate_username(username)
             if err:
                 return self._api_error(400, err)
-            err = _hpc_validate_password(password)
-            if err:
-                return self._api_error(400, err)
+            initial_password = _hpc_generate_password()
             grant_sudo = bool(body.get("sudo", HPC_PORTAL_GRANT_SUDO))
-            err = _hpc_create_linux_user(username, password, grant_sudo)
+            err = _hpc_create_linux_user(username, initial_password, grant_sudo)
             if err:
                 return self._api_error(400, err)
             api_key, key_warning = _hpc_litellm_generate_key(username)
             self.set_status(201)
-            body = {"ok": True, "username": username}
+            body = {
+                "ok": True,
+                "username": username,
+                "initial_password": initial_password,
+            }
             if api_key:
                 body["api_key"] = api_key
                 body["api_base_url"] = HPC_LITELLM_PUBLIC_BASE_URL
@@ -286,16 +364,17 @@ class HpcAdminUsersApiHandler(BaseHandler):
             self.write(body)
             return
 
-        if action == "password":
-            err = _hpc_validate_password(password)
-            if err:
-                return self._api_error(400, err)
+        if action == "password_regenerate":
             if not username:
                 return self._api_error(400, "username が必要です")
+            if username in HPC_PORTAL_PROTECTED_USERS:
+                return self._api_error(400, "保護されたユーザーは再発行できません")
+            password = _hpc_generate_password()
             err = _hpc_set_linux_password(username, password)
             if err:
                 return self._api_error(400, err)
-            self.write({"ok": True})
+            _hpc_log_password_success(actor, username)
+            self.write({"ok": True, "username": username, "initial_password": password})
             return
 
         if action in {"api_disable", "api_enable"}:
@@ -392,5 +471,7 @@ c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHa
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
 c.JupyterHub.extra_handlers.append((r"/llm-api/api", HpcLlmApiApiHandler))
 c.JupyterHub.extra_handlers.append((r"/llm-api", HpcLlmApiPageHandler))
+c.JupyterHub.extra_handlers.append((r"/account/password/api", HpcPasswordApiHandler))
+c.JupyterHub.extra_handlers.append((r"/account/password", HpcPasswordPageHandler))
 c.JupyterHub.extra_handlers.append((r"/admin/users/api", HpcAdminUsersApiHandler))
 c.JupyterHub.extra_handlers.append((r"/admin/users", HpcAdminUsersPageHandler))

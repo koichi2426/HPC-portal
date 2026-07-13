@@ -11,12 +11,12 @@
       <a class="hpc-page-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面 ↗</a>
       {% endif %}
     </div>
-    <div class="hpc-help">ポータルへのログインに使う OS アカウントの作成・削除・パスワード変更</div>
+    <div class="hpc-help">ポータルへのログインに使う OS アカウントの作成・削除・パスワード再発行</div>
   </div>
 
   <div class="hpc-note">
     <strong>ログインは Linux ユーザーです</strong><br>
-    ここで作成・変更したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
+    ここで作成・再発行したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
   </div>
 
   <div class="hpc-note">
@@ -31,10 +31,6 @@
         <input class="gx10-admin-input" id="new-username" name="username" pattern="[a-z0-9][a-z0-9_-]{2,31}" required placeholder="例: 22rd092" autocomplete="off">
       </div>
       <div>
-        <label class="gx10-admin-label" for="new-password">初期パスワード</label>
-        <input class="gx10-admin-input" id="new-password" name="password" type="password" minlength="8" required autocomplete="new-password">
-      </div>
-      <div>
         <label class="gx10-admin-label" style="margin-bottom:10px;">権限</label>
         <label class="hpc-row" style="font-size:13px;">
           <input type="checkbox" id="new-sudo" name="sudo" {% if grant_sudo_default %}checked{% endif %}>
@@ -47,14 +43,18 @@
     </form>
     <div id="create-msg" class="gx10-admin-msg"></div>
     <div id="create-keybox" class="gx10-admin-keybox" aria-live="polite">
-      <div class="hpc-section-title">API key（一度だけ表示）</div>
-      <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">この key は保存されません。画面を閉じる前にユーザーへ安全な経路で共有してください。</div>
+      <div class="hpc-section-title"><span id="credential-username"></span> の認証情報（一度だけ表示）</div>
+      <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">初期パスワードは保存されません。画面を移動する前にユーザーへ安全な経路で共有してください。</div>
       <div class="gx10-admin-keyline">
-        <div id="create-keyvalue" class="gx10-admin-keyvalue"></div>
-        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="copy-key-btn">コピー</button>
+        <div><div class="hpc-help">初期パスワード</div><div id="initial-password-value" class="gx10-admin-keyvalue"></div></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="initial-password-value">コピー</button>
+      </div>
+      <div class="gx10-admin-keyline" id="api-key-line" hidden>
+        <div><div class="hpc-help">API key</div><div id="create-keyvalue" class="gx10-admin-keyvalue"></div></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="create-keyvalue">コピー</button>
       </div>
       {% if hpc_litellm_public_base_url %}
-      <div class="hpc-help" style="margin-top:8px;">API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
+      <div class="hpc-help" id="api-base-help" style="margin-top:8px;" hidden>API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
       {% endif %}
     </div>
   </div>
@@ -63,6 +63,9 @@
     <div class="hpc-row-between" style="margin-bottom:12px;">
       <div class="hpc-section-title">登録ユーザー（UID ≥ 1000）</div>
       <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
+    </div>
+    <div class="hpc-muted" style="margin:-4px 0 12px; font-size:13px;">
+      パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。
     </div>
     <div style="overflow-x:auto;">
       <table class="gx10-admin-table" aria-label="Linux ユーザー一覧">
@@ -85,9 +88,9 @@
             <td><code>{{ u.home }}</code></td>
             <td>
 	              {% if not u.protected %}
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード変更</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}">API無効化</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}">API有効化</button>
+	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
+              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}">LLM API無効化</button>
+              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}">LLM API有効化</button>
 	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}">削除</button>
               {% else %}
               <span class="hpc-muted" style="font-size:12px;">—</span>
@@ -102,30 +105,12 @@
   </div>
 </div>
 
-<div id="hpc-pw-modal" class="gx10-admin-modal" hidden>
-  <div class="gx10-admin-modal-inner">
-    <div class="hpc-section-title" style="margin-bottom:12px;" id="hpc-pw-modal-title">パスワード変更</div>
-    <label class="gx10-admin-label" for="hpc-pw-modal-input">新しいパスワード（8文字以上）</label>
-    <input class="gx10-admin-input" id="hpc-pw-modal-input" type="password" minlength="8" autocomplete="new-password">
-    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="hpc-pw-modal-cancel">キャンセル</button>
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" id="hpc-pw-modal-submit">変更</button>
-    </div>
-    <div id="hpc-pw-modal-err" class="gx10-admin-msg" style="margin-top:10px;"></div>
-  </div>
-</div>
 {% endblock %}
 
 {% block script %}
 <script>
 window.HPC_XSRF = {{ xsrf_token|tojson }};
 (function () {
-  var pwModal = document.getElementById("hpc-pw-modal");
-  var pwModalInput = document.getElementById("hpc-pw-modal-input");
-  var pwModalTitle = document.getElementById("hpc-pw-modal-title");
-  var pwModalErr = document.getElementById("hpc-pw-modal-err");
-  var pwModalUser = null;
-
   function readXsrfCookie() {
     var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
     return m ? decodeURIComponent(m[1]) : "";
@@ -156,42 +141,17 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
   function failOp(message) {
     alert(message);
   }
-  function openPwModal(username) {
-    pwModalUser = username;
-    pwModalTitle.textContent = username + " のパスワード変更";
-    pwModalInput.value = "";
-    pwModalErr.className = "gx10-admin-msg";
-    pwModalErr.textContent = "";
-    pwModal.hidden = false;
-    pwModalInput.focus();
+  function showCredentials(username, password, apiKey) {
+    document.getElementById("credential-username").textContent = username;
+    document.getElementById("initial-password-value").textContent = password || "";
+    document.getElementById("create-keyvalue").textContent = apiKey || "";
+    document.getElementById("api-key-line").hidden = !apiKey;
+    var apiBaseHelp = document.getElementById("api-base-help");
+    if (apiBaseHelp) apiBaseHelp.hidden = !apiKey;
+    var box = document.getElementById("create-keybox");
+    box.className = "gx10-admin-keybox visible";
+    box.scrollIntoView({behavior: "smooth", block: "nearest"});
   }
-  function closePwModal() {
-    pwModal.hidden = true;
-    pwModalUser = null;
-  }
-  document.getElementById("hpc-pw-modal-cancel").onclick = closePwModal;
-  document.getElementById("hpc-pw-modal-submit").onclick = function () {
-    if (!pwModalUser) return;
-    var pw = pwModalInput.value;
-    if (!pw || pw.length < 8) {
-      pwModalErr.textContent = "パスワードは8文字以上にしてください";
-      pwModalErr.className = "gx10-admin-msg err";
-      return;
-    }
-    var btn = document.getElementById("hpc-pw-modal-submit");
-    btn.disabled = true;
-    postAction({ action: "password", username: pwModalUser, password: pw })
-      .then(function () {
-        var name = pwModalUser;
-        closePwModal();
-        showMsg(document.getElementById("list-msg"), name + " のパスワードを更新しました", true);
-      })
-      .catch(function (e) {
-        pwModalErr.textContent = e.message;
-        pwModalErr.className = "gx10-admin-msg err";
-      })
-      .finally(function () { btn.disabled = false; });
-  };
   function bindRowButtons() {
     document.querySelectorAll(".hpc-del-btn").forEach(function (btn) {
       btn.onclick = function () {
@@ -215,7 +175,19 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     });
 	    document.querySelectorAll(".hpc-pw-btn").forEach(function (btn) {
 	      btn.onclick = function () {
-	        openPwModal(btn.getAttribute("data-username"));
+	        var name = btn.getAttribute("data-username");
+	        if (!confirm(name + " のパスワードを再発行しますか？\nログイン済みのセッションや実行中アプリは終了しません。")) return;
+	        btn.disabled = true;
+	        postAction({action: "password_regenerate", username: name})
+	          .then(function (body) {
+	            showCredentials(name, body.initial_password, "");
+	            showMsg(document.getElementById("list-msg"), name + " のパスワードを再発行しました", true);
+	          })
+	          .catch(function (e) {
+	            showMsg(document.getElementById("list-msg"), e.message, false);
+	            failOp(e.message);
+	          })
+	          .finally(function () { btn.disabled = false; });
 	      };
 	    });
 	    document.querySelectorAll(".hpc-api-disable-btn").forEach(function (btn) {
@@ -275,9 +247,9 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           tr.setAttribute("data-username", u.username);
 	        var ops = u.protected
 	            ? '<span class="hpc-muted" style="font-size:12px;">—</span>'
-	            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード変更</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '">API無効化</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '">API有効化</button>'
+	            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード再発行</button>'
+              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '">LLM API無効化</button>'
+              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '">LLM API有効化</button>'
 	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '">削除</button>';
           tr.innerHTML = '<td><strong>' + u.username + '</strong>'
             + (u.protected ? ' <span class="gx10-admin-badge" style="margin-left:6px;">保護</span>' : '') + '</td>'
@@ -292,36 +264,36 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
   var createForm = document.getElementById("hpc-create-user-form");
   var keyBox = document.getElementById("create-keybox");
   var keyValue = document.getElementById("create-keyvalue");
-  document.getElementById("copy-key-btn").onclick = function () {
-    var key = keyValue.textContent || "";
-    if (!key) return;
-    if (!navigator.clipboard || !navigator.clipboard.writeText) {
-      window.prompt("API key をコピーしてください", key);
-      return;
-    }
-    navigator.clipboard.writeText(key).then(function () {
-      showMsg(document.getElementById("create-msg"), "API key をコピーしました", true);
-    }).catch(function () {
-      window.prompt("API key をコピーしてください", key);
-    });
-  };
+  document.querySelectorAll(".hpc-copy-btn").forEach(function (button) {
+    button.onclick = function () {
+      var target = document.getElementById(button.getAttribute("data-copy-target"));
+      var value = target ? target.textContent : "";
+      if (!value) return;
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        window.prompt("値をコピーしてください", value);
+        return;
+      }
+      navigator.clipboard.writeText(value).then(function () {
+        showMsg(document.getElementById("create-msg"), "コピーしました", true);
+      }).catch(function () {
+        window.prompt("値をコピーしてください", value);
+      });
+    };
+  });
   createForm.onsubmit = function (ev) {
     ev.preventDefault();
     var btn = document.getElementById("create-btn");
     var msg = document.getElementById("create-msg");
     keyBox.className = "gx10-admin-keybox";
     keyValue.textContent = "";
+    document.getElementById("initial-password-value").textContent = "";
     btn.disabled = true;
     postAction({
       action: "create",
       username: document.getElementById("new-username").value.trim().toLowerCase(),
-      password: document.getElementById("new-password").value,
       sudo: document.getElementById("new-sudo").checked
     }).then(function (body) {
-      if (body.api_key) {
-        keyValue.textContent = body.api_key;
-        keyBox.className = "gx10-admin-keybox visible";
-      }
+      showCredentials(body.username, body.initial_password, body.api_key || "");
       if (body.warning) {
         showWarn(msg, "ユーザーは作成しました。" + body.warning);
       } else {
