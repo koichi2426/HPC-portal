@@ -129,7 +129,7 @@
     </div>
     <div class="hpc-row" style="margin-top:14px;">
       <input id="ollama-pull-model" type="text" placeholder="例: llama3.1:8b" style="flex:1; min-width:0; border-radius:8px; padding:10px;">
-      <button type="button" class="gx10-primary-btn" onclick="hpcOllamaPull(this)">Pull</button>
+      <button id="ollama-pull-button" type="button" class="gx10-primary-btn" onclick="hpcOllamaPull(this)">Pull</button>
     </div>
     <div id="ollama-action-msg" class="hpc-help" style="margin-top:10px;"></div>
     <div id="ollama-pull-progress" class="gx10-pull-progress" hidden aria-live="polite">
@@ -216,7 +216,41 @@ function hpcOllamaMsg(text, ok) {
   el.className = ok ? "hpc-help hpc-status-ok" : "hpc-help hpc-status-danger";
   el.textContent = text;
 }
+function hpcOllamaSetPullButton(btn, state, model) {
+  if (!btn) return;
+  var input = document.getElementById("ollama-pull-model");
+  btn.dataset.pullState = state || "idle";
+  btn.dataset.model = model || "";
+  btn.classList.toggle("gx10-primary-btn", state !== "pulling" && state !== "cancelling" && state !== "cleanup_failed");
+  btn.classList.toggle("gx10-delete-btn", state === "pulling" || state === "cancelling" || state === "cleanup_failed");
+  if (state === "pulling") {
+    btn.textContent = "中止";
+    btn.disabled = false;
+  } else if (state === "cancelling") {
+    btn.textContent = "中止中…";
+    btn.disabled = true;
+  } else if (state === "cleanup_failed") {
+    btn.textContent = "削除を再試行";
+    btn.disabled = false;
+  } else {
+    btn.textContent = "Pull";
+    btn.disabled = false;
+  }
+  if (input) {
+    input.disabled = state === "pulling" || state === "cancelling" || state === "cleanup_failed";
+    if (model && input.value.trim() !== model) input.value = model;
+  }
+}
+function hpcOllamaHideProgress() {
+  var box = document.getElementById("ollama-pull-progress");
+  if (box) box.hidden = true;
+}
 function hpcOllamaPull(btn) {
+  var pullState = btn.dataset.pullState || "idle";
+  if (pullState === "pulling" || pullState === "cleanup_failed") {
+    hpcOllamaCancelPull(btn);
+    return;
+  }
   var input = document.getElementById("ollama-pull-model");
   var model = input ? input.value.trim() : "";
   if (!model) return hpcOllamaMsg("モデル名を入力してください", false);
@@ -224,11 +258,50 @@ function hpcOllamaPull(btn) {
   hpcOllamaRenderProgress({status: "ダウンロードを開始しています"});
   hpcOllamaPost({action: "ollama_pull", model: model}).then(function (body) {
     hpcOllamaMsg(model + " のダウンロードを開始しました", true);
+    hpcOllamaSetPullButton(btn, "pulling", model);
     hpcOllamaPollPull(model, btn, 0, 0);
   }).catch(function (e) {
     hpcOllamaFinishProgress("開始に失敗しました", false);
     hpcOllamaMsg(e.message, false);
     btn.disabled = false;
+  });
+}
+function hpcOllamaCancelPull(btn) {
+  var model = btn.dataset.model || "";
+  var cleanupRetry = btn.dataset.pullState === "cleanup_failed";
+  if (!model) return hpcOllamaMsg("中止対象のモデルを確認できません", false);
+  if (!cleanupRetry && !confirm(model + " のダウンロードを中止しますか？\n途中までダウンロードしたデータも削除します。")) return;
+  hpcOllamaSetPullButton(btn, "cancelling", model);
+  hpcOllamaRenderProgress({status: cleanupRetry ? "途中データを削除しています" : "ダウンロードを中止しています"});
+  hpcOllamaPost({action: "ollama_pull_cancel", model: model}).then(function (body) {
+    var data = body.data || {};
+    if (data.status === "already_completed") {
+      hpcOllamaSetPullButton(btn, "pulling", model);
+      hpcOllamaPollPull(model, btn, 0, 0);
+      return;
+    }
+    hpcOllamaSetPullButton(btn, "idle", "");
+    hpcOllamaHideProgress();
+    hpcOllamaMsg(model + " のダウンロードを中止し、途中データを削除しました", true);
+  }).catch(function (e) {
+    hpcOllamaPost({action: "ollama_pull_status", model: model}).then(function (body) {
+      var data = body.data || {};
+      if (data.state === "pulling") {
+        hpcOllamaSetPullButton(btn, "pulling", model);
+        hpcOllamaPollPull(model, btn, 0, 0);
+        return;
+      }
+      if (data.state === "cancelled_cleanup_failed") {
+        hpcOllamaSetPullButton(btn, "cleanup_failed", model);
+        hpcOllamaFinishProgress("中止済み・途中データの削除に失敗", false);
+      } else {
+        hpcOllamaSetPullButton(btn, "idle", "");
+      }
+      hpcOllamaMsg(e.message, false);
+    }).catch(function () {
+      hpcOllamaSetPullButton(btn, "idle", "");
+      hpcOllamaMsg(e.message, false);
+    });
   });
 }
 function hpcFormatBytes(value) {
@@ -314,7 +387,9 @@ function hpcOllamaRegisterRetry(btn) {
 function hpcOllamaPollPull(model, btn, attempts, failures) {
   attempts = attempts || 0;
   failures = failures || 0;
+  if (btn && btn.dataset.pullState !== "pulling") return;
   hpcOllamaPost({action: "ollama_pull_status", model: model}).then(function (body) {
+    if (btn && btn.dataset.pullState !== "pulling") return;
     var data = body.data || {};
     if (data.state === "pulling") {
       hpcOllamaRenderProgress(data);
@@ -322,8 +397,8 @@ function hpcOllamaPollPull(model, btn, attempts, failures) {
       return;
     }
     if (data.state === "completed") {
+      hpcOllamaSetPullButton(btn, "idle", "");
       hpcOllamaShowRegistration(data, model, true);
-      if (btn) btn.disabled = false;
       return;
     }
     if (data.state === "idle" && attempts < 10) {
@@ -337,12 +412,21 @@ function hpcOllamaPollPull(model, btn, attempts, failures) {
     } else if (data.state === "failed") {
       hpcOllamaFinishProgress("ダウンロードに失敗しました", false);
       hpcOllamaMsg(data.error || model + " のダウンロードに失敗しました", false);
+    } else if (data.state === "cancelled") {
+      hpcOllamaHideProgress();
+      hpcOllamaMsg(model + " のダウンロードを中止しました", true);
+    } else if (data.state === "cancelled_cleanup_failed") {
+      hpcOllamaSetPullButton(btn, "cleanup_failed", model);
+      hpcOllamaFinishProgress("中止済み・途中データの削除に失敗", false);
+      hpcOllamaMsg("途中データを削除できませんでした。削除を再試行してください", false);
+      return;
     } else {
       hpcOllamaFinishProgress("状態を確認できません", false);
       hpcOllamaMsg("ダウンロード状態を確認できません", false);
     }
-    if (btn) btn.disabled = false;
+    hpcOllamaSetPullButton(btn, "idle", "");
   }).catch(function (e) {
+    if (btn && btn.dataset.pullState !== "pulling") return;
     if (failures < 3) {
       hpcOllamaRenderProgress({status: "通信を再試行しています"});
       window.setTimeout(function () { hpcOllamaPollPull(model, btn, attempts, failures + 1); }, 2000);
@@ -350,14 +434,23 @@ function hpcOllamaPollPull(model, btn, attempts, failures) {
     }
     hpcOllamaFinishProgress("進捗の取得に失敗しました", false);
     hpcOllamaMsg(e.message, false);
-    if (btn) btn.disabled = false;
+    hpcOllamaSetPullButton(btn, "idle", "");
   });
 }
 document.addEventListener("DOMContentLoaded", function () {
   if (!document.getElementById("ollama-pull-progress")) return;
   hpcOllamaPost({action: "ollama_pull_status"}).then(function (body) {
     var data = body.data || {};
-    if (data.state === "pulling" && data.model) hpcOllamaPollPull(data.model, null, 0, 0);
+    var btn = document.getElementById("ollama-pull-button");
+    if (data.state === "pulling" && data.model) {
+      hpcOllamaSetPullButton(btn, "pulling", data.model);
+      hpcOllamaPollPull(data.model, btn, 0, 0);
+    }
+    if (data.state === "cancelled_cleanup_failed" && data.model) {
+      hpcOllamaSetPullButton(btn, "cleanup_failed", data.model);
+      hpcOllamaFinishProgress("中止済み・途中データの削除に失敗", false);
+      hpcOllamaMsg("途中データを削除できませんでした。削除を再試行してください", false);
+    }
     if (data.state === "completed" && data.model && (data.litellm_registration || {}).state === "failed") {
       hpcOllamaShowRegistration(data, data.model, false);
     }
@@ -365,7 +458,7 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 function hpcOllamaDelete(btn) {
   var model = btn.getAttribute("data-model") || "";
-  if (!model || !confirm(model + " を削除しますか？")) return;
+  if (!model || !confirm(model + " をOllamaとLiteLLMから削除しますか？")) return;
   btn.disabled = true;
   hpcOllamaPost({action: "ollama_delete", model: model}).then(function () {
     window.location.reload();

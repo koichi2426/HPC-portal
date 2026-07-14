@@ -67,7 +67,7 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
             return json.loads(body), None
         except json.JSONDecodeError:
             return {"raw": body}, None
-    if action in {"tags", "ps", "pull-status"} and body:
+    if action in {"tags", "ps", "pull-status", "pull-cancel"} and body:
         try:
             return json.loads(body), None
         except json.JSONDecodeError:
@@ -121,9 +121,14 @@ def _hpc_ollama_pull_progress(model: str | None = None) -> tuple[dict | None, st
     state = "idle"
     if active:
         state = "pulling" if not model or active_model == model else "busy"
-    elif str(data.get("result") or "") not in ("", "0"):
+    result = str(data.get("result") or "")
+    if not active and result == "cancelled":
+        state = "cancelled"
+    elif not active and result == "cancelled_cleanup_failed":
+        state = "cancelled_cleanup_failed"
+    elif result not in ("", "0"):
         state = "failed"
-    elif str(record.get("status") or "").lower() == "success" or str(data.get("result") or "") == "0":
+    elif str(record.get("status") or "").lower() == "success" or result == "0":
         state = "completed"
     return {
         "state": state,
@@ -214,4 +219,3 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
 c.JupyterHub.template_vars.update({
     "hpc_shared_ollama_detail": _hpc_shared_ollama_detail_context,
 })
-

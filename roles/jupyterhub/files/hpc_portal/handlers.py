@@ -18,6 +18,7 @@ from .common import (
 )
 from .litellm import (
     _hpc_litellm_admin_set_api_access,
+    _hpc_litellm_delete_ollama_model,
     _hpc_litellm_delete_user_keys,
     _hpc_litellm_enabled,
     _hpc_litellm_generate_key,
@@ -89,7 +90,7 @@ async def _hpc_watch_ollama_pull_and_register(model: str) -> None:
                         _hpc_safe_litellm_error(registration_err),
                     )
                 return
-            if state in {"failed", "busy"}:
+            if state in {"failed", "busy", "cancelled", "cancelled_cleanup_failed"}:
                 return
             idle_count = idle_count + 1 if state == "idle" else 0
             if idle_count >= 20:
@@ -607,15 +608,47 @@ class HpcAdminUsersApiHandler(BaseHandler):
             self.write({"ok": True, "data": registration})
             return
 
-        if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_status", "ollama_delete"}:
+        if action == "ollama_delete":
+            model = str(body.get("model", "")).strip()
+            tags, err = await asyncio.to_thread(_hpc_ollama_cmd, "tags")
+            if err:
+                return self._api_error(400, err)
+            exists = any(
+                isinstance(item, dict) and str(item.get("name") or "") == model
+                for item in (tags or {}).get("models", []) or []
+            )
+            litellm_err = await asyncio.to_thread(
+                _hpc_litellm_delete_ollama_model, model
+            )
+            if litellm_err:
+                return self._api_error(
+                    400, "LiteLLMモデルを削除できませんでした: " + litellm_err
+                )
+            if exists:
+                _data, err = await asyncio.to_thread(_hpc_ollama_cmd, "delete", model)
+                if err:
+                    await asyncio.to_thread(_hpc_litellm_register_ollama_model, model)
+                    return self._api_error(400, err)
+            # pull完了との競合で再登録された場合も、Ollama削除後にもう一度回収する。
+            litellm_err = await asyncio.to_thread(
+                _hpc_litellm_delete_ollama_model, model
+            )
+            if litellm_err:
+                return self._api_error(
+                    400, "LiteLLMモデルを削除できませんでした: " + litellm_err
+                )
+            self.write({"ok": True, "data": {"model": model, "deleted": True}})
+            return
+
+        if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_cancel", "ollama_pull_status"}:
             mapping = {
                 "ollama_start": "start",
                 "ollama_stop": "stop",
                 "ollama_status": "status",
                 "ollama_tags": "tags",
                 "ollama_pull": "pull",
+                "ollama_pull_cancel": "pull-cancel",
                 "ollama_pull_status": "pull-status",
-                "ollama_delete": "delete",
             }
             model = str(body.get("model", "")).strip()
             if action == "ollama_pull_status":
@@ -636,7 +669,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 data, err = await asyncio.to_thread(
                     _hpc_ollama_cmd,
                     mapping[action],
-                    model if action in {"ollama_pull", "ollama_delete"} else None,
+                    model if action in {"ollama_pull", "ollama_pull_cancel"} else None,
                     str(body.get("cpus", "")).strip() if action == "ollama_start" else None,
                     str(body.get("memory", "")).strip() if action == "ollama_start" else None,
                 )

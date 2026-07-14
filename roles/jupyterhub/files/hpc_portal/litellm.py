@@ -168,6 +168,12 @@ def _hpc_litellm_register_ollama_model(model: str) -> tuple[dict | None, str | N
         return None, "LiteLLM Admin API が未設定です"
 
     with _hpc_litellm_model_lock(model):
+        # 削除とpull完了が競合した場合に、Ollamaにないモデルを再登録しない。
+        from .ollama import _hpc_ollama_has_model
+
+        exists, ollama_err = _hpc_ollama_has_model(model)
+        if ollama_err or not exists:
+            return None, ollama_err or f"Ollamaにモデル {model} がありません"
         models, err = _hpc_litellm_list_models()
         if err:
             return None, err
@@ -208,6 +214,62 @@ def _hpc_litellm_register_ollama_model(model: str) -> tuple[dict | None, str | N
             "model": model,
             "message": "LiteLLMへ自動登録しました",
         }, None
+
+
+def _hpc_litellm_delete_ollama_model(model: str) -> str | None:
+    """Ollamaモデルに対応するLiteLLMのDBモデルを削除する。
+
+    Args:
+        model: Ollamaから削除するモデル名。
+
+    Returns:
+        正常または該当モデルなしならNone、失敗時はエラーメッセージ。
+    """
+    model = str(model or "").strip()
+    if not model:
+        return "モデル名が必要です"
+    if re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", model) is None:
+        return "モデル名に使用できない文字が含まれています"
+    if not _hpc_litellm_enabled():
+        return "LiteLLM Admin API が未設定です"
+
+    with _hpc_litellm_model_lock(model):
+        try:
+            response = _hpc_litellm_request("/v1/model/info", method="GET")
+        except RuntimeError as exc:
+            return _hpc_safe_litellm_error(exc)
+        deployment_ids = []
+        config_model_found = False
+        for record in _hpc_litellm_model_records(response):
+            litellm_params = record.get("litellm_params") or {}
+            model_info = record.get("model_info") or {}
+            if not isinstance(litellm_params, dict) or not isinstance(model_info, dict):
+                continue
+            if str(record.get("model_name") or "") != model:
+                continue
+            if str(litellm_params.get("model") or "") != f"ollama/{model}":
+                continue
+            model_id = str(model_info.get("id") or "").strip()
+            if model_id and bool(model_info.get("db_model")):
+                deployment_ids.append(model_id)
+            else:
+                config_model_found = True
+
+        if config_model_found:
+            return "Ansible設定由来のLiteLLMモデルはポータルから削除できません"
+
+        for model_id in dict.fromkeys(deployment_ids):
+            try:
+                _hpc_litellm_request("/model/delete", {"id": model_id})
+            except RuntimeError as exc:
+                return _hpc_safe_litellm_error(exc)
+        if deployment_ids:
+            HPC_LITELLM_LOG.info(
+                "action=model_delete model=%s deployments=%d result=ok",
+                model,
+                len(set(deployment_ids)),
+            )
+        return None
 
 
 def _hpc_litellm_ensure_user(username: str) -> str | None:

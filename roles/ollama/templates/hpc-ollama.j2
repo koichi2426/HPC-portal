@@ -5,6 +5,7 @@ JOB_NAME="{{ ollama_slurm_job_name }}"
 SERVICE_USER="{{ ollama_service_user }}"
 SBATCH_SCRIPT="/opt/hpc-portal/ollama/shared-ollama.sbatch"
 OLLAMA_URL="http://{{ ollama_host }}:{{ ollama_port }}"
+OLLAMA_MODELS_DIR="{{ ollama_models_dir }}"
 DEFAULT_CPUS="{{ ollama_slurm_default_cpus }}"
 DEFAULT_MEMORY="{{ ollama_slurm_default_memory }}"
 GPUS="{{ ollama_slurm_gpus | default(1) }}"
@@ -69,7 +70,42 @@ parse_start_args() {
   fi
 }
 
+cleanup_partial_download() {
+  pull_log="$1"
+  blobs_dir="$OLLAMA_MODELS_DIR/blobs"
+  [ -d "$blobs_dir" ] || return 0
+  digests="$(sed -n -E 's/.*"digest"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$pull_log" 2>/dev/null | sort -u || true)"
+  for digest in $digests; do
+    digest="${digest#sha256:}"
+    if ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
+      continue
+    fi
+    find "$blobs_dir" -maxdepth 1 -type f -name "sha256-${digest}-partial*" -delete || return 1
+    if find "$blobs_dir" -maxdepth 1 -type f -name "sha256-${digest}-partial*" -print -quit | grep -q .; then
+      return 1
+    fi
+  done
+}
+
 case "$cmd" in
+  _pull-worker)
+    if [ -z "$model" ]; then
+      exit 2
+    fi
+    safe_model="$(printf '%s' "$model" | tr '/:' '__')"
+    log="/var/log/hpc-ollama/pull-${safe_model}.log"
+    printf '%s' "$BASHPID" >"$PULL_PID_FILE"
+    printf '%s' "$model" >"$PULL_MODEL_FILE"
+    set +e
+    sudo -u "$SERVICE_USER" curl -fsSN "$OLLAMA_URL/api/pull" \
+      -H 'Content-Type: application/json' \
+      -d "{\"name\":\"$model\"}" >"$log" 2>&1
+    rc=$?
+    printf '%s' "$rc" >"$PULL_STATE_DIR/pull-${safe_model}.result"
+    rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+    rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+    exit "$rc"
+    ;;
   start)
     shift || true
     parse_start_args "$@"
@@ -141,22 +177,112 @@ case "$cmd" in
     fi
     printf '%s' "$model" >"$PULL_LAST_MODEL_FILE"
     rm -f "$log" "$PULL_STATE_DIR/pull-${safe_model}.result"
-    # 親プロセス（JupyterHub の HTTP 要求）が stdout/stderr の EOF を待たないよう、
-    # バックグラウンド処理のファイル記述子を完全に切り離す。
-    (
-      printf '%s' "$BASHPID" >"$PULL_PID_FILE"
-      printf '%s' "$model" >"$PULL_MODEL_FILE"
-      set +e
-      sudo -u "$SERVICE_USER" curl -fsSN "$OLLAMA_URL/api/pull" \
-        -H 'Content-Type: application/json' \
-        -d "{\"name\":\"$model\"}" >"$log" 2>&1
-      rc=$?
-      printf '%s' "$rc" >"$PULL_STATE_DIR/pull-${safe_model}.result"
+    # Pull専用のプロセスグループに分離し、中止時にOllama本体を止めず通信だけ終了する。
+    setsid "$0" _pull-worker "$model" </dev/null >/dev/null 2>&1 &
+    worker_pid=$!
+    for _attempt in $(seq 1 20); do
+      if [ -f "$PULL_PID_FILE" ] || ! kill -0 "$worker_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.05
+    done
+    if [ ! -f "$PULL_PID_FILE" ]; then
+      result="$(cat "$PULL_STATE_DIR/pull-${safe_model}.result" 2>/dev/null || true)"
+      if [ "$result" != "0" ]; then
+        if kill -0 "$worker_pid" 2>/dev/null; then
+          kill -TERM -- "-$worker_pid" 2>/dev/null || true
+        fi
+        wait "$worker_pid" 2>/dev/null || true
+        rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+        echo "pull worker failed to start" >&2
+        exit 1
+      fi
+    fi
+    echo "{\"status\":\"pulling\",\"model\":\"$(json_escape "$model")\"}"
+    ;;
+  pull-cancel)
+    if [ -z "$model" ]; then
+      echo "model required" >&2
+      exit 2
+    fi
+    safe_model="$(printf '%s' "$model" | tr '/:' '__')"
+    log="/var/log/hpc-ollama/pull-${safe_model}.log"
+    result_file="$PULL_STATE_DIR/pull-${safe_model}.result"
+    active_model="$(cat "$PULL_MODEL_FILE" 2>/dev/null || true)"
+    pid="$(cat "$PULL_PID_FILE" 2>/dev/null || true)"
+    result="$(cat "$result_file" 2>/dev/null || true)"
+    if [ -n "$active_model" ] && [ "$active_model" != "$model" ]; then
+      echo "another model pull is running: $active_model" >&2
+      exit 1
+    fi
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      worker_command=""
+      if [ -r "/proc/$pid/cmdline" ]; then
+        worker_command="$(tr '\0' ' ' <"/proc/$pid/cmdline")"
+      fi
+      case "$worker_command" in
+        *" _pull-worker $model"*) ;;
+        *)
+          echo "pull worker verification failed" >&2
+          exit 1
+          ;;
+      esac
+      kill -TERM -- "-$pid" 2>/dev/null || true
+      for _attempt in $(seq 1 50); do
+        if ! kill -0 -- "-$pid" 2>/dev/null; then
+          break
+        fi
+        sleep 0.1
+      done
+      if kill -0 -- "-$pid" 2>/dev/null; then
+        kill -KILL -- "-$pid" 2>/dev/null || true
+        for _attempt in $(seq 1 20); do
+          if ! kill -0 -- "-$pid" 2>/dev/null; then
+            break
+          fi
+          sleep 0.1
+        done
+      fi
+      if kill -0 -- "-$pid" 2>/dev/null; then
+        echo "pull worker did not stop" >&2
+        exit 1
+      fi
+    elif [ "$result" != "cancelled_cleanup_failed" ]; then
+      if [ "$result" = "0" ]; then
+        printf '{"status":"already_completed","model":"%s"}\n' "$(json_escape "$model")"
+        exit 0
+      fi
+      echo "model pull is not running" >&2
+      exit 1
+    fi
+    result="$(cat "$result_file" 2>/dev/null || true)"
+    if [ "$result" = "0" ]; then
       rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
       rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
-      exit "$rc"
-    ) </dev/null >/dev/null 2>&1 &
-    echo "{\"status\":\"pulling\",\"model\":\"$(json_escape "$model")\"}"
+      printf '{"status":"already_completed","model":"%s"}\n' "$(json_escape "$model")"
+      exit 0
+    fi
+    sleep 1
+    cleanup_ok=true
+    if ! cleanup_partial_download "$log"; then
+      cleanup_ok=false
+    fi
+    sleep 0.3
+    if ! cleanup_partial_download "$log"; then
+      cleanup_ok=false
+    fi
+    if [ "$cleanup_ok" = true ]; then
+      printf 'cancelled' >"$result_file"
+      rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+      rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+      printf '{"status":"cancelled","model":"%s"}\n' "$(json_escape "$model")"
+      exit 0
+    fi
+    printf 'cancelled_cleanup_failed' >"$result_file"
+    rm -f "$PULL_PID_FILE" "$PULL_MODEL_FILE"
+    rmdir "$PULL_LOCK_DIR" 2>/dev/null || true
+    echo "ダウンロードは中止しましたが、途中データを削除できませんでした" >&2
+    exit 1
     ;;
   pull-status)
     active=false
@@ -190,7 +316,7 @@ case "$cmd" in
     fi
     ;;
   *)
-    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|pull-status [model]|delete <model>" >&2
+    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|pull-cancel <model>|pull-status [model]|delete <model>" >&2
     exit 2
     ;;
 esac
