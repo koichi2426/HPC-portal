@@ -66,6 +66,8 @@ c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
 c.JupyterHub.allow_named_servers = True
 
 c.Authenticator.allow_all = True
+# Linuxユーザーを正とし、OS側で削除済みのユーザーをHub DBへ残さない。
+c.Authenticator.delete_invalid_users = True
 
 c.Authenticator.admin_users = set(HPC_PORTAL_ADMIN_USERS)
 
