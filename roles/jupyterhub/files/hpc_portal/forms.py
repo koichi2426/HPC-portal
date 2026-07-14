@@ -49,12 +49,28 @@ def make_options_form(spawner):
     disk_available_gb = resource["disk_available_gb"]
     disk_total_gb = resource["disk_total_gb"]
     disk_status = resource["disk_status"]
-    gpu_available = resource["gpu_available"]
-    gpu_available_count = resource["gpu_available_count"]
     gpu_max = resource["gpu_max"]
-    gpu_vram_available_gb = resource["gpu_vram_available_gb"]
-    gpu_vram_total_gb = resource["gpu_vram_total_gb"]
-    gpu_status = resource["gpu_status"]
+    gpu_processes = resource["gpu_processes"]
+    gpu_processes_available = resource["gpu_processes_available"]
+    if not gpu_processes_available:
+        gpu_process_count_label = "取得できません"
+        gpu_process_list_html = (
+            '<li class="hpc-gpu-process-empty">GPUプロセス情報を取得できません</li>'
+        )
+    elif gpu_processes:
+        gpu_process_count_label = f"利用中 {len(gpu_processes)}件"
+        gpu_process_list_html = "".join(
+            '<li class="hpc-gpu-process-item">'
+            f'<span class="hpc-gpu-process-name">{html.escape(str(process["name"]))}</span>'
+            f'<span class="hpc-gpu-process-meta">{html.escape(str(process["username"]))} · PID {int(process["pid"])}</span>'
+            "</li>"
+            for process in gpu_processes
+        )
+    else:
+        gpu_process_count_label = "利用中 0件"
+        gpu_process_list_html = (
+            '<li class="hpc-gpu-process-empty">GPUを使用中のプロセスはありません</li>'
+        )
 
     active_sessions_html = ""
     user = spawner.user
@@ -162,15 +178,16 @@ def make_options_form(spawner):
                         <span data-resource-text="cpu_total">最大 {cpu_total} vCPU</span>
                     </div>
                 </div>
-                <div class="resource-meter">
-                    <div class="meter-head"><span>RAM 空き</span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
-                    <div class="meter-track" title="RAM 空きリソース">
+                <div class="resource-meter hpc-unified-memory" tabindex="0" aria-describedby="form-unified-memory-help">
+                    <div class="meter-head"><span class="hpc-resource-label">統合メモリ 空き <i class="hpc-resource-info-icon" aria-hidden="true">i</i></span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
+                    <div class="meter-track" title="統合メモリの空きリソース">
                         <div class="meter-fill" data-resource-width="mem_available" style="width:{mem_available:.0f}%;"></div>
                     </div>
                     <div class="meter-numbers">
                         <span data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</span>
                         <span data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</span>
                     </div>
+                    <span id="form-unified-memory-help" class="hpc-resource-tooltip" role="tooltip">CPUとGPUが共有するメモリです。GPU専用VRAMはありません。</span>
                 </div>
                 <div class="resource-meter">
                     <div class="meter-head"><span>Storage 空き</span><span class="meter-status" data-resource-text="disk_status">{disk_status}</span></div>
@@ -182,16 +199,10 @@ def make_options_form(spawner):
                         <span data-resource-text="disk_total_gb">最大 {disk_total_gb:.1f} GB</span>
                     </div>
                 </div>
-                <div class="resource-meter">
-                    <div class="meter-head"><span>GPU 空き</span><span class="meter-status" data-resource-text="gpu_status">{gpu_status}</span></div>
-                    <div class="meter-track" title="GPU VRAM 空きリソース">
-                        <div class="meter-fill" data-resource-width="gpu_available" style="width:{gpu_available:.0f}%;"></div>
-                    </div>
-                    <div class="meter-numbers">
-                        <span data-resource-text="gpu_available_count">空き {gpu_available_count}/{gpu_max} GPU</span>
-                        <span data-resource-text="gpu_vram_available_gb">VRAM {gpu_vram_available_gb:.1f}/{gpu_vram_total_gb:.1f} GB</span>
-                    </div>
-                </div>
+                <details class="resource-meter hpc-gpu-processes">
+                    <summary><span>GPU</span><span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{gpu_process_count_label}</span></summary>
+                    <ul class="hpc-gpu-process-list" data-gpu-process-list>{gpu_process_list_html}</ul>
+                </details>
             </div>
             <div id="active-list">{active_sessions_html}</div>
         </div>
@@ -301,7 +312,7 @@ def make_options_form(spawner):
     """
     )
     static_js = (
-        '<script src="/hub/hpc-resource-meter.js?v=2"></script>'
+        '<script src="/hub/hpc-resource-meter.js?v=4"></script>'
         '<script src="/hub/hpc-app-status.js?v=1"></script>'
     )
     return header_html + static_js + js_code

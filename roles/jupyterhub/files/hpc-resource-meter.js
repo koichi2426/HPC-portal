@@ -23,16 +23,38 @@
       disk_status: data.disk_status,
       disk_available_gb: "残り " + format1(data.disk_available_gb) + " GB",
       disk_total_gb: "最大 " + format1(data.disk_total_gb) + " GB",
-      gpu_status: data.gpu_status,
-      gpu_available_count:
-        "空き " + (data.gpu_available_count || 0) + "/" + (data.gpu_max || 0) + " GPU",
-      gpu_vram_available_gb:
-        "VRAM " +
-        format1(data.gpu_vram_available_gb) +
-        "/" +
-        format1(data.gpu_vram_total_gb) +
-        " GB",
     };
+  }
+
+  function renderGpuProcesses(root, data) {
+    var processes = Array.isArray(data.gpu_processes) ? data.gpu_processes : [];
+    var available = data.gpu_processes_available !== false;
+    root.querySelectorAll("[data-gpu-process-count]").forEach(function (el) {
+      el.textContent = available ? "利用中 " + processes.length + "件" : "取得できません";
+    });
+    root.querySelectorAll("[data-gpu-process-list]").forEach(function (list) {
+      list.replaceChildren();
+      if (!available || processes.length === 0) {
+        var empty = global.document.createElement("li");
+        empty.className = "hpc-gpu-process-empty";
+        empty.textContent = available ? "GPUを使用中のプロセスはありません" : "GPUプロセス情報を取得できません";
+        list.appendChild(empty);
+        return;
+      }
+      processes.forEach(function (process) {
+        var item = global.document.createElement("li");
+        item.className = "hpc-gpu-process-item";
+        var name = global.document.createElement("span");
+        name.className = "hpc-gpu-process-name";
+        name.textContent = String(process.name || "不明");
+        var meta = global.document.createElement("span");
+        meta.className = "hpc-gpu-process-meta";
+        meta.textContent = String(process.username || "不明") + " · PID " + String(process.pid || "—");
+        item.appendChild(name);
+        item.appendChild(meta);
+        list.appendChild(item);
+      });
+    });
   }
 
   function formatUpdatedAt(data) {
@@ -62,6 +84,7 @@
       var pct = Math.max(0, Math.min(100, Number(data[key] || 0)));
       el.style.width = pct.toFixed(0) + "%";
     });
+    renderGpuProcesses(root, data);
     root.querySelectorAll("[data-resource-updated-at]").forEach(function (el) {
       el.textContent = formatUpdatedAt(data);
       el.classList.remove("hpc-resource-stale", "hpc-resource-loading");
@@ -136,6 +159,14 @@
     });
   }
 
+  function closeGpuProcessMenus(event) {
+    global.document.querySelectorAll(".hpc-gpu-processes[open]").forEach(function (menu) {
+      if (!event || !menu.contains(event.target)) {
+        menu.open = false;
+      }
+    });
+  }
+
   global.HpcResourceMeter = {
     start: start,
     startAll: startAll,
@@ -145,6 +176,15 @@
 
   function onReady() {
     startAll();
+    global.document.addEventListener("click", closeGpuProcessMenus);
+    global.document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") return;
+      var openMenu = global.document.querySelector(".hpc-gpu-processes[open]");
+      if (!openMenu) return;
+      closeGpuProcessMenus();
+      var summary = openMenu.querySelector("summary");
+      if (summary) summary.focus();
+    });
   }
 
   if (global.document.readyState === "loading") {

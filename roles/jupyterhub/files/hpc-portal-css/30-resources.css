@@ -73,6 +73,172 @@
   font-size: 11px;
 }
 
+.hpc-unified-memory {
+  position: relative;
+}
+
+.hpc-resource-label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.hpc-resource-info-icon {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border: 1px solid var(--hpc-border);
+  border-radius: 50%;
+  color: var(--hpc-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hpc-resource-tooltip {
+  position: absolute;
+  z-index: 20;
+  top: 38px;
+  left: 10px;
+  width: min(260px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border: 1px solid var(--hpc-border);
+  border-radius: 8px;
+  background: var(--hpc-surface-muted);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  color: var(--hpc-text);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.hpc-unified-memory:hover .hpc-resource-tooltip,
+.hpc-unified-memory:focus .hpc-resource-tooltip,
+.hpc-unified-memory:focus-within .hpc-resource-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hpc-gpu-processes {
+  position: relative;
+  padding: 0;
+  overflow: visible;
+}
+
+.hpc-gpu-processes > summary {
+  display: flex;
+  min-height: 62px;
+  padding: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.hpc-gpu-processes > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hpc-gpu-processes > summary:hover,
+.hpc-gpu-processes[open] > summary {
+  background: var(--hpc-surface-muted);
+  border-radius: 9px;
+}
+
+.hpc-gpu-processes > summary:focus-visible {
+  outline: 2px solid var(--hpc-primary);
+  outline-offset: -2px;
+}
+
+.hpc-gpu-process-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--hpc-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hpc-gpu-process-summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.15s ease;
+}
+
+.hpc-gpu-processes[open] .hpc-gpu-process-summary::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.hpc-gpu-process-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  width: min(300px, calc(100vw - 48px));
+  max-height: 260px;
+  gap: 0;
+  margin: 0;
+  padding: 6px 10px;
+  overflow-y: auto;
+  border: 1px solid var(--hpc-border);
+  border-radius: 9px;
+  background: var(--hpc-surface);
+  box-shadow: 0 10px 28px rgb(31 35 40 / 18%);
+  list-style: none;
+}
+
+.hpc-gpu-process-item {
+  display: flex;
+  padding: 7px 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.hpc-gpu-process-item + .hpc-gpu-process-item {
+  border-top: 1px solid var(--hpc-border-muted);
+}
+
+.hpc-gpu-process-name {
+  color: var(--hpc-text);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.hpc-gpu-process-meta,
+.hpc-gpu-process-empty {
+  color: var(--hpc-muted);
+}
+
+.hpc-gpu-process-meta {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.hpc-gpu-process-empty {
+  padding: 8px 2px;
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hpc-resource-tooltip,
+  .hpc-gpu-process-summary::after {
+    transition: none;
+  }
+}
+
 .meter-numbers {
   margin-top: 8px;
   font-size: 0.72rem;
@@ -97,4 +263,3 @@
   filter: brightness(1.12);
   transition: width 0.35s ease, filter 0.2s ease;
 }
-

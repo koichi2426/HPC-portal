@@ -134,15 +134,17 @@ def _hpc_slurm_free_resources():
         return None
 
 
-def _hpc_nvidia_vram_snapshot():
-    """GPU VRAM の実使用量（Slurm 解放後もプロセス残りで減らないことがある）"""
-    gpu_vram_available_gb = 0.0
-    gpu_vram_total_gb = 0.0
+def _hpc_gpu_process_snapshot() -> tuple[list[dict], bool]:
+    """NVIDIA GPUを使用中の計算プロセスを取得する。
+
+    Returns:
+        プロセス情報のリストと、取得に成功したかどうか。
+    """
     try:
         proc = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=memory.total,memory.used",
+                "--query-compute-apps=pid,process_name",
                 "--format=csv,noheader,nounits",
             ],
             check=False,
@@ -150,29 +152,42 @@ def _hpc_nvidia_vram_snapshot():
             text=True,
             timeout=2,
         )
-        gpu_total_mb = 0
-        gpu_used_mb = 0
+        if proc.returncode != 0:
+            return [], False
+        processes = []
+        seen_pids = set()
         for line in proc.stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
-            parts = [p.strip() for p in line.split(",")]
+            parts = [part.strip() for part in line.split(",", 1)]
             if len(parts) < 2:
                 continue
-            total_mb = int(float(parts[0].replace(" MiB", "").replace("MiB", "").strip()))
-            used_mb = int(float(parts[1].replace(" MiB", "").replace("MiB", "").strip()))
-            gpu_total_mb += total_mb
-            gpu_used_mb += used_mb
-        if gpu_total_mb > 0:
-            gpu_vram_available_gb = (gpu_total_mb - gpu_used_mb) / 1024
-            gpu_vram_total_gb = gpu_total_mb / 1024
+            try:
+                pid = int(parts[0])
+            except (TypeError, ValueError):
+                continue
+            if pid in seen_pids:
+                continue
+            seen_pids.add(pid)
+            raw_name = parts[1].rsplit("/", 1)[-1] or "不明"
+            username = "不明"
+            try:
+                process = psutil.Process(pid)
+                raw_name = process.name() or raw_name
+                username = process.username() or username
+            except (psutil.Error, OSError):
+                pass
+            name = "Ollama" if "ollama" in raw_name.lower() else raw_name
+            processes.append({"pid": pid, "name": name, "username": username})
+        processes.sort(key=lambda item: (item["username"], item["name"], item["pid"]))
+        return processes, True
     except Exception:
-        pass
-    return gpu_vram_available_gb, gpu_vram_total_gb
+        return [], False
 
 
 def _hpc_resource_snapshot(disk_path="/home"):
-    """CPU、メモリ、ストレージ、GPUの空き状況を取得する。
+    """CPU・統合メモリ・ストレージとGPUプロセスを取得する。
 
     Args:
         disk_path: ストレージ使用量を測定するパス。
@@ -190,19 +205,15 @@ def _hpc_resource_snapshot(disk_path="/home"):
         cpu_available = (
             max(0, min(100, cpu_available_count / cpu_total * 100)) if cpu_total else 0
         )
-        mem_total_gb = slurm_free["mem_total_mb"] / 1024
-        mem_available_gb = slurm_free["mem_available_mb"] / 1024
-        mem_available = (
-            max(0, min(100, mem_available_gb / mem_total_gb * 100)) if mem_total_gb else 0
-        )
     else:
         cpu_total = psutil.cpu_count() or 0
         cpu = psutil.cpu_percent()
         cpu_available = max(0, min(100, 100 - cpu))
         cpu_available_count = cpu_total * cpu_available / 100
-        mem_available = max(0, min(100, mem.available / mem.total * 100))
-        mem_available_gb = mem.available / (1024 ** 3)
-        mem_total_gb = mem.total / (1024 ** 3)
+    # GB10はCPUとGPUが同じメモリを共有するため、Slurm予約量ではなく実空き容量を示す。
+    mem_available = max(0, min(100, mem.available / mem.total * 100))
+    mem_available_gb = mem.available / (1024 ** 3)
+    mem_total_gb = mem.total / (1024 ** 3)
     try:
         disk = psutil.disk_usage(disk_path)
     except Exception:
@@ -210,46 +221,8 @@ def _hpc_resource_snapshot(disk_path="/home"):
     disk_available = max(0, min(100, disk.free / disk.total * 100))
     disk_available_gb = disk.free / (1024 ** 3)
     disk_total_gb = disk.total / (1024 ** 3)
-    gpu_max = HPC_GPU_COUNT
-    gpu_available = 0
-    gpu_available_count = 0
-    if slurm_free:
-        gpu_max = slurm_free["gpu_max"] or gpu_max
-        gpu_available_count = slurm_free["gpu_available_count"]
-        gpu_available = (
-            max(0, min(100, gpu_available_count / gpu_max * 100)) if gpu_max else 0
-        )
-    elif gpu_max > 0:
-        try:
-            gpu_query = subprocess.run(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=memory.total,memory.used",
-                    "--format=csv,noheader,nounits",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            gpu_lines = [line.strip() for line in gpu_query.stdout.splitlines() if line.strip()]
-            gpu_total_mb = 0
-            gpu_used_mb = 0
-            gpu_free_count = 0
-            for line in gpu_lines:
-                parts = [p.strip() for p in line.split(",")[:2]]
-                total_mb = int(float(parts[0].replace(" MiB", "").replace("MiB", "").strip()))
-                used_mb = int(float(parts[1].replace(" MiB", "").replace("MiB", "").strip()))
-                gpu_total_mb += total_mb
-                gpu_used_mb += used_mb
-                if total_mb > 0 and used_mb / total_mb < 0.10:
-                    gpu_free_count += 1
-            if gpu_total_mb > 0:
-                gpu_available = max(0, min(100, (gpu_total_mb - gpu_used_mb) / gpu_total_mb * 100))
-                gpu_available_count = gpu_free_count
-        except Exception:
-            pass
-    gpu_vram_available_gb, gpu_vram_total_gb = _hpc_nvidia_vram_snapshot()
+    gpu_max = (slurm_free["gpu_max"] if slurm_free else 0) or HPC_GPU_COUNT
+    gpu_processes, gpu_processes_available = _hpc_gpu_process_snapshot()
     return {
         "cpu_available": cpu_available,
         "cpu_available_count": cpu_available_count,
@@ -263,12 +236,10 @@ def _hpc_resource_snapshot(disk_path="/home"):
         "disk_available_gb": disk_available_gb,
         "disk_total_gb": disk_total_gb,
         "disk_status": _hpc_resource_status(disk_available),
-        "gpu_available": gpu_available,
-        "gpu_available_count": gpu_available_count,
         "gpu_max": gpu_max,
-        "gpu_vram_available_gb": gpu_vram_available_gb,
-        "gpu_vram_total_gb": gpu_vram_total_gb,
-        "gpu_status": _hpc_resource_status(gpu_available) if gpu_max > 0 else "未検出",
+        "gpu_processes": gpu_processes,
+        "gpu_process_count": len(gpu_processes),
+        "gpu_processes_available": gpu_processes_available,
     }
 
 
