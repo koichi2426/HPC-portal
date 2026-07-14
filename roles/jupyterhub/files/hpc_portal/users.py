@@ -163,12 +163,18 @@ _HPC_CMD_ENV = {
 }
 
 
-def _hpc_run_cmd(cmd: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
+def _hpc_run_cmd(
+    cmd: list[str],
+    *,
+    input_text: str | None = None,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess:
     """固定PATHで管理コマンドを実行する。
 
     Args:
         cmd: シェルを介さず実行する引数配列。
         input_text: 標準入力へ渡す文字列。
+        timeout: コマンドを待つ最大秒数。Noneの場合は制限しない。
 
     Returns:
         標準出力と標準エラーを保持する実行結果。
@@ -179,6 +185,7 @@ def _hpc_run_cmd(cmd: list[str], *, input_text: str | None = None) -> subprocess
         text=True,
         capture_output=True,
         check=False,
+        timeout=timeout,
         env=_HPC_CMD_ENV,
     )
 

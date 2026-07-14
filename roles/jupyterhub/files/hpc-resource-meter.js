@@ -19,6 +19,7 @@
       cpu_total: "最大 " + (data.cpu_total || 0) + " vCPU",
       mem_status: data.mem_status,
       mem_available_gb: "残り " + format1(data.mem_available_gb) + " GB",
+      mem_used_gb: format1(data.mem_used_gb) + " GB",
       mem_total_gb: "最大 " + format1(data.mem_total_gb) + " GB",
       disk_status: data.disk_status,
       disk_available_gb: "残り " + format1(data.disk_available_gb) + " GB",
@@ -90,6 +91,9 @@
       el.classList.remove("hpc-resource-stale", "hpc-resource-loading");
       el.classList.add("hpc-resource-live");
     });
+    root.querySelectorAll("[data-resource-refresh-live]").forEach(function (el) {
+      el.textContent = "";
+    });
     root.classList.add("hpc-resource-refreshed");
     global.setTimeout(function () {
       root.classList.remove("hpc-resource-refreshed");
@@ -97,24 +101,39 @@
   }
 
   function setLoading(root) {
+    root.classList.add("hpc-resource-updating");
     root.querySelectorAll("[data-resource-updated-at]").forEach(function (el) {
-      if (!el.classList.contains("hpc-resource-live")) {
-        el.textContent = "取得中…";
-      }
-      el.classList.add("hpc-resource-loading");
       el.classList.remove("hpc-resource-stale");
+    });
+    root.querySelectorAll("[data-resource-refresh-status]").forEach(function (el) {
+      el.classList.add("is-updating");
+    });
+    root.querySelectorAll("[data-resource-refresh-live]").forEach(function (el) {
+      el.textContent = "取得中";
     });
   }
 
   function setError(root) {
     root.querySelectorAll("[data-resource-updated-at]").forEach(function (el) {
-      el.textContent = "更新失敗（5秒後に再試行）";
       el.classList.add("hpc-resource-stale");
       el.classList.remove("hpc-resource-loading", "hpc-resource-live");
+    });
+    root.querySelectorAll("[data-resource-refresh-live]").forEach(function (el) {
+      el.textContent = "更新に失敗しました。5秒後に再試行します";
+    });
+  }
+
+  function finishLoading(root) {
+    root.classList.remove("hpc-resource-updating");
+    root.querySelectorAll("[data-resource-refresh-status]").forEach(function (el) {
+      el.classList.remove("is-updating");
     });
   }
 
   function refresh(root) {
+    if (root.classList.contains("hpc-resource-updating")) {
+      return Promise.resolve();
+    }
     setLoading(root);
     return global
       .fetch(API_URL, {
@@ -134,6 +153,9 @@
       })
       .catch(function () {
         setError(root);
+      })
+      .then(function () {
+        finishLoading(root);
       });
   }
 
@@ -159,8 +181,8 @@
     });
   }
 
-  function closeGpuProcessMenus(event) {
-    global.document.querySelectorAll(".hpc-gpu-processes[open]").forEach(function (menu) {
+  function closeResourceMenus(event) {
+    global.document.querySelectorAll(".hpc-resource-menu[open], .hpc-gpu-processes[open]").forEach(function (menu) {
       if (!event || !menu.contains(event.target)) {
         menu.open = false;
       }
@@ -176,12 +198,12 @@
 
   function onReady() {
     startAll();
-    global.document.addEventListener("click", closeGpuProcessMenus);
+    global.document.addEventListener("click", closeResourceMenus);
     global.document.addEventListener("keydown", function (event) {
       if (event.key !== "Escape") return;
-      var openMenu = global.document.querySelector(".hpc-gpu-processes[open]");
+      var openMenu = global.document.querySelector(".hpc-resource-menu[open], .hpc-gpu-processes[open]");
       if (!openMenu) return;
-      closeGpuProcessMenus();
+      closeResourceMenus();
       var summary = openMenu.querySelector("summary");
       if (summary) summary.focus();
     });

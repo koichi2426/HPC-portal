@@ -26,7 +26,11 @@
   <div class="gx10-detail-card" data-hpc-resource-meter>
     <div class="hpc-row-between">
       <div class="hpc-section-title">ノードの空きリソース</div>
-      <div class="hpc-muted" data-resource-updated-at style="font-size:11px;">5秒ごとに自動更新</div>
+      <span class="hpc-refresh-status" data-resource-refresh-status aria-live="polite">
+        <span class="hpc-refresh-spinner" aria-hidden="true"></span>
+        <span data-resource-updated-at>最終更新 --:--:--</span>
+        <span class="visually-hidden" data-resource-refresh-live>取得中</span>
+      </span>
     </div>
     <div class="hpc-muted" style="font-size:11px; margin-top:4px;">Node: gx10-ac12（Slurm 割当ベース）</div>
     <div class="gx10-resource-grid compact" aria-label="ノードの空きリソース">
@@ -38,15 +42,20 @@
           <span data-resource-text="cpu_total">最大 {{ res.cpu_total }} vCPU</span>
         </div>
       </div>
-      <div class="gx10-resource-meter hpc-unified-memory" tabindex="0" aria-describedby="detail-unified-memory-help">
-        <div class="gx10-meter-head"><span class="hpc-resource-label">統合メモリ 空き <i class="hpc-resource-info-icon" aria-hidden="true">i</i></span><span class="gx10-meter-status" data-resource-text="mem_status">{{ res.mem_status }}</span></div>
-        <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="mem_available" style="width:{{ "%.0f"|format(res.mem_available) }}%;"></div></div>
-        <div class="gx10-meter-numbers">
-          <span data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</span>
-          <span data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</span>
+      <details class="gx10-resource-meter hpc-unified-memory hpc-resource-menu">
+        <summary class="hpc-unified-memory-summary" aria-label="統合メモリの説明を開く">
+          <div class="gx10-meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="gx10-meter-status" data-resource-text="mem_status">{{ res.mem_status }}</span></div>
+          <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="mem_available" style="width:{{ "%.0f"|format(res.mem_available) }}%;"></div></div>
+          <div class="gx10-meter-numbers"><span data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</span><span data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</span></div>
+        </summary>
+        <div class="hpc-unified-memory-panel">
+          <strong>統合メモリについて</strong>
+          <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
+          <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</dd></div></dl>
+          <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
+          {% if user and user.name in hpc_portal_admin_users %}<a href="/hub/home#running-applications">起動中アプリの割当を見る →</a>{% endif %}
         </div>
-        <span id="detail-unified-memory-help" class="hpc-resource-tooltip" role="tooltip">CPUとGPUが共有するメモリです。GPU専用VRAMはありません。</span>
-      </div>
+      </details>
       <div class="gx10-resource-meter">
         <div class="gx10-meter-head"><span>Storage</span><span class="gx10-meter-status" data-resource-text="disk_status">{{ res.disk_status }}</span></div>
         <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="disk_available" style="width:{{ "%.0f"|format(res.disk_available) }}%;"></div></div>
@@ -188,8 +197,8 @@
 {% endblock %}
 
 {% block script %}
-<script src="/hub/hpc-resource-meter.js?v=4"></script>
-<script src="/hub/hpc-app-status.js?v=2"></script>
+<script src="/hub/hpc-resource-meter.js?v=7"></script>
+<script src="/hub/hpc-app-status.js?v=8"></script>
 <script>
 window.HPC_HUB_USER = {{ user.name|tojson }};
 function hpcReadXsrf() {

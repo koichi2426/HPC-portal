@@ -75,53 +75,104 @@
 
 .hpc-unified-memory {
   position: relative;
+  padding: 0;
+  overflow: visible;
 }
 
-.hpc-resource-label {
-  display: inline-flex;
-  gap: 5px;
-  align-items: center;
+.hpc-unified-memory-summary {
+  display: block;
+  min-height: 82px;
+  padding: 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  list-style: none;
 }
 
-.hpc-resource-info-icon {
-  display: inline-grid;
-  width: 16px;
-  height: 16px;
-  place-items: center;
-  border: 1px solid var(--hpc-border);
-  border-radius: 50%;
-  color: var(--hpc-muted);
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 700;
-  line-height: 1;
+.resource-meter.hpc-unified-memory .hpc-unified-memory-summary {
+  min-height: 88px;
+  padding: 12px;
 }
 
-.hpc-resource-tooltip {
-  position: absolute;
-  z-index: 20;
-  top: 38px;
-  left: 10px;
-  width: min(260px, calc(100vw - 48px));
-  padding: 8px 10px;
-  border: 1px solid var(--hpc-border);
-  border-radius: 8px;
+.hpc-unified-memory-summary::-webkit-details-marker {
+  display: none;
+}
+
+.hpc-unified-memory-summary:hover,
+.hpc-unified-memory[open] .hpc-unified-memory-summary {
   background: var(--hpc-surface-muted);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
-  color: var(--hpc-text);
-  font-size: 11px;
-  line-height: 1.5;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-3px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-.hpc-unified-memory:hover .hpc-resource-tooltip,
-.hpc-unified-memory:focus .hpc-resource-tooltip,
-.hpc-unified-memory:focus-within .hpc-resource-tooltip {
-  opacity: 1;
-  transform: translateY(0);
+.hpc-unified-memory-summary:focus-visible {
+  outline: 2px solid var(--hpc-primary);
+  outline-offset: -2px;
+}
+
+.hpc-unified-memory-summary .hpc-resource-label::after {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 0 3px 8px;
+  border-right: 1.5px solid var(--hpc-muted);
+  border-bottom: 1.5px solid var(--hpc-muted);
+  content: "";
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.hpc-unified-memory[open] .hpc-resource-label::after {
+  transform: rotate(225deg) translate(-2px, -2px);
+}
+
+.hpc-unified-memory-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(320px, calc(100vw - 48px));
+  padding: 14px;
+  border: 1px solid var(--hpc-border);
+  border-radius: 9px;
+  background: var(--hpc-surface);
+  box-shadow: 0 10px 28px rgb(31 35 40 / 18%);
+  color: var(--hpc-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hpc-unified-memory-panel > p {
+  margin: 6px 0 10px;
+  color: var(--hpc-muted);
+}
+
+.hpc-unified-memory-panel dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.hpc-unified-memory-panel dl > div {
+  display: flex;
+  padding: 6px 0;
+  justify-content: space-between;
+  border-top: 1px solid var(--hpc-border-muted);
+}
+
+.hpc-unified-memory-panel dt {
+  color: var(--hpc-muted);
+  font-weight: 400;
+}
+
+.hpc-unified-memory-panel dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.hpc-unified-memory-panel .hpc-unified-memory-note {
+  margin-bottom: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hpc-border-muted);
+  font-size: 11px;
 }
 
 .hpc-gpu-processes {
@@ -222,6 +273,49 @@
   color: var(--hpc-muted);
 }
 
+.hpc-refresh-status {
+  display: inline-grid;
+  width: 132px;
+  min-height: 30px;
+  grid-template-columns: 14px 112px;
+  align-items: center;
+  column-gap: 6px;
+  color: var(--hpc-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.hpc-refresh-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--hpc-border);
+  border-top-color: var(--hpc-link);
+  border-radius: 50%;
+  opacity: 0;
+  animation: hpc-refresh-spin 0.8s linear infinite;
+  animation-play-state: paused;
+  transition: opacity 0.12s ease;
+}
+
+.hpc-refresh-status.is-updating .hpc-refresh-spinner {
+  opacity: 1;
+  animation-play-state: running;
+}
+
+.hpc-spawn-resource-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@keyframes hpc-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 .hpc-gpu-process-meta {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
@@ -233,8 +327,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hpc-resource-tooltip,
+  .hpc-unified-memory-summary .hpc-resource-label::after,
   .hpc-gpu-process-summary::after {
+    transition: none;
+  }
+
+  .hpc-refresh-spinner {
+    animation: none;
     transition: none;
   }
 }

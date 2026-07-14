@@ -7,6 +7,7 @@ from .common import (
     HPC_PORTAL_CSS,
     HPC_RESOURCE_METER_JS,
     SLURM_NODE_NAME,
+    asyncio,
     c,
     psutil,
     re,
@@ -214,6 +215,7 @@ def _hpc_resource_snapshot(disk_path="/home"):
     mem_available = max(0, min(100, mem.available / mem.total * 100))
     mem_available_gb = mem.available / (1024 ** 3)
     mem_total_gb = mem.total / (1024 ** 3)
+    mem_used_gb = max(0, mem_total_gb - mem_available_gb)
     try:
         disk = psutil.disk_usage(disk_path)
     except Exception:
@@ -230,6 +232,7 @@ def _hpc_resource_snapshot(disk_path="/home"):
         "cpu_status": _hpc_resource_status(cpu_available),
         "mem_available": mem_available,
         "mem_available_gb": mem_available_gb,
+        "mem_used_gb": mem_used_gb,
         "mem_total_gb": mem_total_gb,
         "mem_status": _hpc_resource_status(mem_available),
         "disk_available": disk_available,
@@ -254,7 +257,7 @@ class HpcResourceStatusHandler(BaseHandler):
     async def get(self):
         """現在の空きリソースをキャッシュ無効のJSONで返す。"""
         self.set_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        payload = _hpc_resource_snapshot()
+        payload = await asyncio.to_thread(_hpc_resource_snapshot)
         payload["updated_at"] = time.time()
         self.write(payload)
 

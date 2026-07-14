@@ -202,7 +202,7 @@ def make_options_form(spawner):
     <div id="resource-dashboard" data-hpc-resource-meter>
         <div class="gx10-card">
             <h3 class="hpc-page-title">gx10-ac12 Control Center</h3>
-            <div class="hpc-muted" style="font-size:0.8rem;">Node: gx10-ac12 <span data-resource-updated-at style="float:right;">5秒ごとに自動更新</span></div>
+            <div class="hpc-muted hpc-spawn-resource-head" style="font-size:0.8rem;">Node: gx10-ac12 <span class="hpc-refresh-status" data-resource-refresh-status aria-live="polite"><span class="hpc-refresh-spinner" aria-hidden="true"></span><span data-resource-updated-at>最終更新 --:--:--</span><span class="visually-hidden" data-resource-refresh-live>取得中</span></span></div>
             <div class="resource-grid" aria-label="現在使えるリソース">
                 <div class="resource-meter">
                     <div class="meter-head"><span>CPU 空き</span><span class="meter-status" data-resource-text="cpu_status">{cpu_status}</span></div>
@@ -214,17 +214,20 @@ def make_options_form(spawner):
                         <span data-resource-text="cpu_total">最大 {cpu_total} vCPU</span>
                     </div>
                 </div>
-                <div class="resource-meter hpc-unified-memory" tabindex="0" aria-describedby="form-unified-memory-help">
-                    <div class="meter-head"><span class="hpc-resource-label">統合メモリ 空き <i class="hpc-resource-info-icon" aria-hidden="true">i</i></span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
-                    <div class="meter-track" title="統合メモリの空きリソース">
-                        <div class="meter-fill" data-resource-width="mem_available" style="width:{mem_available:.0f}%;"></div>
+                <details class="resource-meter hpc-unified-memory hpc-resource-menu">
+                    <summary class="hpc-unified-memory-summary" aria-label="統合メモリの説明を開く">
+                        <div class="meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
+                        <div class="meter-track" title="統合メモリの空きリソース"><div class="meter-fill" data-resource-width="mem_available" style="width:{mem_available:.0f}%;"></div></div>
+                        <div class="meter-numbers"><span data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</span><span data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</span></div>
+                    </summary>
+                    <div class="hpc-unified-memory-panel">
+                        <strong>統合メモリについて</strong>
+                        <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
+                        <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{max(0, mem_total_gb - mem_available_gb):.1f} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</dd></div></dl>
+                        <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
+                        {'<a href="/hub/home#running-applications">起動中アプリの割当を見る →</a>' if is_portal_admin else ''}
                     </div>
-                    <div class="meter-numbers">
-                        <span data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</span>
-                        <span data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</span>
-                    </div>
-                    <span id="form-unified-memory-help" class="hpc-resource-tooltip" role="tooltip">CPUとGPUが共有するメモリです。GPU専用VRAMはありません。</span>
-                </div>
+                </details>
                 <div class="resource-meter">
                     <div class="meter-head"><span>Storage 空き</span><span class="meter-status" data-resource-text="disk_status">{disk_status}</span></div>
                     <div class="meter-track" title="Storage 空きリソース">
@@ -359,8 +362,8 @@ def make_options_form(spawner):
     """
     )
     static_js = (
-        '<script src="/hub/hpc-resource-meter.js?v=4"></script>'
-        '<script src="/hub/hpc-app-status.js?v=2"></script>'
+        '<script src="/hub/hpc-resource-meter.js?v=7"></script>'
+        '<script src="/hub/hpc-app-status.js?v=8"></script>'
     )
     return header_html + static_js + js_code
 

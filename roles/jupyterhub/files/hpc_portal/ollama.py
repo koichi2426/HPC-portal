@@ -226,4 +226,5 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
 
 c.JupyterHub.template_vars.update({
     "hpc_shared_ollama_detail": _hpc_shared_ollama_detail_context,
+    "hpc_ollama_version": HPC_OLLAMA_VERSION.removeprefix("v"),
 })
