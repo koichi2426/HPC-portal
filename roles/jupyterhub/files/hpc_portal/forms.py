@@ -81,7 +81,7 @@ def make_options_form(spawner):
         shared = _hpc_shared_ollama_detail_context()
         if shared.get("active"):
             active_sessions_html += (
-                f'<div class="gx10-app-card" data-hpc-shared-ollama-status style="padding:12px;margin-top:10px;">'
+                f'<div class="gx10-app-card" data-hpc-shared-ollama-status data-hpc-ollama-target-version="{html.escape(str(shared.get("target_version") or HPC_OLLAMA_VERSION), quote=True)}" style="padding:12px;margin-top:10px;">'
                 f'<div class="hpc-row-between">'
                 f'<div class="hpc-section-title">● Ollama <span class="hpc-muted" style="font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
                 f'<div class="hpc-inline-actions">'
@@ -89,9 +89,8 @@ def make_options_form(spawner):
                 f'</div></div>'
                 f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;">割り当て: '
                 f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
-                f'<span class="hpc-app-version" style="display:block;">起動中: '
-                f'<strong data-hpc-ollama-running-version>{"v" + html.escape(str(shared.get("version") or "")) if shared.get("version") else "確認中"}</strong> · '
-                f'新規起動: <strong data-hpc-ollama-target-version>v{html.escape(str(shared.get("target_version") or HPC_OLLAMA_VERSION))}</strong>'
+                f'<span class="hpc-app-version" style="display:block;">バージョン: '
+                f'<strong data-hpc-ollama-running-version>{"v" + html.escape(str(shared.get("version") or "")) if shared.get("version") else "確認中"}</strong>'
                 f'<span class="hpc-version-update" data-hpc-ollama-version-update{"" if shared.get("update_available") else " hidden"}>再起動で更新</span></span>'
                 f'</div>'
             )
@@ -136,9 +135,8 @@ def make_options_form(spawner):
             version_html = (
                 '<span class="hpc-app-version" style="display:block;margin-top:4px;" '
                 f'data-hpc-openwebui-version-url="/hub/apps/{version_server_path}/version">'
-                '<span data-hpc-running-version-label>起動時</span>: '
-                f'<strong data-hpc-running-version>{"v" + html.escape(running_version) if running_version else "確認中"}</strong> · '
-                f'新規起動: <strong data-hpc-target-version>v{html.escape(HPC_OPENWEBUI_VERSION)}</strong>'
+                'バージョン: '
+                f'<strong data-hpc-running-version>{"v" + html.escape(running_version) if running_version else "確認中"}</strong>'
                 '<span class="hpc-version-update" data-hpc-version-update hidden>再起動で更新</span></span>'
             )
         else:
@@ -153,8 +151,7 @@ def make_options_form(spawner):
             )
             version_html = (
                 '<span class="hpc-app-version" style="display:block;margin-top:4px;">'
-                f'起動時: <strong>{"Ubuntu " + html.escape(running_version) if running_version else "不明"}</strong> · '
-                f'新規起動: <strong>Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</strong>'
+                f'環境: <strong>{"Ubuntu " + html.escape(running_version) if running_version else "不明"}</strong>'
                 f'{update_html}</span>'
             )
         stop_btn = _hpc_stop_button_html(name)
@@ -179,7 +176,8 @@ def make_options_form(spawner):
                 f'<div class="hpc-row-between">'
                 f'<div class="hpc-section-title">● {app_label}</div>'
                 f'<div class="hpc-inline-actions">'
-                f'<a class="hpc-page-link" href="{url}" target="_blank">JUMP ↗</a>'
+                f'<a class="hpc-page-link hpc-external-link" href="{url}" target="_blank" rel="noopener noreferrer" aria-label="JUMPを新しいタブで開く">'
+                f'<span>JUMP</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>'
                 f'{stop_btn}</div></div>'
                 f'{alloc_html}{version_html}</div>'
             )
@@ -249,7 +247,7 @@ def make_options_form(spawner):
             <div class="form-group">
                 <label class="label">App Template</label>
                 <select class="form-control input-dark" name="app_choice">
-                    <option value="ubuntu-cli">Ubuntu CLI (JupyterLab)</option>
+                    <option value="ubuntu-cli">JupyterLab</option>
                     <option value="open-webui">Open WebUI (AI Chat)</option>
                     {shared_ollama_option}
                 </select>
@@ -363,7 +361,7 @@ def make_options_form(spawner):
     )
     static_js = (
         '<script src="/hub/hpc-resource-meter.js?v=7"></script>'
-        '<script src="/hub/hpc-app-status.js?v=9"></script>'
+        '<script src="/hub/hpc-app-status.js?v=10"></script>'
     )
     return header_html + static_js + js_code
 

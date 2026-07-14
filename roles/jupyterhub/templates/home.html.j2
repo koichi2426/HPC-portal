@@ -143,7 +143,7 @@
         {% set is_openwebui = _uo.get('app_choice') == 'open-webui' if _uo else false %}
         {% if is_openwebui %}
           {% set app_label = 'Open WebUI' %}
-        {% elif _uo.get('app_choice') in ['jupyterlab', 'jupyter'] %}
+        {% elif _uo.get('app_choice') in ['ubuntu-cli', 'jupyterlab', 'jupyter'] %}
           {% set app_label = 'JupyterLab' %}
         {% elif name %}
           {% set app_label = name %}
@@ -253,6 +253,6 @@
 
 {% block script %}
 <script src="/hub/hpc-resource-meter.js?v=7"></script>
-<script src="/hub/hpc-app-status.js?v=9"></script>
+<script src="/hub/hpc-app-status.js?v=10"></script>
 {% endblock %}
 {% endraw %}

@@ -299,12 +299,6 @@
       list.appendChild(line);
     });
     panel.appendChild(list);
-    if (app.app === "Ollama") {
-      var link = global.document.createElement("a");
-      link.href = "/hub/apps/shared-ollama";
-      link.textContent = "Ollama管理を開く →";
-      panel.appendChild(link);
-    }
     detailCell.appendChild(panel);
     detailRow.appendChild(detailCell);
 

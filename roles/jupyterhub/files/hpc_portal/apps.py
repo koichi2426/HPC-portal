@@ -265,7 +265,7 @@ def _hpc_allocation_summary(user_options) -> dict:
     app_choice = str(uo.get("app_choice", "ubuntu-cli"))
     if app_choice == "open-webui":
         app_label = "Open WebUI"
-    elif app_choice in ("jupyterlab", "jupyter"):
+    elif app_choice in ("ubuntu-cli", "jupyterlab", "jupyter"):
         app_label = "JupyterLab"
     else:
         app_label = app_choice.replace("-", " ").title() or "Application"
