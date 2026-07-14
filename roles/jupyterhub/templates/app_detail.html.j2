@@ -80,6 +80,28 @@
       <tr><th>メモリ</th><td>{{ d.allocation['memory'] }}</td></tr>
       <tr><th>GPU</th><td>{{ d.allocation['gpu_label'] }}</td></tr>
       <tr><th>最大実行時間</th><td>{{ d.allocation['runtime'] }} <span class="hpc-muted">({{ d.allocation['hours'] }})</span></td></tr>
+      {% if d.app_choice == 'open-webui' %}
+      <tr data-hpc-openwebui-version-url="/hub/apps/{{ d.server_name_path }}/version">
+        <th>バージョン</th>
+        <td class="hpc-app-version">
+          <span data-hpc-running-version-label>起動中</span>:
+          <strong data-hpc-running-version>{% if d.openwebui_version %}v{{ d.openwebui_version }}{% else %}確認中{% endif %}</strong>
+          <span aria-hidden="true">·</span>
+          新規起動: <strong data-hpc-target-version>v{{ d.openwebui_target_version }}</strong>
+          <span class="hpc-version-update" data-hpc-version-update hidden>再起動で更新</span>
+        </td>
+      </tr>
+      {% elif not d.shared_ollama %}
+      <tr>
+        <th>環境バージョン</th>
+        <td class="hpc-app-version">
+          起動時: <strong>{% if d.ubuntu_version %}Ubuntu {{ d.ubuntu_version }}{% else %}不明{% endif %}</strong>
+          <span aria-hidden="true">·</span>
+          新規起動: <strong>Ubuntu {{ d.ubuntu_target_version }}</strong>
+          {% if d.ubuntu_version and d.ubuntu_version != d.ubuntu_target_version %}<span class="hpc-version-update">再起動で更新</span>{% endif %}
+        </td>
+      </tr>
+      {% endif %}
     </table>
   </div>
 
@@ -89,6 +111,7 @@
       <tr><th>Slurm JOB ID</th><td>{% if d.job_id %}{{ d.job_id }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       {% if d.shared_ollama %}
       <tr><th>API</th><td><span data-hpc-ollama-api-status class="{% if d.api %}hpc-status-ok{% else %}hpc-status-warn{% endif %}">{% if d.api %}OK{% else %}起動待ち / 未応答{% endif %}</span></td></tr>
+      <tr><th>バージョン</th><td class="hpc-app-version">起動中: <strong data-hpc-ollama-running-version>{% if d.version %}v{{ d.version }}{% else %}確認中{% endif %}</strong> <span aria-hidden="true">·</span> 新規起動: <strong data-hpc-ollama-target-version>v{{ d.target_version }}</strong><span class="hpc-version-update" data-hpc-ollama-version-update {% if not d.update_available %}hidden{% endif %}>再起動で更新</span></td></tr>
       <tr><th>Port</th><td>{{ d.port }}</td></tr>
       <tr><th>Models dir</th><td><code style="font-size:11px;">{{ d.models_dir }}</code></td></tr>
       {% if d.status_error %}
@@ -166,7 +189,7 @@
 
 {% block script %}
 <script src="/hub/hpc-resource-meter.js?v=4"></script>
-<script src="/hub/hpc-app-status.js?v=1"></script>
+<script src="/hub/hpc-app-status.js?v=2"></script>
 <script>
 window.HPC_HUB_USER = {{ user.name|tojson }};
 function hpcReadXsrf() {

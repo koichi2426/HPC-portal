@@ -90,6 +90,10 @@ ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
 ollama_slurm_gpus: 1
 ollama_slurm_time: "INFINITE"
 
+
+# Ubuntu/JupyterLab
+jupyter_image_ubuntu_version: "24.04"
 # Open WebUI -> LiteLLM
+openwebui_version: "0.10.2"
 openwebui_litellm_base_url: "{{ litellm_internal_base_url }}/v1"
 openwebui_litellm_key_dir: /etc/litellm/openwebui-keys

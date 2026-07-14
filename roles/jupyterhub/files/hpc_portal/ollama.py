@@ -8,6 +8,7 @@ from .common import (
     HPC_OLLAMA_MODELS_DIR,
     HPC_OLLAMA_PORT,
     HPC_OLLAMA_RUNTIME,
+    HPC_OLLAMA_VERSION,
     c,
     json,
     re,
@@ -188,6 +189,8 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
                 })
     running = bool(status.get("running"))
     api = bool(status.get("api"))
+    running_version = str(status.get("version") or "").removeprefix("v")
+    target_version = HPC_OLLAMA_VERSION.removeprefix("v")
     return {
         "shared_ollama": True,
         "server_name": "shared-ollama",
@@ -211,6 +214,11 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
         "port": HPC_OLLAMA_PORT,
         "models_dir": HPC_OLLAMA_MODELS_DIR,
         "api": api,
+        "version": running_version,
+        "target_version": target_version,
+        "update_available": bool(
+            running_version and target_version and running_version != target_version
+        ),
         "models": models,
         "status_error": status_err or tags_err or "",
     }

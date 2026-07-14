@@ -5,6 +5,7 @@ JOB_NAME="{{ ollama_slurm_job_name }}"
 SERVICE_USER="{{ ollama_service_user }}"
 SBATCH_SCRIPT="/opt/hpc-portal/ollama/shared-ollama.sbatch"
 OLLAMA_URL="http://{{ ollama_host }}:{{ ollama_port }}"
+TARGET_VERSION="{{ ollama_version }}"
 OLLAMA_MODELS_DIR="{{ ollama_models_dir }}"
 DEFAULT_CPUS="{{ ollama_slurm_default_cpus }}"
 DEFAULT_MEMORY="{{ ollama_slurm_default_memory }}"
@@ -132,7 +133,7 @@ case "$cmd" in
   status)
     ids="$(running_job_ids)"
     if [ -z "$ids" ]; then
-      echo '{"running":false,"api":false}'
+      printf '{"running":false,"api":false,"version":"","target_version":"%s"}\n' "$(json_escape "$TARGET_VERSION")"
       exit 0
     fi
     ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
@@ -146,10 +147,11 @@ case "$cmd" in
     else
       job_gpus="$GPUS"
     fi
-    if curl -fsS "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
-      printf '{"running":true,"api":true,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")"
+    if version_response="$(curl -fsS "$OLLAMA_URL/api/version" 2>/dev/null)"; then
+      running_version="$(printf '%s' "$version_response" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+      printf '{"running":true,"api":true,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s","version":"%s","target_version":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")" "$(json_escape "$running_version")" "$(json_escape "$TARGET_VERSION")"
     else
-      printf '{"running":true,"api":false,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")"
+      printf '{"running":true,"api":false,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s","version":"","target_version":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")" "$(json_escape "$TARGET_VERSION")"
     fi
     ;;
   tags)

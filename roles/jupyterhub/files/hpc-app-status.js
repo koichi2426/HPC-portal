@@ -133,7 +133,68 @@
           status.classList.toggle("hpc-status-ok", Boolean(data.api));
           status.classList.toggle("hpc-status-warn", !data.api);
         });
+        root.querySelectorAll("[data-hpc-ollama-running-version]").forEach(function (version) {
+          version.textContent = data.version ? "v" + data.version.replace(/^v/, "") : "確認中";
+        });
+        root.querySelectorAll("[data-hpc-ollama-target-version]").forEach(function (version) {
+          if (data.target_version) {
+            version.textContent = "v" + data.target_version.replace(/^v/, "");
+          }
+        });
+        root.querySelectorAll("[data-hpc-ollama-version-update]").forEach(function (badge) {
+          var runningVersion = (data.version || "").replace(/^v/, "");
+          var targetVersion = (data.target_version || "").replace(/^v/, "");
+          badge.hidden = !(runningVersion && targetVersion && runningVersion !== targetVersion);
+        });
       });
+  }
+
+  function updateOpenWebuiVersion(root, body) {
+    var data = body.data || {};
+    var running = data.running_version || "";
+    var target = data.target_version || "";
+    var runningElement = root.querySelector("[data-hpc-running-version]");
+    var runningLabel = root.querySelector("[data-hpc-running-version-label]");
+    var targetElement = root.querySelector("[data-hpc-target-version]");
+    var updateElement = root.querySelector("[data-hpc-version-update]");
+
+    if (runningElement) {
+      runningElement.textContent = running ? "v" + running : "不明";
+    }
+    if (runningLabel) {
+      runningLabel.textContent = data.verified ? "起動中" : "起動時";
+    }
+    if (targetElement) {
+      targetElement.textContent = target ? "v" + target : "不明";
+    }
+    if (updateElement) {
+      updateElement.hidden = !data.update_available;
+    }
+  }
+
+  function refreshOpenWebuiVersions() {
+    var roots = Array.prototype.slice.call(
+      global.document.querySelectorAll("[data-hpc-openwebui-version-url]")
+    );
+    return Promise.all(
+      roots.map(function (root) {
+        var url = root.getAttribute("data-hpc-openwebui-version-url") || "";
+        if (!url) return Promise.resolve();
+        return requestJson(url, {
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+          .then(function (body) {
+            updateOpenWebuiVersion(root, body);
+          })
+          .catch(function () {
+            var runningElement = root.querySelector("[data-hpc-running-version]");
+            if (runningElement && runningElement.textContent === "確認中") {
+              runningElement.textContent = "不明";
+            }
+          });
+      })
+    );
   }
 
   function refreshNamedServers() {
@@ -193,12 +254,13 @@
   function start() {
     if (
       !global.document.querySelector(
-        "[data-hpc-app-status], [data-hpc-shared-ollama-status], [data-hpc-app-list]"
+        "[data-hpc-app-status], [data-hpc-shared-ollama-status], [data-hpc-app-list], [data-hpc-openwebui-version-url]"
       )
     ) {
       return;
     }
     refresh();
+    refreshOpenWebuiVersions();
     global.document.addEventListener("visibilitychange", function () {
       if (!global.document.hidden) {
         refresh();
@@ -206,7 +268,11 @@
     });
   }
 
-  global.HpcAppStatus = { refresh: refresh, start: start };
+  global.HpcAppStatus = {
+    refresh: refresh,
+    refreshOpenWebuiVersions: refreshOpenWebuiVersions,
+    start: start,
+  };
   if (global.document.readyState === "loading") {
     global.document.addEventListener("DOMContentLoaded", start);
   } else {

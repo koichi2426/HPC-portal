@@ -14,6 +14,9 @@ from .common import (
     HPC_OLLAMA_ALLOWED_MEMORY,
     HPC_OLLAMA_DEFAULT_CPUS,
     HPC_OLLAMA_DEFAULT_MEMORY,
+    HPC_OLLAMA_VERSION,
+    HPC_JUPYTER_UBUNTU_VERSION,
+    HPC_OPENWEBUI_VERSION,
     HPC_PUBLIC_SCHEME,
     c,
     html,
@@ -78,7 +81,7 @@ def make_options_form(spawner):
         shared = _hpc_shared_ollama_detail_context()
         if shared.get("active"):
             active_sessions_html += (
-                f'<div class="gx10-app-card" style="padding:12px;margin-top:10px;">'
+                f'<div class="gx10-app-card" data-hpc-shared-ollama-status style="padding:12px;margin-top:10px;">'
                 f'<div class="hpc-row-between">'
                 f'<div class="hpc-section-title">● Ollama <span class="hpc-muted" style="font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
                 f'<div class="hpc-inline-actions">'
@@ -86,6 +89,10 @@ def make_options_form(spawner):
                 f'</div></div>'
                 f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;">割り当て: '
                 f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
+                f'<span class="hpc-app-version" style="display:block;">起動中: '
+                f'<strong data-hpc-ollama-running-version>{"v" + html.escape(str(shared.get("version") or "")) if shared.get("version") else "確認中"}</strong> · '
+                f'新規起動: <strong data-hpc-ollama-target-version>v{html.escape(str(shared.get("target_version") or HPC_OLLAMA_VERSION))}</strong>'
+                f'<span class="hpc-version-update" data-hpc-ollama-version-update{"" if shared.get("update_available") else " hidden"}>再起動で更新</span></span>'
                 f'</div>'
             )
     for name, s in user.spawners.items():
@@ -121,7 +128,35 @@ def make_options_form(spawner):
         else:
             url = f"/user/{user.name}/{name}/" if name else f"/user/{user.name}/"
 
-        alloc_html = _hpc_allocation_html(getattr(s, "user_options", None) or {})
+        user_options = getattr(s, "user_options", None) or {}
+        alloc_html = _hpc_allocation_html(user_options)
+        running_version = str(user_options.get("openwebui_version", ""))
+        version_server_path = url_escape_path(str(name)) if name else "__default__"
+        if is_openwebui:
+            version_html = (
+                '<span class="hpc-app-version" style="display:block;margin-top:4px;" '
+                f'data-hpc-openwebui-version-url="/hub/apps/{version_server_path}/version">'
+                '<span data-hpc-running-version-label>起動時</span>: '
+                f'<strong data-hpc-running-version>{"v" + html.escape(running_version) if running_version else "確認中"}</strong> · '
+                f'新規起動: <strong data-hpc-target-version>v{html.escape(HPC_OPENWEBUI_VERSION)}</strong>'
+                '<span class="hpc-version-update" data-hpc-version-update hidden>再起動で更新</span></span>'
+            )
+        else:
+            # 旧構成もUbuntu 24.04固定だったため、保存値がない既存jobは現行設定値で補完する。
+            running_version = str(
+                user_options.get("ubuntu_version") or HPC_JUPYTER_UBUNTU_VERSION
+            )
+            update_html = (
+                '<span class="hpc-version-update">再起動で更新</span>'
+                if running_version and running_version != HPC_JUPYTER_UBUNTU_VERSION
+                else ""
+            )
+            version_html = (
+                '<span class="hpc-app-version" style="display:block;margin-top:4px;">'
+                f'起動時: <strong>{"Ubuntu " + html.escape(running_version) if running_version else "不明"}</strong> · '
+                f'新規起動: <strong>Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</strong>'
+                f'{update_html}</span>'
+            )
         stop_btn = _hpc_stop_button_html(name)
         server_name_attr = html.escape(str(name or ""), quote=True)
 
@@ -134,6 +169,7 @@ def make_options_form(spawner):
                 f'<div>● {app_label} <span data-hpc-app-status-text class="hpc-status-warn">起動中（{pending_state}）</span></div>'
                 f'<div>{stop_btn}</div></div>'
                 f'{alloc_html}'
+                f'{version_html}'
                 f'<div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" role="progressbar" aria-label="アプリを起動しています"><div class="hpc-progress-fill"></div></div>'
                 f'</div>'
             )
@@ -145,7 +181,7 @@ def make_options_form(spawner):
                 f'<div class="hpc-inline-actions">'
                 f'<a class="hpc-page-link" href="{url}" target="_blank">JUMP ↗</a>'
                 f'{stop_btn}</div></div>'
-                f'{alloc_html}</div>'
+                f'{alloc_html}{version_html}</div>'
             )
 
     if not active_sessions_html:
@@ -214,6 +250,10 @@ def make_options_form(spawner):
                     <option value="open-webui">Open WebUI (AI Chat)</option>
                     {shared_ollama_option}
                 </select>
+                <div id="app-version-help" class="hpc-app-version" style="margin-top:8px;"
+                     data-ubuntu-label="Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION, quote=True)}"
+                     data-openwebui-label="Open WebUI v{html.escape(HPC_OPENWEBUI_VERSION, quote=True)}"
+                     data-ollama-label="Ollama v{html.escape(HPC_OLLAMA_VERSION, quote=True)}">新規起動: Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</div>
                 <div id="shared-ollama-options" class="hpc-shared-options">
                     <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
                     <div class="hpc-form-grid-3">
@@ -263,6 +303,7 @@ def make_options_form(spawner):
         const sharedBox = document.getElementById("shared-ollama-options");
         const standardBox = document.getElementById("standard-resource-options");
         const standardHelp = document.getElementById("standard-resource-help");
+        const appVersionHelp = document.getElementById("app-version-help");
         function refreshAppChoice() {
             if (!appChoice) return;
             const isSharedOllama = appChoice.value === "shared-ollama";
@@ -274,6 +315,12 @@ def make_options_form(spawner):
                 });
             }
             if (standardHelp) standardHelp.style.display = isSharedOllama ? "none" : "block";
+            if (appVersionHelp) {
+                const labelKey = appChoice.value === "open-webui"
+                    ? "openwebuiLabel"
+                    : (isSharedOllama ? "ollamaLabel" : "ubuntuLabel");
+                appVersionHelp.textContent = "新規起動: " + appVersionHelp.dataset[labelKey];
+            }
         }
         if (appChoice) {
             appChoice.addEventListener("change", refreshAppChoice);
@@ -313,7 +360,7 @@ def make_options_form(spawner):
     )
     static_js = (
         '<script src="/hub/hpc-resource-meter.js?v=4"></script>'
-        '<script src="/hub/hpc-app-status.js?v=1"></script>'
+        '<script src="/hub/hpc-app-status.js?v=2"></script>'
     )
     return header_html + static_js + js_code
 
@@ -346,6 +393,8 @@ def options_from_form(formdata):
         "gpu": str(g),
         "app_choice": app_choice,
         "job_name": "jhub-openwebui" if app_choice == "open-webui" else "jhub-app",
+        "openwebui_version": HPC_OPENWEBUI_VERSION if app_choice == "open-webui" else "",
+        "ubuntu_version": HPC_JUPYTER_UBUNTU_VERSION if app_choice != "open-webui" else "",
     }
 
 
@@ -367,8 +416,15 @@ def apply_user_options(spawner, user_options):
     spawner.user_options["app_choice"] = app_choice
     spawner.user_options["job_name"] = "jhub-openwebui" if app_choice == "open-webui" else "jhub-app"
     if app_choice == "open-webui":
+        spawner.user_options["openwebui_version"] = str(
+            user_options.get("openwebui_version", HPC_OPENWEBUI_VERSION)
+        )
         # BatchSpawner の service_url が :0 になると pending から進めないため、
         # server_name ベースで Hub 側ポートを事前確定する
         seed = str(getattr(spawner, "name", "") or "")
         h = sum(ord(c) for c in seed) % 20000
         spawner.port = 20000 + h
+    else:
+        spawner.user_options["ubuntu_version"] = str(
+            user_options.get("ubuntu_version", HPC_JUPYTER_UBUNTU_VERSION)
+        )

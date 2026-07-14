@@ -2,7 +2,11 @@
 
 from jupyterhub.handlers.pages import SpawnHandler
 
-from .apps import HpcAppDetailHandler, _is_openwebui_spawner
+from .apps import (
+    HpcAppDetailHandler,
+    HpcOpenWebuiVersionHandler,
+    _is_openwebui_spawner,
+)
 from .common import (
     BaseHandler,
     HPC_LITELLM_PUBLIC_BASE_URL,
@@ -731,6 +735,7 @@ c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJ
 c.JupyterHub.extra_handlers.append((r"/hpc-app-status.js", HpcAppStatusJsHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-portal.css", HpcPortalCssHandler))
 c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
+c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)/version", HpcOpenWebuiVersionHandler))
 c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
 c.JupyterHub.extra_handlers.append((r"/llm-api/api", HpcLlmApiApiHandler))
 c.JupyterHub.extra_handlers.append((r"/llm-api", HpcLlmApiPageHandler))

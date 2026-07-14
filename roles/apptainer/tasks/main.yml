@@ -48,10 +48,26 @@
     group: root
     mode: "0644"
   loop:
-    - { src: jupyter-cpu.def }
-    - { src: openwebui.def }
     - { src: ubuntu-22.04-ttyd.def }
   register: apptainer_def_copy
+
+- name: JupyterLab Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: jupyter-cpu.def.j2
+    dest: /opt/apptainer/jupyter-cpu.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: apptainer_jupyter_def_template
+
+- name: Open WebUI Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: openwebui.def.j2
+    dest: /opt/apptainer/openwebui.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: apptainer_openwebui_def_template
 
 - name: Ollama Apptainer定義ファイルを配置
   ansible.builtin.template:
@@ -84,7 +100,12 @@
       | first
       | default(false))
     or
+    (item.src == 'jupyter-cpu.def' and apptainer_jupyter_def_template.changed)
+    or
     (item.src == 'ollama.def' and ollama_def_template.changed)
+    or
+    (item.src == 'openwebui.def' and
+      apptainer_openwebui_def_template.changed)
     or
     not
     (apptainer_image_stat.results

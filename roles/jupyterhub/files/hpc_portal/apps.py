@@ -3,11 +3,16 @@
 from .common import (
     BaseHandler,
     HPC_JOB_DNS_DOMAIN,
+    HPC_JUPYTER_UBUNTU_VERSION,
+    HPC_OPENWEBUI_VERSION,
     HPC_PUBLIC_SCHEME,
+    asyncio,
     c,
     html,
+    json,
     secrets,
     time,
+    urllib,
     url_escape_path,
     url_path_join,
     web,
@@ -91,6 +96,93 @@ class HpcAppDetailHandler(BaseHandler):
             )
             raise
         self.finish(html)
+
+
+def _hpc_openwebui_runtime_version(spawner) -> tuple[str | None, str | None]:
+    """起動中Open WebUIの公開バージョンAPIをローカル経由で確認する。
+
+    Args:
+        spawner: 確認対象のOpen WebUI Spawner。
+
+    Returns:
+        ``(バージョン, エラー)``。確認できない場合はバージョンがNone。
+    """
+    try:
+        port = int(getattr(spawner, "port", 0) or 0)
+    except (TypeError, ValueError):
+        return None, "ポートを確認できません"
+    if not 1 <= port <= 65535:
+        return None, "ポートを確認できません"
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/version",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=1.0) as response:
+            payload = json.loads(response.read(65536).decode("utf-8"))
+        version = str(payload.get("version") or "").strip().removeprefix("v")
+        if not version:
+            return None, "バージョンが空です"
+        return version, None
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return None, str(exc)
+
+
+class HpcOpenWebuiVersionHandler(BaseHandler):
+    """ログインユーザー自身のOpen WebUIバージョンを返す。"""
+
+    @web.authenticated
+    async def get(self, server_name_path):
+        """起動中と新規起動のOpen WebUIバージョンを返す。
+
+        Args:
+            server_name_path: URLに含まれるnamed server名。
+
+        Raises:
+            web.HTTPError: 対象が存在しない、またはOpen WebUIではない場合。
+        """
+        server_name = _hpc_server_name_from_path(server_name_path)
+        spawner = self.current_user.spawners.get(server_name)
+        if spawner is None or not _is_openwebui_spawner(spawner):
+            raise web.HTTPError(404, "Open WebUIが見つかりません")
+
+        stored_version = str(
+            (getattr(spawner, "user_options", None) or {}).get(
+                "openwebui_version", ""
+            )
+        ).strip().removeprefix("v")
+        runtime_version = None
+        runtime_error = None
+        verified = False
+        if getattr(spawner, "active", False):
+            runtime_version, runtime_error = await asyncio.to_thread(
+                _hpc_openwebui_runtime_version, spawner
+            )
+            verified = bool(runtime_version)
+            if runtime_error:
+                self.log.debug(
+                    "HPC: Open WebUI version check failed for %s: %s",
+                    server_name,
+                    runtime_error,
+                )
+        displayed_version = runtime_version or stored_version or None
+        target_version = HPC_OPENWEBUI_VERSION.removeprefix("v")
+        self.set_header("Cache-Control", "no-store")
+        self.write(
+            {
+                "ok": True,
+                "data": {
+                    "running_version": displayed_version,
+                    "target_version": target_version,
+                    "verified": verified,
+                    "update_available": bool(
+                        displayed_version
+                        and target_version
+                        and displayed_version != target_version
+                    ),
+                },
+            }
+        )
 
 
 def _job_host(job_id: str) -> str:
@@ -302,6 +394,13 @@ def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
         "port": port,
         "public_url": getattr(spawner, "public_url", "") or "",
         "proxy_spec": getattr(spawner, "proxy_spec", "") or "",
+        "openwebui_version": str(uo.get("openwebui_version", "")),
+        "openwebui_target_version": HPC_OPENWEBUI_VERSION,
+        # 旧構成のJupyterイメージもUbuntu 24.04固定だったため、保存値がない既存jobは現行設定値で補完する。
+        "ubuntu_version": str(
+            uo.get("ubuntu_version") or HPC_JUPYTER_UBUNTU_VERSION
+        ),
+        "ubuntu_target_version": HPC_JUPYTER_UBUNTU_VERSION,
     }
 
 

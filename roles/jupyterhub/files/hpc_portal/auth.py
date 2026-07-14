@@ -3,8 +3,10 @@
 from .common import (
     BaseHandler,
     HPC_JOB_DNS_DOMAIN,
+    HPC_JUPYTER_UBUNTU_VERSION,
     HPC_LITELLM_ADMIN_URL,
     HPC_LITELLM_PUBLIC_BASE_URL,
+    HPC_OPENWEBUI_VERSION,
     HPC_PORTAL_ADMIN_USERS,
     HPC_PUBLIC_DOMAIN,
     HPC_PUBLIC_SCHEME,
@@ -206,6 +208,6 @@ c.JupyterHub.template_vars = {
     "hpc_portal_admin_users": sorted(HPC_PORTAL_ADMIN_USERS),
     "hpc_litellm_public_base_url": HPC_LITELLM_PUBLIC_BASE_URL,
     "hpc_litellm_admin_url": HPC_LITELLM_ADMIN_URL,
+    "hpc_openwebui_version": HPC_OPENWEBUI_VERSION,
+    "hpc_jupyter_ubuntu_version": HPC_JUPYTER_UBUNTU_VERSION,
 }
-
-

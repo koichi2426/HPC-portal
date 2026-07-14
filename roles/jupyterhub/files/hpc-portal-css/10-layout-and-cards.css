@@ -163,6 +163,33 @@
   overflow-wrap: anywhere;
 }
 
+.hpc-app-version {
+  margin-top: 5px;
+  color: var(--hpc-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.hpc-app-version strong {
+  color: var(--hpc-text);
+  font-weight: 600;
+}
+
+.hpc-version-update {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--hpc-warning) 45%, var(--hpc-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hpc-warning) 10%, transparent);
+  color: var(--hpc-warning);
+  font-weight: 600;
+}
+
+.hpc-version-update[hidden] {
+  display: none;
+}
+
 .gx10-app-card-link {
   display: block;
   padding: 12px;
@@ -201,4 +228,3 @@
 .hpc-note strong {
   color: var(--hpc-text);
 }
-
