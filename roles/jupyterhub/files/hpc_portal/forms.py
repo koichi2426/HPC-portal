@@ -363,7 +363,7 @@ def make_options_form(spawner):
     )
     static_js = (
         '<script src="/hub/hpc-resource-meter.js?v=7"></script>'
-        '<script src="/hub/hpc-app-status.js?v=8"></script>'
+        '<script src="/hub/hpc-app-status.js?v=9"></script>'
     )
     return header_html + static_js + js_code
 

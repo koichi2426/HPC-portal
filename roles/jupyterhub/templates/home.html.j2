@@ -115,6 +115,7 @@
          data-hpc-shared-ollama-status
          data-hpc-shared-ollama-home-card
          data-hpc-reload-on-change="false"
+         data-hpc-ollama-target-version="{{ hpc_ollama_version }}"
          data-hpc-app-state="pending"
          hidden>
       <a class="gx10-app-card-link" href="/hub/apps/shared-ollama">
@@ -122,9 +123,7 @@
           <div class="hpc-section-title">Ollama <span class="hpc-muted" data-hpc-ollama-job-id style="font-size:11px;"></span></div>
           <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: <span data-hpc-ollama-allocation>確認中</span></div>
           <div class="hpc-app-version">
-            起動中: <strong data-hpc-ollama-running-version>確認中</strong>
-            <span aria-hidden="true">·</span>
-            新規起動: <strong data-hpc-ollama-target-version>v{{ hpc_ollama_version }}</strong>
+            バージョン: <strong data-hpc-ollama-running-version>確認中</strong>
             <span class="hpc-version-update" data-hpc-ollama-version-update hidden>再起動で更新</span>
           </div>
           <div data-hpc-app-status-text class="hpc-status-warn" style="font-size:12px; margin-top:4px;">状態を確認中</div>
@@ -210,19 +209,15 @@
               <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ alloc_line }}</div>
               {% if is_openwebui and not spawn_error %}
               <div class="hpc-app-version" data-hpc-openwebui-version-url="/hub/apps/{{ sn_path }}/version">
-                <span data-hpc-running-version-label>{% if spawner.active %}起動中{% else %}起動時{% endif %}</span>:
+                バージョン:
                 <strong data-hpc-running-version>{% if _uo.get('openwebui_version') %}v{{ _uo.get('openwebui_version') }}{% else %}確認中{% endif %}</strong>
-                <span aria-hidden="true">·</span>
-                新規起動: <strong data-hpc-target-version>v{{ hpc_openwebui_version }}</strong>
                 <span class="hpc-version-update" data-hpc-version-update hidden>再起動で更新</span>
               </div>
               {% elif not spawn_error %}
               {# 旧構成のイメージもUbuntu 24.04固定だったため、保存値がない既存jobは現行値で補完する。 #}
               {% set running_ubuntu_version = _uo.get('ubuntu_version') or hpc_jupyter_ubuntu_version %}
               <div class="hpc-app-version">
-                起動時: <strong>{% if running_ubuntu_version %}Ubuntu {{ running_ubuntu_version }}{% else %}不明{% endif %}</strong>
-                <span aria-hidden="true">·</span>
-                新規起動: <strong>Ubuntu {{ hpc_jupyter_ubuntu_version }}</strong>
+                環境: <strong>{% if running_ubuntu_version %}Ubuntu {{ running_ubuntu_version }}{% else %}不明{% endif %}</strong>
                 {% if running_ubuntu_version and running_ubuntu_version != hpc_jupyter_ubuntu_version %}<span class="hpc-version-update">再起動で更新</span>{% endif %}
               </div>
               {% endif %}
@@ -258,6 +253,6 @@
 
 {% block script %}
 <script src="/hub/hpc-resource-meter.js?v=7"></script>
-<script src="/hub/hpc-app-status.js?v=8"></script>
+<script src="/hub/hpc-app-status.js?v=9"></script>
 {% endblock %}
 {% endraw %}

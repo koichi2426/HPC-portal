@@ -129,6 +129,8 @@
     global.document
       .querySelectorAll("[data-hpc-shared-ollama-status]")
       .forEach(function (root) {
+        var configuredTargetVersion =
+          root.getAttribute("data-hpc-ollama-target-version") || "";
         if (root.hasAttribute("data-hpc-shared-ollama-home-card")) {
           root.hidden = !data.running;
         }
@@ -152,13 +154,16 @@
           version.textContent = data.version ? "v" + data.version.replace(/^v/, "") : "確認中";
         });
         root.querySelectorAll("[data-hpc-ollama-target-version]").forEach(function (version) {
-          if (data.target_version) {
-            version.textContent = "v" + data.target_version.replace(/^v/, "");
+          var targetVersion = data.target_version || configuredTargetVersion;
+          if (targetVersion) {
+            version.textContent = "v" + targetVersion.replace(/^v/, "");
           }
         });
         root.querySelectorAll("[data-hpc-ollama-version-update]").forEach(function (badge) {
           var runningVersion = (data.version || "").replace(/^v/, "");
-          var targetVersion = (data.target_version || "").replace(/^v/, "");
+          var targetVersion = (
+            data.target_version || configuredTargetVersion || ""
+          ).replace(/^v/, "");
           badge.hidden = !(runningVersion && targetVersion && runningVersion !== targetVersion);
         });
       });
