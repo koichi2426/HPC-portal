@@ -554,6 +554,28 @@ def _hpc_litellm_is_portal_external_key(record: dict, username: str) -> bool:
     return str(record.get("key_alias") or "") == username
 
 
+def _hpc_litellm_user_external_api_state(username: str) -> tuple[str, str | None]:
+    """管理画面向けに外部APIの利用状態を取得する。
+
+    Returns:
+        ``(状態, エラー)``。状態は enabled / disabled / unissued / unknown。
+    """
+    disabled, err = _hpc_litellm_user_admin_disabled(username)
+    if err:
+        lowered = str(err).lower()
+        if "http 404" in lowered or "not found" in lowered:
+            return "unissued", None
+        return "unknown", _hpc_safe_litellm_error(err)
+    if disabled:
+        return "disabled", None
+    records, err = _hpc_litellm_list_user_keys(username)
+    if err:
+        return "unknown", _hpc_safe_litellm_error(err)
+    if any(_hpc_litellm_is_portal_external_key(record, username) for record in records):
+        return "enabled", None
+    return "unissued", None
+
+
 def _hpc_litellm_external_api_key_lock(username: str):
     """同じユーザーの外部API key再発行を直列化する。"""
     with _HPC_EXTERNAL_API_KEY_LOCKS_GUARD:
@@ -762,7 +784,21 @@ def _hpc_litellm_set_user_keys_blocked(
     return None
 
 
-def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | None:
+def _hpc_litellm_ensure_external_api_key(username: str) -> tuple[str | None, str | None]:
+    """ポータル用外部API keyがなければ新規発行する。"""
+    with _hpc_litellm_external_api_key_lock(username):
+        records, err = _hpc_litellm_list_user_keys(username)
+        if err:
+            return None, err
+        if any(_hpc_litellm_is_portal_external_key(record, username) for record in records):
+            return None, None
+        return _hpc_litellm_generate_key(username)
+
+
+def _hpc_litellm_admin_set_api_access(
+    username: str,
+    enabled: bool,
+) -> tuple[str | None, str | None]:
     """利用者単位で外部APIとOpen WebUIの利用可否を切り替える。
 
     Args:
@@ -770,20 +806,20 @@ def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | Non
         enabled: 有効化する場合はTrue。
 
     Returns:
-        正常ならNone、失敗または部分失敗ならエラーメッセージ。
+        ``(新規発行したAPI key, エラー)``。既存keyの再有効化時はkeyを返さない。
     """
     if not _hpc_litellm_enabled():
-        return "LiteLLM Admin API が未設定です"
+        return None, "LiteLLM Admin API が未設定です"
     try:
         pwd.getpwnam(username)
     except KeyError:
-        return "ユーザーが見つかりません"
+        return None, "ユーザーが見つかりません"
     if not enabled:
         # 先にユーザーを停止状態へし、新規Open WebUI起動を拒否する。
         user_err = _hpc_litellm_set_user_admin_disabled(username, True)
         if user_err:
             _hpc_log_litellm_action("api_disable", username, "failed", user_err)
-            return user_err
+            return None, user_err
         external_err = _hpc_litellm_set_user_keys_blocked(
             username,
             blocked=True,
@@ -795,9 +831,15 @@ def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | Non
         if errors:
             joined = "; ".join(errors)
             _hpc_log_litellm_action("api_disable", username, "partial", joined)
-            return joined
+            return None, joined
         _hpc_log_litellm_action("api_disable", username, "ok")
-        return None
+        return None, None
+
+    # 未登録ユーザーも同じ操作で有効化できるよう、先にLiteLLMユーザーを用意する。
+    user_err = _hpc_litellm_ensure_user(username)
+    if user_err:
+        _hpc_log_litellm_action("api_enable", username, "failed", user_err)
+        return None, user_err
 
     # 再有効化では保存済みの同じOpen WebUI keyをunblockする。どれかが失敗したら
     # user metadataは停止状態のままにし、部分的な有効化を避ける。
@@ -811,8 +853,16 @@ def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | Non
     errors = [error for error in (external_err, openwebui_err) if error]
     if errors:
         joined = "; ".join(errors)
+        _hpc_litellm_set_user_admin_disabled(username, True)
+        _hpc_litellm_set_user_keys_blocked(
+            username,
+            blocked=True,
+            mark_admin_disabled=True,
+            include_openwebui=False,
+        )
+        _hpc_litellm_set_openwebui_key_blocked(username, True)
         _hpc_log_litellm_action("api_enable", username, "failed", joined)
-        return joined
+        return None, joined
     user_err = _hpc_litellm_set_user_admin_disabled(username, False)
     if user_err:
         # user metadata更新失敗時は、先に有効化したkeyを再停止する。
@@ -824,9 +874,26 @@ def _hpc_litellm_admin_set_api_access(username: str, enabled: bool) -> str | Non
         )
         _hpc_litellm_set_openwebui_key_blocked(username, True)
         _hpc_log_litellm_action("api_enable", username, "failed", user_err)
-        return user_err
+        return None, user_err
+
+    api_key, key_err = _hpc_litellm_ensure_external_api_key(username)
+    if key_err:
+        # 有効化とkey発行を一操作として扱い、発行失敗時は停止状態へ戻す。
+        _hpc_litellm_set_user_admin_disabled(username, True)
+        _hpc_litellm_set_user_keys_blocked(
+            username,
+            blocked=True,
+            mark_admin_disabled=True,
+            include_openwebui=False,
+        )
+        _hpc_litellm_set_openwebui_key_blocked(username, True)
+        safe_error = _hpc_safe_litellm_error(key_err)
+        _hpc_log_litellm_action("api_enable_key_generate", username, "failed", safe_error)
+        return None, safe_error
+    if api_key:
+        _hpc_log_litellm_action("api_enable_key_generate", username, "ok")
     _hpc_log_litellm_action("api_enable", username, "ok")
-    return None
+    return api_key, None
 
 
 def _hpc_litellm_regenerate_own_key(username: str) -> tuple[str | None, str | None]:
@@ -886,4 +953,3 @@ def _hpc_litellm_delete_user_keys(username: str) -> str | None:
         except RuntimeError as exc:
             last_err = str(exc)
     return block_err or last_err or "LiteLLM user/key 無効化に失敗しました"
-

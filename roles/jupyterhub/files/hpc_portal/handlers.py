@@ -8,6 +8,7 @@ from .common import (
     HPC_LITELLM_PUBLIC_BASE_URL,
     HPC_PORTAL_GRANT_SUDO,
     HPC_PORTAL_PROTECTED_USERS,
+    asyncio,
     c,
     json,
     logging,
@@ -22,6 +23,7 @@ from .litellm import (
     _hpc_litellm_generate_key,
     _hpc_litellm_list_models,
     _hpc_litellm_regenerate_own_key,
+    _hpc_litellm_user_external_api_state,
     _hpc_litellm_user_admin_disabled,
     _hpc_log_litellm_action,
     _hpc_safe_litellm_error,
@@ -37,6 +39,7 @@ from .users import (
     _hpc_create_linux_user,
     _hpc_delete_linux_user,
     _hpc_generate_password,
+    _hpc_home_storage_usage,
     _hpc_is_portal_admin,
     _hpc_linux_users_snapshot,
     _hpc_run_cmd,
@@ -49,6 +52,62 @@ from .users import (
 )
 
 HPC_PASSWORD_LOG = logging.getLogger("jupyterhub.hpc-password")
+
+_HPC_ADMIN_API_STATUS_CONCURRENCY = 8
+_HPC_ADMIN_STORAGE_CONCURRENCY = 4
+
+
+def _hpc_format_storage_bytes(value: int) -> str:
+    """ストレージ使用量を管理画面向けの短い表記にする。"""
+    size = float(max(value, 0))
+    units = ("B", "KB", "MB", "GB", "TB", "PB")
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+
+def _hpc_litellm_access_state(username: str) -> tuple[str, str]:
+    """管理者によるLLM API利用状態を一覧表示用に取得する。"""
+    state, err = _hpc_litellm_user_external_api_state(username)
+    return state, ("LLM APIの状態を取得できません" if err else "")
+
+
+async def _hpc_admin_users_snapshot() -> list[dict]:
+    """Linuxユーザー一覧へLLM API状態とホーム使用量を付加する。"""
+    rows = _hpc_linux_users_snapshot()
+    api_semaphore = asyncio.Semaphore(_HPC_ADMIN_API_STATUS_CONCURRENCY)
+    storage_semaphore = asyncio.Semaphore(_HPC_ADMIN_STORAGE_CONCURRENCY)
+
+    async def api_state(username: str) -> tuple[str, str]:
+        if not _hpc_litellm_enabled():
+            return "unknown", "LiteLLM Admin APIが未設定です"
+        async with api_semaphore:
+            return await asyncio.to_thread(_hpc_litellm_access_state, username)
+
+    async def storage_usage(home: str) -> tuple[int | None, str | None]:
+        async with storage_semaphore:
+            return await asyncio.to_thread(_hpc_home_storage_usage, home)
+
+    async def enrich(row: dict) -> dict:
+        updated = dict(row)
+        (access, access_message), (used_bytes, storage_error) = await asyncio.gather(
+            api_state(row["username"]),
+            storage_usage(row["home"]),
+        )
+        updated["api_access"] = access
+        updated["api_access_message"] = access_message
+        updated["storage_used_bytes"] = used_bytes
+        updated["storage_used_label"] = (
+            _hpc_format_storage_bytes(used_bytes) if used_bytes is not None else "確認不可"
+        )
+        updated["storage_message"] = storage_error or ""
+        return updated
+
+    return list(await asyncio.gather(*(enrich(row) for row in rows)))
 
 
 def _hpc_log_password_success(actor: str, target: str) -> None:
@@ -80,7 +139,7 @@ class HpcAdminUsersPageHandler(BaseHandler):
         ):
             self.redirect(url_path_join(self.hub.base_url, "admin", "users"))
             return
-        users = _hpc_linux_users_snapshot()
+        users = await _hpc_admin_users_snapshot()
         xsrf_token = self.xsrf_token
         if isinstance(xsrf_token, bytes):
             xsrf_token = xsrf_token.decode("utf-8", errors="replace")
@@ -317,7 +376,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
         """Linuxユーザー一覧をJSONで返す。"""
         self._require_admin()
         self.set_header("Cache-Control", "no-store")
-        self.write({"users": _hpc_linux_users_snapshot()})
+        self.write({"users": await _hpc_admin_users_snapshot()})
 
     @web.authenticated
     async def post(self):
@@ -401,8 +460,10 @@ class HpcAdminUsersApiHandler(BaseHandler):
         if action in {"api_disable", "api_enable"}:
             if not username:
                 return self._api_error(400, "username が必要です")
+            if username in HPC_PORTAL_PROTECTED_USERS:
+                return self._api_error(400, "保護されたユーザーのLLM APIは変更できません")
             enabled = action == "api_enable"
-            err = _hpc_litellm_admin_set_api_access(username, enabled)
+            api_key, err = _hpc_litellm_admin_set_api_access(username, enabled)
             stop_err = None
             if not enabled:
                 # key blockが一部失敗しても、起動中Open WebUIの停止は必ず試行する。
@@ -410,7 +471,11 @@ class HpcAdminUsersApiHandler(BaseHandler):
             errors = [error for error in (err, stop_err) if error]
             if errors:
                 return self._api_error(400, "; ".join(errors))
-            self.write({"ok": True, "enabled": enabled})
+            response = {"ok": True, "enabled": enabled}
+            if api_key:
+                response["api_key"] = api_key
+                response["api_base_url"] = HPC_LITELLM_PUBLIC_BASE_URL
+            self.write(response)
             return
 
         if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_status", "ollama_delete"}:

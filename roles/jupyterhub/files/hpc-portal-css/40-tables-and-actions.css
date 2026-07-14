@@ -94,6 +94,53 @@
   border-color: color-mix(in srgb, var(--hpc-warning) 35%, transparent);
 }
 
+.hpc-api-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 52px;
+  justify-content: center;
+  padding: 3px 9px;
+  border: 1px solid var(--hpc-border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.hpc-api-status-badge.is-enabled {
+  color: var(--hpc-success);
+  background: var(--hpc-success-bg);
+  border-color: color-mix(in srgb, var(--hpc-success) 35%, transparent);
+}
+
+.hpc-api-status-badge.is-disabled {
+  color: var(--hpc-danger);
+  background: var(--hpc-danger-bg);
+  border-color: color-mix(in srgb, var(--hpc-danger) 35%, transparent);
+}
+
+.hpc-api-status-badge.is-unissued {
+  color: var(--hpc-warning);
+  background: var(--hpc-warning-bg);
+  border-color: color-mix(in srgb, var(--hpc-warning) 35%, transparent);
+}
+
+.hpc-api-status-badge.is-unknown {
+  color: var(--hpc-muted);
+  background: var(--hpc-surface-subtle);
+}
+
+.hpc-storage-usage {
+  color: var(--hpc-text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hpc-storage-usage.is-unknown {
+  color: var(--hpc-muted);
+}
+
 .hpc-status-warn {
   color: var(--hpc-warning);
 }
@@ -192,6 +239,16 @@
   border-color: var(--hpc-warning);
 }
 
+.gx10-admin-btn-enable {
+  background: transparent;
+  color: var(--hpc-success);
+  border-color: var(--hpc-success);
+}
+
+.gx10-admin-btn-enable:hover:not(:disabled) {
+  background: var(--hpc-success-bg);
+}
+
 .gx10-delete-btn,
 .gx10-admin-btn-danger,
 .gx10-stop-btn {
@@ -223,4 +280,3 @@
 .gx10-admin-table td .gx10-admin-btn + .gx10-admin-btn {
   margin-left: 6px;
 }
-

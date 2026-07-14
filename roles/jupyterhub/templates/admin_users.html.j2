@@ -20,7 +20,7 @@
   </div>
 
   <div class="hpc-note">
-    API利用の有効化・無効化・ユーザー削除は、このHPCポータルから行ってください。LiteLLMでVirtual Keyを直接変更すると、管理状態が一致しなくなる場合があります。
+    LLM API利用の有効化・無効化・ユーザー削除は、このHPCポータルから行ってください。LiteLLMでVirtual Keyを直接変更すると、管理状態が一致しなくなる場合があります。
   </div>
 
   <div class="gx10-admin-card">
@@ -48,8 +48,8 @@
     <div id="create-msg" class="gx10-admin-msg"></div>
     <div id="create-keybox" class="gx10-admin-keybox" aria-live="polite">
       <div class="hpc-section-title"><span id="credential-username"></span> の認証情報（一度だけ表示）</div>
-      <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">初期パスワードは保存されません。画面を移動する前にユーザーへ安全な経路で共有してください。</div>
-      <div class="gx10-admin-keyline">
+      <div class="hpc-status-warn" id="credential-warning" style="font-size:12px; margin-top:4px;">初期パスワードは保存されません。画面を移動する前にユーザーへ安全な経路で共有してください。</div>
+      <div class="gx10-admin-keyline" id="password-key-line">
         <div><div class="hpc-help">初期パスワード</div><div id="initial-password-value" class="gx10-admin-keyvalue"></div></div>
         <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="initial-password-value">コピー</button>
       </div>
@@ -91,7 +91,8 @@
       </div>
     </div>
     <div class="hpc-muted" style="margin:-4px 0 12px; font-size:13px;">
-      パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。
+      パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。<br>
+      ストレージ使用量はホームディレクトリ内の実使用量で、容量の上限ではありません。
     </div>
     <div style="overflow-x:auto;">
       <table class="gx10-admin-table" aria-label="Linux ユーザー一覧">
@@ -101,6 +102,8 @@
             <th>表示名</th>
             <th>UID</th>
             <th>ホーム</th>
+            <th>ストレージ使用量</th>
+            <th>LLM API</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -118,10 +121,29 @@
             <td>{{ u.uid }}</td>
             <td><code>{{ u.home }}</code></td>
             <td>
+              <span class="hpc-storage-usage{% if u.storage_used_bytes is none %} is-unknown{% endif %}"{% if u.storage_message %} title="{{ u.storage_message }}"{% endif %}>{{ u.storage_used_label }}</span>
+            </td>
+            <td>
+              {% if u.api_access == 'enabled' %}
+              <span class="hpc-api-status-badge is-enabled">有効</span>
+              {% elif u.api_access == 'disabled' %}
+              <span class="hpc-api-status-badge is-disabled">無効</span>
+              {% elif u.api_access == 'unissued' %}
+              <span class="hpc-api-status-badge is-unissued">未発行</span>
+              {% else %}
+              <span class="hpc-api-status-badge is-unknown"{% if u.api_access_message %} title="{{ u.api_access_message }}"{% endif %}>確認不可</span>
+              {% endif %}
+            </td>
+            <td>
 	              {% if not u.protected %}
 	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}">LLM API無効化</button>
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}">LLM API有効化</button>
+              {% if u.api_access == 'enabled' %}
+              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_disable">LLM API無効化</button>
+              {% elif u.api_access == 'disabled' %}
+              <button type="button" class="gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="disabled">LLM API有効化</button>
+              {% elif u.api_access == 'unissued' %}
+              <button type="button" class="gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="unissued">LLM API有効化</button>
+              {% endif %}
 	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}">削除</button>
               {% else %}
               <span class="hpc-muted" style="font-size:12px;">—</span>
@@ -194,6 +216,15 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     document.getElementById("credential-username").textContent = username;
     document.getElementById("initial-password-value").textContent = password || "";
     document.getElementById("create-keyvalue").textContent = apiKey || "";
+    var warning = document.getElementById("credential-warning");
+    if (password && apiKey) {
+      warning.textContent = "初期パスワードとAPI keyは、この画面で一度だけ表示されます。画面を移動する前に安全な経路で共有してください。";
+    } else if (password) {
+      warning.textContent = "初期パスワードは保存されません。画面を移動する前にユーザーへ安全な経路で共有してください。";
+    } else {
+      warning.textContent = "API keyは、この画面で一度だけ表示されます。画面を移動する前に安全な経路で共有してください。";
+    }
+    document.getElementById("password-key-line").hidden = !password;
     document.getElementById("api-key-line").hidden = !apiKey;
     var apiBaseHelp = document.getElementById("api-base-help");
     if (apiBaseHelp) apiBaseHelp.hidden = !apiKey;
@@ -344,34 +375,35 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
 	          .finally(function () { btn.disabled = false; });
 	      };
 	    });
-	    document.querySelectorAll(".hpc-api-disable-btn").forEach(function (btn) {
+	    document.querySelectorAll(".hpc-api-access-btn").forEach(function (btn) {
 	      btn.onclick = function () {
 	        var name = btn.getAttribute("data-username");
-	        if (!confirm(name + " の LiteLLM API key を無効化しますか？")) return;
+	        var action = btn.getAttribute("data-action");
+	        var apiState = btn.getAttribute("data-api-state") || "";
+	        var enabling = action === "api_enable";
+	        var actionLabel = enabling ? "有効化" : "無効化";
+	        var confirmText = name + " の LLM APIを" + actionLabel + "しますか？";
+	        if (apiState === "unissued") {
+	          confirmText = name + " の LLM APIを有効化して、API keyを発行しますか？";
+	        }
+	        if (!confirm(confirmText)) return;
 	        btn.disabled = true;
-	        postAction({ action: "api_disable", username: name })
-	          .then(function () {
-	            showMsg(document.getElementById("list-msg"), name + " の API key を無効化しました", true);
+	        postAction({ action: action, username: name })
+	          .then(function (body) {
+	            if (body.api_key) {
+	              showCredentials(name, "", body.api_key);
+	              showMsg(document.getElementById("list-msg"), name + " の LLM APIを有効化し、API keyを発行しました", true);
+	            } else {
+	              showMsg(document.getElementById("list-msg"), name + " の LLM APIを" + actionLabel + "しました", true);
+	            }
+	            return reloadUsers().catch(function (error) {
+	              showWarn(document.getElementById("list-msg"), "LLM APIは" + actionLabel + "しましたが、一覧を再読み込みできませんでした: " + error.message);
+	            });
 	          })
 	          .catch(function (e) {
 	            showMsg(document.getElementById("list-msg"), e.message, false);
 	            failOp(e.message);
-	          })
-	          .finally(function () { btn.disabled = false; });
-	      };
-	    });
-	    document.querySelectorAll(".hpc-api-enable-btn").forEach(function (btn) {
-	      btn.onclick = function () {
-	        var name = btn.getAttribute("data-username");
-	        if (!confirm(name + " の LiteLLM API key を有効化しますか？")) return;
-	        btn.disabled = true;
-	        postAction({ action: "api_enable", username: name })
-	          .then(function () {
-	            showMsg(document.getElementById("list-msg"), name + " の API key を有効化しました", true);
-	          })
-	          .catch(function (e) {
-	            showMsg(document.getElementById("list-msg"), e.message, false);
-	            failOp(e.message);
+	            return reloadUsers().catch(function () {});
 	          })
 	          .finally(function () { btn.disabled = false; });
 	      };
@@ -443,6 +475,23 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           homeCell.appendChild(homeCode);
           tr.appendChild(homeCell);
 
+          var storageCell = document.createElement("td");
+          var storageValue = document.createElement("span");
+          storageValue.className = "hpc-storage-usage" + (u.storage_used_bytes == null ? " is-unknown" : "");
+          storageValue.textContent = u.storage_used_label || "確認不可";
+          if (u.storage_message) storageValue.title = u.storage_message;
+          storageCell.appendChild(storageValue);
+          tr.appendChild(storageCell);
+
+          var apiStatusCell = document.createElement("td");
+          var apiStatus = document.createElement("span");
+          var apiAccess = ["enabled", "disabled", "unissued"].indexOf(u.api_access) >= 0 ? u.api_access : "unknown";
+          apiStatus.className = "hpc-api-status-badge is-" + apiAccess;
+          apiStatus.textContent = apiAccess === "enabled" ? "有効" : (apiAccess === "disabled" ? "無効" : (apiAccess === "unissued" ? "未発行" : "確認不可"));
+          if (u.api_access_message) apiStatus.title = u.api_access_message;
+          apiStatusCell.appendChild(apiStatus);
+          tr.appendChild(apiStatusCell);
+
           var operationCell = document.createElement("td");
           if (u.protected) {
             var protectedMark = document.createElement("span");
@@ -451,16 +500,24 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
             protectedMark.textContent = "—";
             operationCell.appendChild(protectedMark);
           } else {
-            [
-              ["パスワード再発行", "gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn"],
-              ["LLM API無効化", "gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn"],
-              ["LLM API有効化", "gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn"],
-              ["削除", "gx10-admin-btn gx10-admin-btn-danger hpc-del-btn"]
-            ].forEach(function (definition) {
+            var definitions = [
+              ["パスワード再発行", "gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn", ""]
+            ];
+            if (apiAccess === "enabled") {
+              definitions.push(["LLM API無効化", "gx10-admin-btn gx10-admin-btn-warn hpc-api-access-btn", "api_disable", "enabled"]);
+            } else if (apiAccess === "disabled") {
+              definitions.push(["LLM API有効化", "gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn", "api_enable", "disabled"]);
+            } else if (apiAccess === "unissued") {
+              definitions.push(["LLM API有効化", "gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn", "api_enable", "unissued"]);
+            }
+            definitions.push(["削除", "gx10-admin-btn gx10-admin-btn-danger hpc-del-btn", ""]);
+            definitions.forEach(function (definition) {
               var actionButton = document.createElement("button");
               actionButton.type = "button";
               actionButton.className = definition[1];
               actionButton.setAttribute("data-username", u.username);
+              if (definition[2]) actionButton.setAttribute("data-action", definition[2]);
+              if (definition[3]) actionButton.setAttribute("data-api-state", definition[3]);
               actionButton.textContent = definition[0];
               operationCell.appendChild(actionButton);
             });

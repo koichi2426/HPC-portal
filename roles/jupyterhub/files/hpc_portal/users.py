@@ -125,6 +125,38 @@ def _hpc_linux_users_snapshot() -> list[dict]:
     return rows
 
 
+def _hpc_home_storage_usage(home: str) -> tuple[int | None, str | None]:
+    """ホームディレクトリが実際に使用しているストレージ量を取得する。
+
+    Args:
+        home: 集計対象のホームディレクトリ。
+
+    Returns:
+        ``(使用バイト数, エラー)``。集計は同一ファイルシステム内に限定する。
+    """
+    if not home or not os.path.isdir(home):
+        return None, "ホームディレクトリが見つかりません"
+    try:
+        result = subprocess.run(
+            ["du", "-s", "-x", "-B1", "--", home],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+            env=_HPC_CMD_ENV,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "ストレージ使用量の取得がタイムアウトしました"
+    except OSError:
+        return None, "ストレージ使用量を取得できません"
+    if result.returncode != 0:
+        return None, "ストレージ使用量を取得できません"
+    try:
+        return int(result.stdout.split(None, 1)[0]), None
+    except (IndexError, ValueError):
+        return None, "ストレージ使用量を取得できません"
+
+
 _HPC_CMD_ENV = {
     **os.environ,
     "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
