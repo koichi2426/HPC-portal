@@ -18,6 +18,7 @@ from .common import (
     HPC_JUPYTER_UBUNTU_VERSION,
     HPC_OPENWEBUI_VERSION,
     HPC_PUBLIC_SCHEME,
+    HPC_STATIC_VERSIONS,
     c,
     html,
     url_escape_path,
@@ -360,8 +361,11 @@ def make_options_form(spawner):
     """
     )
     static_js = (
-        '<script src="/hub/hpc-resource-meter.js?v=7"></script>'
-        '<script src="/hub/hpc-app-status.js?v=10"></script>'
+        '<script src="/hub/hpc-resource-meter.js?v={resource_meter_js}"></script>'
+        '<script src="/hub/hpc-app-status.js?v={app_status_js}"></script>'
+    ).format(
+        resource_meter_js=HPC_STATIC_VERSIONS["resource_meter_js"],
+        app_status_js=HPC_STATIC_VERSIONS["app_status_js"],
     )
     return header_html + static_js + js_code
 

@@ -3,7 +3,7 @@
 
 {% block stylesheet %}
 {{ super() }}
-<link rel="stylesheet" href="{{ base_url }}hpc-portal.css?v=7">
+<link rel="stylesheet" href="{{ base_url }}hpc-portal.css?v={{ hpc_static_versions.portal_css }}">
 {% endblock stylesheet %}
 
 {% block nav_bar_left_items %}

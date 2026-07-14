@@ -10,6 +10,7 @@ from .common import (
     HPC_PORTAL_ADMIN_USERS,
     HPC_PUBLIC_DOMAIN,
     HPC_PUBLIC_SCHEME,
+    HPC_STATIC_VERSIONS,
     LoginHandler,
     LogoutHandler,
     _get_xsrf_token_cookie,
@@ -210,4 +211,5 @@ c.JupyterHub.template_vars = {
     "hpc_litellm_admin_url": HPC_LITELLM_ADMIN_URL,
     "hpc_openwebui_version": HPC_OPENWEBUI_VERSION,
     "hpc_jupyter_ubuntu_version": HPC_JUPYTER_UBUNTU_VERSION,
+    "hpc_static_versions": HPC_STATIC_VERSIONS,
 }
