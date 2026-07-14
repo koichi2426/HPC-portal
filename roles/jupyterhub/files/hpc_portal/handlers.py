@@ -22,13 +22,14 @@ from .litellm import (
     _hpc_litellm_enabled,
     _hpc_litellm_generate_key,
     _hpc_litellm_list_models,
+    _hpc_litellm_register_ollama_model,
     _hpc_litellm_regenerate_own_key,
     _hpc_litellm_user_external_api_state,
     _hpc_litellm_user_admin_disabled,
     _hpc_log_litellm_action,
     _hpc_safe_litellm_error,
 )
-from .ollama import _hpc_ollama_cmd, _hpc_ollama_pull_progress
+from .ollama import _hpc_ollama_cmd, _hpc_ollama_has_model, _hpc_ollama_pull_progress
 from .resources import (
     HpcAppStatusJsHandler,
     HpcPortalCssHandler,
@@ -52,9 +53,76 @@ from .users import (
 )
 
 HPC_PASSWORD_LOG = logging.getLogger("jupyterhub.hpc-password")
+HPC_OLLAMA_LOG = logging.getLogger("jupyterhub.hpc-ollama")
 
 _HPC_ADMIN_API_STATUS_CONCURRENCY = 8
 _HPC_ADMIN_STORAGE_CONCURRENCY = 4
+_HPC_OLLAMA_REGISTRATION_TASKS: dict[str, asyncio.Task] = {}
+
+
+async def _hpc_watch_ollama_pull_and_register(model: str) -> None:
+    """Ollama pull完了を監視してLiteLLMへ登録する。
+
+    Args:
+        model: pullを開始したOllamaモデル名。
+    """
+    idle_count = 0
+    try:
+        while True:
+            progress, err = await asyncio.to_thread(_hpc_ollama_pull_progress, model)
+            if err:
+                HPC_OLLAMA_LOG.warning(
+                    "action=model_register model=%s result=failed error=%s",
+                    model,
+                    _hpc_safe_litellm_error(err),
+                )
+                return
+            state = str((progress or {}).get("state") or "")
+            if state == "completed":
+                _registration, registration_err = await asyncio.to_thread(
+                    _hpc_litellm_register_ollama_model, model
+                )
+                if registration_err:
+                    HPC_OLLAMA_LOG.warning(
+                        "action=model_register model=%s result=failed error=%s",
+                        model,
+                        _hpc_safe_litellm_error(registration_err),
+                    )
+                return
+            if state in {"failed", "busy"}:
+                return
+            idle_count = idle_count + 1 if state == "idle" else 0
+            if idle_count >= 20:
+                HPC_OLLAMA_LOG.warning(
+                    "action=model_register model=%s result=failed error=pull_status_timeout",
+                    model,
+                )
+                return
+            await asyncio.sleep(1.5)
+    except Exception as exc:  # noqa: BLE001
+        HPC_OLLAMA_LOG.warning(
+            "action=model_register model=%s result=failed error=%s",
+            model,
+            _hpc_safe_litellm_error(exc),
+        )
+    finally:
+        current = asyncio.current_task()
+        if _HPC_OLLAMA_REGISTRATION_TASKS.get(model) is current:
+            _HPC_OLLAMA_REGISTRATION_TASKS.pop(model, None)
+
+
+def _hpc_start_ollama_registration_watcher(model: str) -> None:
+    """モデル登録監視タスクを重複なく開始する。
+
+    Args:
+        model: pullを開始したOllamaモデル名。
+    """
+    existing = _HPC_OLLAMA_REGISTRATION_TASKS.get(model)
+    if existing and not existing.done():
+        return
+    _HPC_OLLAMA_REGISTRATION_TASKS[model] = asyncio.create_task(
+        _hpc_watch_ollama_pull_and_register(model)
+    )
 
 
 def _hpc_format_storage_bytes(value: int) -> str:
@@ -526,6 +594,19 @@ class HpcAdminUsersApiHandler(BaseHandler):
             self.write(response)
             return
 
+        if action == "ollama_register_model":
+            model = str(body.get("model", "")).strip()
+            exists, err = await asyncio.to_thread(_hpc_ollama_has_model, model)
+            if err or not exists:
+                return self._api_error(400, err or "Ollamaにモデルがありません")
+            registration, err = await asyncio.to_thread(
+                _hpc_litellm_register_ollama_model, model
+            )
+            if err:
+                return self._api_error(400, err)
+            self.write({"ok": True, "data": registration})
+            return
+
         if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_status", "ollama_delete"}:
             mapping = {
                 "ollama_start": "start",
@@ -538,9 +619,22 @@ class HpcAdminUsersApiHandler(BaseHandler):
             }
             model = str(body.get("model", "")).strip()
             if action == "ollama_pull_status":
-                data, err = _hpc_ollama_pull_progress(model or None)
+                data, err = await asyncio.to_thread(
+                    _hpc_ollama_pull_progress, model or None
+                )
+                if not err and data and data.get("state") == "completed":
+                    completed_model = str(data.get("model") or model).strip()
+                    registration, registration_err = await asyncio.to_thread(
+                        _hpc_litellm_register_ollama_model, completed_model
+                    )
+                    data["litellm_registration"] = registration or {
+                        "state": "failed",
+                        "model": completed_model,
+                        "message": registration_err or "LiteLLM登録に失敗しました",
+                    }
             else:
-                data, err = _hpc_ollama_cmd(
+                data, err = await asyncio.to_thread(
+                    _hpc_ollama_cmd,
                     mapping[action],
                     model if action in {"ollama_pull", "ollama_delete"} else None,
                     str(body.get("cpus", "")).strip() if action == "ollama_start" else None,
@@ -548,6 +642,8 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 )
             if err:
                 return self._api_error(400, err)
+            if action == "ollama_pull":
+                _hpc_start_ollama_registration_watcher(model)
             self.write({"ok": True, "data": data})
             return
 

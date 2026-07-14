@@ -136,6 +136,26 @@ def _hpc_ollama_pull_progress(model: str | None = None) -> tuple[dict | None, st
     }, None
 
 
+def _hpc_ollama_has_model(model: str) -> tuple[bool, str | None]:
+    """指定モデルがOllamaに存在するか確認する。
+
+    Args:
+        model: 確認するOllamaモデル名。
+
+    Returns:
+        ``(存在するか, エラー)``。
+    """
+    if not _HPC_OLLAMA_MODEL_RE.fullmatch(str(model or "")):
+        return False, "モデル名に使用できない文字が含まれています"
+    tags, err = _hpc_ollama_cmd("tags")
+    if err:
+        return False, err
+    for item in (tags or {}).get("models", []) or []:
+        if isinstance(item, dict) and str(item.get("name") or "") == model:
+            return True, None
+    return False, f"Ollamaにモデル {model} がありません"
+
+
 def _hpc_shared_ollama_detail_context(user=None) -> dict:
     """Ollama 詳細表示用コンテキストを作成する。
 
@@ -194,5 +214,4 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
 c.JupyterHub.template_vars.update({
     "hpc_shared_ollama_detail": _hpc_shared_ollama_detail_context,
 })
-
 

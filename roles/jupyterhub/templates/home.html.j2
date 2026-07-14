@@ -174,8 +174,8 @@
           </div>
           {% elif spawner.active %}
           <div class="gx10-app-card-actions">
-            <a class="hpc-page-link" href="{{ job_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">
-              JUMP ↗
+            <a class="hpc-page-link hpc-external-link" href="{{ job_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();" aria-label="JUMPを新しいタブで開く">
+              <span>JUMP</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg>
             </a>
           </div>
           {% endif %}

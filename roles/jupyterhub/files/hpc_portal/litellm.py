@@ -4,6 +4,7 @@ from .common import (
     HPC_LITELLM_INTERNAL_BASE_URL,
     HPC_LITELLM_LOG,
     HPC_LITELLM_MASTER_KEY,
+    HPC_OLLAMA_API_BASE,
     OPENWEBUI_LITELLM_KEY_DIR,
     _HPC_EXTERNAL_API_KEY_LOCKS,
     _HPC_EXTERNAL_API_KEY_LOCKS_GUARD,
@@ -16,6 +17,9 @@ from .common import (
     urllib,
 )
 from .users import _hpc_validate_username
+
+_HPC_LITELLM_MODEL_LOCKS: dict[str, threading.Lock] = {}
+_HPC_LITELLM_MODEL_LOCKS_GUARD = threading.Lock()
 
 def _hpc_litellm_enabled() -> bool:
     """LiteLLM管理APIを利用可能か判定する。
@@ -127,6 +131,83 @@ def _hpc_litellm_list_models() -> tuple[list[dict], str | None]:
         })
     models.sort(key=lambda item: item["id"])
     return models, None
+
+
+def _hpc_litellm_model_lock(model: str) -> threading.Lock:
+    """モデル単位のLiteLLM登録ロックを返す。
+
+    Args:
+        model: Ollamaモデル名。
+
+    Returns:
+        同一プロセス内の重複登録を防ぐロック。
+    """
+    with _HPC_LITELLM_MODEL_LOCKS_GUARD:
+        return _HPC_LITELLM_MODEL_LOCKS.setdefault(model, threading.Lock())
+
+
+def _hpc_litellm_register_ollama_model(model: str) -> tuple[dict | None, str | None]:
+    """OllamaモデルをLiteLLMへ重複なく登録する。
+
+    LiteLLMのモデル一覧に同名モデルがあれば登録済みとして扱う。未登録の場合は
+    Ollamaのモデル名を公開名にし、DB保存される ``/model/new`` へ追加する。
+
+    Args:
+        model: Ollamaに登録済みのモデル名。
+
+    Returns:
+        ``(登録状態, エラー)``。登録状態の ``state`` は ``registered`` または
+        ``already_registered``。
+    """
+    model = str(model or "").strip()
+    if not model:
+        return None, "モデル名が必要です"
+    if re.fullmatch(r"[A-Za-z0-9_.:/-]{1,128}", model) is None:
+        return None, "モデル名に使用できない文字が含まれています"
+    if not _hpc_litellm_enabled():
+        return None, "LiteLLM Admin API が未設定です"
+
+    with _hpc_litellm_model_lock(model):
+        models, err = _hpc_litellm_list_models()
+        if err:
+            return None, err
+        if any(item.get("id") == model for item in models):
+            return {
+                "state": "already_registered",
+                "model": model,
+                "message": "LiteLLM登録済み",
+            }, None
+
+        payload = {
+            "model_name": model,
+            "litellm_params": {
+                "model": f"ollama/{model}",
+                "api_base": HPC_OLLAMA_API_BASE,
+            },
+            "model_info": {
+                "source": "hpc-portal-ollama",
+            },
+        }
+        try:
+            _hpc_litellm_request("/model/new", payload)
+        except RuntimeError as exc:
+            return None, _hpc_safe_litellm_error(exc)
+
+        models, err = _hpc_litellm_list_models()
+        if err:
+            return None, f"登録後の確認に失敗しました: {err}"
+        if not any(item.get("id") == model for item in models):
+            return None, "LiteLLMへ追加しましたが、モデル一覧で確認できませんでした"
+        HPC_LITELLM_LOG.info(
+            "action=model_register model=%s backend=%s result=ok",
+            model,
+            f"ollama/{model}",
+        )
+        return {
+            "state": "registered",
+            "model": model,
+            "message": "LiteLLMへ自動登録しました",
+        }, None
 
 
 def _hpc_litellm_ensure_user(username: str) -> str | None:

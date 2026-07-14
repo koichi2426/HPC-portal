@@ -90,7 +90,7 @@
       {% else %}
       <tr><th>ジョブホスト</th><td>{% if d.job_host %}{{ d.job_host }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       <tr><th>Hub ポート</th><td>{% if d.port %}{{ d.port }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
-      <tr><th>公開 URL</th><td>{% if d.job_url %}<a href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer">{{ d.job_url }}</a>{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
+      <tr><th>公開 URL</th><td>{% if d.job_url %}<a class="hpc-external-link" href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer" aria-label="{{ d.job_url }}（新しいタブで開く）"><span>{{ d.job_url }}</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       {% if d.proxy_spec %}
       <tr><th>Proxy route</th><td><code style="font-size:11px;">{{ d.proxy_spec }}</code></td></tr>
       {% endif %}
@@ -102,7 +102,12 @@
   <div class="gx10-detail-card">
     <div class="hpc-row-between" style="margin-bottom:12px;">
       <div class="hpc-section-title">Ollama モデル</div>
-      <button type="button" class="gx10-primary-btn" onclick="window.location.reload()">更新</button>
+      <div class="hpc-row">
+        {% if hpc_litellm_admin_url %}
+        <a class="gx10-primary-btn hpc-external-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" aria-label="LiteLLM 管理画面を新しいタブで開く"><span>LiteLLM 管理画面</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>
+        {% endif %}
+        <button type="button" class="gx10-primary-btn" onclick="window.location.reload()">更新</button>
+      </div>
     </div>
     {% if d.models %}
       <table class="gx10-detail-table">
@@ -120,7 +125,7 @@
       <div class="hpc-empty">モデルはまだありません。</div>
     {% endif %}
     <div class="hpc-help" style="margin-top:14px;">
-      モデル名は <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer">Ollama library</a> で確認できます。
+      モデル名は <a class="hpc-external-link" href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" aria-label="Ollama libraryを新しいタブで開く"><span>Ollama library</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a> で確認できます。
     </div>
     <div class="hpc-row" style="margin-top:14px;">
       <input id="ollama-pull-model" type="text" placeholder="例: llama3.1:8b" style="flex:1; min-width:0; border-radius:8px; padding:10px;">
@@ -131,21 +136,7 @@
       <div id="ollama-pull-progress-text" class="hpc-help">ダウンロードを準備中…</div>
       <div class="hpc-progress"><div id="ollama-pull-progress-fill" class="hpc-progress-fill"></div></div>
     </div>
-    <div class="gx10-model-register-guide">
-      <div class="hpc-section-title">Pullしたモデルを API / Open WebUI で使うには</div>
-      <div class="hpc-help" style="margin-top:6px;">LiteLLM に一度だけモデルを登録します。</div>
-      <a class="gx10-primary-btn gx10-model-register-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面を開く ↗</a>
-      <ol class="gx10-model-register-steps">
-        <li><code>Models + Endpoints</code> から <code>Add Model</code> を選ぶ</li>
-        <li>次の値を入力する</li>
-      </ol>
-      <dl class="gx10-model-register-values">
-        <div><dt>Provider</dt><dd><code>ollama</code></dd></div>
-        <div><dt>LiteLLM Model Name(s)</dt><dd>Pullしたモデル名 <span class="hpc-muted">（例: <code>qwen3.5:4b</code>）</span></dd></div>
-        <div><dt>API Base</dt><dd><code>http://127.0.0.1:11434</code></dd></div>
-      </dl>
-      <div class="hpc-help" style="margin-top:10px;">最後に <code>Add Model</code> を押すと、LLM API と Open WebUI で選べるようになります。</div>
-    </div>
+    <button id="ollama-register-retry" type="button" class="gx10-primary-btn gx10-model-register-retry" hidden onclick="hpcOllamaRegisterRetry(this)">LiteLLM登録を再試行</button>
   </div>
   {% endif %}
 
@@ -158,7 +149,7 @@
     {% endif %}
     {% else %}
     {% if d.active and d.job_url %}
-    <a class="gx10-primary-btn" href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer">アプリを開く (JUMP) ↗</a>
+    <a class="gx10-primary-btn hpc-external-link" href="{{ d.job_url }}" target="_blank" rel="noopener noreferrer" aria-label="アプリを新しいタブで開く"><span>アプリを開く (JUMP)</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>
     {% endif %}
     <button type="button" class="gx10-delete-btn" data-server-name="{{ d.server_name }}" onclick="hpcDeleteApp(this)">削除</button>
     {% endif %}
@@ -288,6 +279,38 @@ function hpcOllamaFinishProgress(message, ok) {
   progress.setAttribute("aria-valuenow", ok ? "100" : "0");
   text.textContent = message;
 }
+function hpcOllamaShowRegistration(data, model, reloadOnSuccess) {
+  var registration = data.litellm_registration || {};
+  var retry = document.getElementById("ollama-register-retry");
+  if (registration.state === "registered" || registration.state === "already_registered") {
+    hpcOllamaFinishProgress("ダウンロード完了・LiteLLM登録済み", true);
+    hpcOllamaMsg(model + " をLiteLLMへ登録しました", true);
+    if (retry) retry.hidden = true;
+    if (reloadOnSuccess) window.setTimeout(function () { window.location.reload(); }, 900);
+    return;
+  }
+  hpcOllamaFinishProgress("ダウンロード完了・LiteLLM登録失敗", false);
+  hpcOllamaMsg(registration.message || "LiteLLM登録に失敗しました", false);
+  if (retry) {
+    retry.setAttribute("data-model", model);
+    retry.hidden = false;
+    retry.disabled = false;
+  }
+}
+function hpcOllamaRegisterRetry(btn) {
+  var model = btn.getAttribute("data-model") || "";
+  if (!model || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "登録中…";
+  hpcOllamaPost({action: "ollama_register_model", model: model}).then(function (body) {
+    hpcOllamaShowRegistration({litellm_registration: body.data || {}}, model, true);
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+    btn.disabled = false;
+  }).finally(function () {
+    btn.textContent = "LiteLLM登録を再試行";
+  });
+}
 function hpcOllamaPollPull(model, btn, attempts, failures) {
   attempts = attempts || 0;
   failures = failures || 0;
@@ -299,10 +322,8 @@ function hpcOllamaPollPull(model, btn, attempts, failures) {
       return;
     }
     if (data.state === "completed") {
-      hpcOllamaFinishProgress("ダウンロード完了 100%", true);
-      hpcOllamaMsg(model + " のダウンロードが完了しました", true);
+      hpcOllamaShowRegistration(data, model, true);
       if (btn) btn.disabled = false;
-      window.setTimeout(function () { window.location.reload(); }, 900);
       return;
     }
     if (data.state === "idle" && attempts < 10) {
@@ -337,6 +358,9 @@ document.addEventListener("DOMContentLoaded", function () {
   hpcOllamaPost({action: "ollama_pull_status"}).then(function (body) {
     var data = body.data || {};
     if (data.state === "pulling" && data.model) hpcOllamaPollPull(data.model, null, 0, 0);
+    if (data.state === "completed" && data.model && (data.litellm_registration || {}).state === "failed") {
+      hpcOllamaShowRegistration(data, data.model, false);
+    }
   }).catch(function () {});
 });
 function hpcOllamaDelete(btn) {

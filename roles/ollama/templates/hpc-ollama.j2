@@ -14,6 +14,7 @@ PULL_STATE_DIR="/run/hpc-ollama"
 PULL_LOCK_DIR="$PULL_STATE_DIR/pull.lock"
 PULL_PID_FILE="$PULL_STATE_DIR/pull.pid"
 PULL_MODEL_FILE="$PULL_STATE_DIR/pull.model"
+PULL_LAST_MODEL_FILE="$PULL_STATE_DIR/pull.last-model"
 
 cmd="${1:-}"
 model="${2:-}"
@@ -138,6 +139,7 @@ case "$cmd" in
       echo "another model pull is already running: ${active_model:-unknown}" >&2
       exit 1
     fi
+    printf '%s' "$model" >"$PULL_LAST_MODEL_FILE"
     rm -f "$log" "$PULL_STATE_DIR/pull-${safe_model}.result"
     # 親プロセス（JupyterHub の HTTP 要求）が stdout/stderr の EOF を待たないよう、
     # バックグラウンド処理のファイル記述子を完全に切り離す。
@@ -159,10 +161,11 @@ case "$cmd" in
   pull-status)
     active=false
     active_model="$(cat "$PULL_MODEL_FILE" 2>/dev/null || true)"
+    last_model="$(cat "$PULL_LAST_MODEL_FILE" 2>/dev/null || true)"
     if [ -f "$PULL_PID_FILE" ] && kill -0 "$(cat "$PULL_PID_FILE")" 2>/dev/null; then
       active=true
     fi
-    status_model="${model:-$active_model}"
+    status_model="${model:-${active_model:-$last_model}}"
     safe_model="$(printf '%s' "$status_model" | tr '/:' '__')"
     last=""
     result=""
@@ -178,9 +181,13 @@ case "$cmd" in
       echo "model required" >&2
       exit 2
     fi
-    exec sudo -u "$SERVICE_USER" curl -fsS -X DELETE "$OLLAMA_URL/api/delete" \
+    sudo -u "$SERVICE_USER" curl -fsS -X DELETE "$OLLAMA_URL/api/delete" \
       -H 'Content-Type: application/json' \
       -d "{\"name\":\"$model\"}"
+    if [ "$(cat "$PULL_LAST_MODEL_FILE" 2>/dev/null || true)" = "$model" ]; then
+      safe_model="$(printf '%s' "$model" | tr '/:' '__')"
+      rm -f "$PULL_LAST_MODEL_FILE" "$PULL_STATE_DIR/pull-${safe_model}.result"
+    fi
     ;;
   *)
     echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|pull-status [model]|delete <model>" >&2

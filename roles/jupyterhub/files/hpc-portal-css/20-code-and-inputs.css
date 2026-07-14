@@ -23,6 +23,23 @@
   overflow-wrap: anywhere;
 }
 
+.hpc-external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hpc-external-link-icon {
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.1;
+}
+
 .gx10-key-pre {
   margin: 10px 0 0;
   white-space: pre-wrap;
@@ -103,4 +120,3 @@
 .input-dark {
   margin-bottom: 15px;
 }
-

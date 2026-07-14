@@ -114,6 +114,9 @@ HPC_LITELLM_INTERNAL_BASE_URL = os.environ.get(
 HPC_LITELLM_PUBLIC_BASE_URL = os.environ.get("HPC_LITELLM_PUBLIC_BASE_URL", "")
 HPC_LITELLM_ADMIN_URL = os.environ.get("HPC_LITELLM_ADMIN_URL", "")
 HPC_LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+HPC_OLLAMA_API_BASE = os.environ.get(
+    "HPC_OLLAMA_API_BASE", f"http://127.0.0.1:{HPC_OLLAMA_PORT}"
+).rstrip("/")
 OPENWEBUI_LITELLM_BASE_URL = os.environ.get("OPENWEBUI_LITELLM_BASE_URL", "")
 OPENWEBUI_LITELLM_KEY_DIR = os.environ.get(
     "OPENWEBUI_LITELLM_KEY_DIR", "/etc/litellm/openwebui-keys"
