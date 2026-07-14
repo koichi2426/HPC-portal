@@ -58,7 +58,14 @@ _HPC_ADMIN_STORAGE_CONCURRENCY = 4
 
 
 def _hpc_format_storage_bytes(value: int) -> str:
-    """ストレージ使用量を管理画面向けの短い表記にする。"""
+    """ストレージ使用量を管理画面向けの短い表記にする。
+
+    Args:
+        value: ストレージ使用量のバイト数。
+
+    Returns:
+        単位を付けて整形した使用量。
+    """
     size = float(max(value, 0))
     units = ("B", "KB", "MB", "GB", "TB", "PB")
     for unit in units:
@@ -71,28 +78,63 @@ def _hpc_format_storage_bytes(value: int) -> str:
 
 
 def _hpc_litellm_access_state(username: str) -> tuple[str, str]:
-    """管理者によるLLM API利用状態を一覧表示用に取得する。"""
+    """管理者によるLLM API利用状態を一覧表示用に取得する。
+
+    Args:
+        username: 状態を取得するLinuxユーザー名。
+
+    Returns:
+        状態と画面表示用エラーメッセージの組。
+    """
     state, err = _hpc_litellm_user_external_api_state(username)
     return state, ("LLM APIの状態を取得できません" if err else "")
 
 
 async def _hpc_admin_users_snapshot() -> list[dict]:
-    """Linuxユーザー一覧へLLM API状態とホーム使用量を付加する。"""
+    """Linuxユーザー一覧へLLM API状態とホーム使用量を付加する。
+
+    Returns:
+        LLM API状態とストレージ使用量を含むユーザー情報の一覧。
+    """
     rows = _hpc_linux_users_snapshot()
     api_semaphore = asyncio.Semaphore(_HPC_ADMIN_API_STATUS_CONCURRENCY)
     storage_semaphore = asyncio.Semaphore(_HPC_ADMIN_STORAGE_CONCURRENCY)
 
     async def api_state(username: str) -> tuple[str, str]:
+        """指定ユーザーのLLM API状態を非同期で取得する。
+
+        Args:
+            username: 状態を取得するLinuxユーザー名。
+
+        Returns:
+            状態と画面表示用エラーメッセージの組。
+        """
         if not _hpc_litellm_enabled():
             return "unknown", "LiteLLM Admin APIが未設定です"
         async with api_semaphore:
             return await asyncio.to_thread(_hpc_litellm_access_state, username)
 
     async def storage_usage(home: str) -> tuple[int | None, str | None]:
+        """ホームディレクトリの使用量を非同期で取得する。
+
+        Args:
+            home: 集計対象のホームディレクトリ。
+
+        Returns:
+            使用バイト数とエラーメッセージの組。
+        """
         async with storage_semaphore:
             return await asyncio.to_thread(_hpc_home_storage_usage, home)
 
     async def enrich(row: dict) -> dict:
+        """ユーザー情報へLLM API状態とストレージ使用量を追加する。
+
+        Args:
+            row: Linuxユーザーの基本情報。
+
+        Returns:
+            管理画面向け情報を追加したユーザー情報。
+        """
         updated = dict(row)
         (access, access_message), (used_bytes, storage_error) = await asyncio.gather(
             api_state(row["username"]),
@@ -258,6 +300,12 @@ class HpcPasswordApiHandler(BaseHandler):
     """ログイン中ユーザー本人のパスワード変更API。"""
 
     def _api_error(self, status: int, message: str):
+        """JSON形式のAPIエラーを返す。
+
+        Args:
+            status: HTTPステータスコード。
+            message: 利用者へ返すエラーメッセージ。
+        """
         self.set_status(status)
         self.set_header("Content-Type", "application/json; charset=UTF-8")
         self.finish({"error": message})

@@ -557,6 +557,9 @@ def _hpc_litellm_is_portal_external_key(record: dict, username: str) -> bool:
 def _hpc_litellm_user_external_api_state(username: str) -> tuple[str, str | None]:
     """管理画面向けに外部APIの利用状態を取得する。
 
+    Args:
+        username: 状態を取得するLinuxユーザー名。
+
     Returns:
         ``(状態, エラー)``。状態は enabled / disabled / unissued / unknown。
     """
@@ -785,7 +788,15 @@ def _hpc_litellm_set_user_keys_blocked(
 
 
 def _hpc_litellm_ensure_external_api_key(username: str) -> tuple[str | None, str | None]:
-    """ポータル用外部API keyがなければ新規発行する。"""
+    """ポータル用外部API keyがなければ新規発行する。
+
+    Args:
+        username: keyを所有するLinuxユーザー名。
+
+    Returns:
+        新規発行した平文keyとエラーメッセージの組。既存keyがある場合は
+        どちらもNoneを返す。
+    """
     with _hpc_litellm_external_api_key_lock(username):
         records, err = _hpc_litellm_list_user_keys(username)
         if err:
