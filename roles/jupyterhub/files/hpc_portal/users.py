@@ -1,8 +1,9 @@
-"""Linuxユーザーの検証、作成、削除、表示名・パスワード変更を提供する。"""
+"""Linuxユーザーの検証、作成、削除、権限・表示名・パスワード変更を提供する。"""
+
+import grp
 
 from .common import (
     HPC_PORTAL_ADMIN_USERS,
-    HPC_PORTAL_GRANT_SUDO,
     HPC_PORTAL_PROTECTED_USERS,
     HPC_PORTAL_SUDO_GROUP,
     HPC_PORTAL_USER_MIN_UID,
@@ -103,7 +104,7 @@ def _hpc_linux_users_snapshot() -> list[dict]:
     """ポータル管理対象のLinuxユーザー一覧を取得する。
 
     Returns:
-        ユーザー名、表示名、UID、ホーム、シェル、保護状態を含む辞書の一覧。
+        ユーザー名、表示名、UID、ホーム、シェル、保護状態、sudo状態を含む辞書の一覧。
     """
     rows = []
     for entry in pwd.getpwall():
@@ -119,10 +120,28 @@ def _hpc_linux_users_snapshot() -> list[dict]:
                 "home": entry.pw_dir,
                 "shell": entry.pw_shell,
                 "protected": entry.pw_name in HPC_PORTAL_PROTECTED_USERS,
+                "sudo_enabled": _hpc_user_has_sudo(entry.pw_name),
             }
         )
     rows.sort(key=lambda r: r["username"])
     return rows
+
+
+def _hpc_user_has_sudo(username: str) -> bool:
+    """ユーザーが設定されたsudoグループに所属するか判定する。
+
+    Args:
+        username: 確認対象のLinuxユーザー名。
+
+    Returns:
+        プライマリまたは補助グループとしてsudoグループに所属すればTrue。
+    """
+    try:
+        entry = pwd.getpwnam(username)
+        sudo_group = grp.getgrnam(HPC_PORTAL_SUDO_GROUP)
+        return sudo_group.gr_gid in os.getgrouplist(username, entry.pw_gid)
+    except (KeyError, OSError):
+        return False
 
 
 def _hpc_home_storage_usage(home: str) -> tuple[int | None, str | None]:
@@ -243,7 +262,7 @@ def _hpc_create_linux_user(
     cmd = ["useradd", "-m", "-s", "/bin/bash"]
     if display_name:
         cmd.extend(["-c", display_name])
-    if grant_sudo and HPC_PORTAL_GRANT_SUDO:
+    if grant_sudo:
         cmd.extend(["-G", HPC_PORTAL_SUDO_GROUP])
     cmd.append(username)
     result = _hpc_run_cmd(cmd)
@@ -256,6 +275,43 @@ def _hpc_create_linux_user(
     err = _hpc_ensure_user_home(username)
     if err:
         return err
+    return None
+
+
+def _hpc_set_linux_sudo(username: str, enabled: bool) -> str | None:
+    """Linuxユーザーのsudoグループ所属を変更する。
+
+    Args:
+        username: 変更対象のLinuxユーザー名。
+        enabled: Trueならsudoを付与し、Falseなら解除する。
+
+    Returns:
+        正常ならNone、失敗時はエラーメッセージ。
+    """
+    try:
+        entry = pwd.getpwnam(username)
+        grp.getgrnam(HPC_PORTAL_SUDO_GROUP)
+    except KeyError:
+        return "ユーザーまたはsudoグループが見つかりません"
+    if entry.pw_uid < HPC_PORTAL_USER_MIN_UID or entry.pw_shell in _HPC_NOLOGIN_SHELLS:
+        return "このユーザーはポータルの管理対象ではありません"
+    current = _hpc_user_has_sudo(username)
+    if current == enabled:
+        return None
+    if enabled:
+        result = _hpc_run_cmd(
+            ["usermod", "-a", "-G", HPC_PORTAL_SUDO_GROUP, username]
+        )
+    else:
+        result = _hpc_run_cmd(["gpasswd", "-d", username, HPC_PORTAL_SUDO_GROUP])
+    if result.returncode != 0:
+        return (
+            result.stderr
+            or result.stdout
+            or ("sudo権限の付与に失敗しました" if enabled else "sudo権限の解除に失敗しました")
+        ).strip()
+    if _hpc_user_has_sudo(username) != enabled:
+        return "sudoグループの変更結果を確認できませんでした"
     return None
 
 

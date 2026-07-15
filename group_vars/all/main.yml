@@ -51,7 +51,7 @@ hpc_portal_protected_users:
   - "{{ ansible_user }}"
   - root
 hpc_portal_user_min_uid: 1000
-hpc_portal_grant_sudo_on_create: true
+hpc_portal_grant_sudo_on_create: false
 hpc_portal_user_sudo_group: sudo
 
 # LiteLLM / PostgreSQL

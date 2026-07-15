@@ -11,7 +11,7 @@
       <a class="hpc-page-link hpc-external-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" aria-label="LiteLLM 管理画面を新しいタブで開く"><span>LiteLLM 管理画面</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>
       {% endif %}
     </div>
-    <div class="hpc-help">ポータルへのログインに使う OS アカウントの作成・削除・パスワード再発行</div>
+    <div class="hpc-help">ポータルへのログインに使う OS アカウントとシステム権限の管理</div>
   </div>
 
   <div class="hpc-note">
@@ -92,7 +92,7 @@
     </div>
     <div class="hpc-muted" style="margin:-4px 0 12px; font-size:13px;">
       パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。<br>
-      ストレージ使用量はホームディレクトリ内の実使用量で、容量の上限ではありません。
+      ストレージ使用量はホームディレクトリ内の実使用量で、容量の上限ではありません。sudo可のユーザーはサーバー全体を管理できるため、必要なユーザーだけに付与してください。sudoグループの変更は次回ログインから確実に反映され、ログイン済みセッションや実行中アプリは終了しません。
     </div>
     <div style="overflow-x:auto;">
       <table class="gx10-admin-table" aria-label="Linux ユーザー一覧">
@@ -103,8 +103,9 @@
             <th>UID</th>
             <th>ホーム</th>
             <th>ストレージ使用量</th>
+            <th title="設定されたsudoグループへの所属状態">システム権限</th>
             <th>LLM API</th>
-            <th>操作</th>
+            <th class="hpc-user-actions-heading">操作</th>
           </tr>
         </thead>
         <tbody id="users-tbody">
@@ -116,12 +117,14 @@
             </td>
             <td>
               <span class="hpc-display-name-value">{{ u.display_name or '—' }}</span>
-              <button type="button" class="hpc-inline-edit-btn hpc-display-name-btn" data-username="{{ u.username }}" data-display-name="{{ u.display_name }}">変更</button>
             </td>
             <td>{{ u.uid }}</td>
             <td><code>{{ u.home }}</code></td>
             <td>
               <span class="hpc-storage-usage{% if u.storage_used_bytes is none %} is-unknown{% endif %}"{% if u.storage_message %} title="{{ u.storage_message }}"{% endif %}>{{ u.storage_used_label }}</span>
+            </td>
+            <td>
+              <span class="hpc-sudo-status-badge {% if u.sudo_enabled %}is-enabled{% else %}is-disabled{% endif %}" title="設定されたsudoグループに{% if u.sudo_enabled %}所属しています{% else %}所属していません{% endif %}">{% if u.sudo_enabled %}sudo可{% else %}一般{% endif %}</span>
             </td>
             <td>
               {% if u.api_access == 'enabled' %}
@@ -134,20 +137,31 @@
               <span class="hpc-api-status-badge is-unknown"{% if u.api_access_message %} title="{{ u.api_access_message }}"{% endif %}>確認不可</span>
               {% endif %}
             </td>
-            <td>
-	              {% if not u.protected %}
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
-              {% if u.api_access == 'enabled' %}
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_disable">LLM API無効化</button>
-              {% elif u.api_access == 'disabled' %}
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="disabled">LLM API有効化</button>
-              {% elif u.api_access == 'unissued' %}
-              <button type="button" class="gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="unissued">LLM API有効化</button>
-              {% endif %}
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}">削除</button>
-              {% else %}
-              <span class="hpc-muted" style="font-size:12px;">—</span>
-              {% endif %}
+            <td class="hpc-user-actions-cell">
+              <button type="button" class="hpc-user-actions-trigger" aria-label="{{ u.username }} の操作メニューを開く" aria-haspopup="menu" aria-expanded="false">…</button>
+              <div class="hpc-user-actions-menu" role="menu" hidden>
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-display-name-btn" data-username="{{ u.username }}" data-display-name="{{ u.display_name }}">表示名を変更</button>
+                {% if not u.protected %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
+                {% if u.api_access == 'enabled' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_disable">LLM API無効化</button>
+                {% elif u.api_access == 'disabled' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="disabled">LLM API有効化</button>
+                {% elif u.api_access == 'unissued' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="unissued">LLM API有効化</button>
+                {% endif %}
+                {% endif %}
+                <div class="hpc-user-action-divider" role="separator"></div>
+                {% if u.sudo_enabled %}
+                <button type="button" role="menuitem" class="hpc-user-action-item is-warning hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_disable"{% if u.protected %} disabled title="保護ユーザーのsudo権限は解除できません"{% endif %}>sudo無効化</button>
+                {% else %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_enable">sudo有効化</button>
+                {% endif %}
+                {% if not u.protected %}
+                <div class="hpc-user-action-divider" role="separator"></div>
+                <button type="button" role="menuitem" class="hpc-user-action-item is-danger hpc-del-btn" data-username="{{ u.username }}">ユーザー削除</button>
+                {% endif %}
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -305,7 +319,13 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     if (event.target === displayNameModal) closeDisplayNameModal();
   };
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && !displayNameModal.hidden) closeDisplayNameModal();
+    if (event.key === "Escape") {
+      if (!displayNameModal.hidden) closeDisplayNameModal();
+      var openMenu = document.querySelector('.hpc-user-actions-menu:not([hidden])');
+      var openTrigger = openMenu ? openMenu.parentElement.querySelector(".hpc-user-actions-trigger") : null;
+      closeUserActionMenus();
+      if (openTrigger) openTrigger.focus();
+    }
   });
   displayNameForm.onsubmit = function (event) {
     event.preventDefault();
@@ -329,9 +349,72 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
       button.disabled = false;
     });
   };
+  function closeUserActionMenus(exceptMenu) {
+    document.querySelectorAll(".hpc-user-actions-menu").forEach(function (menu) {
+      if (menu === exceptMenu) return;
+      menu.hidden = true;
+      menu.style.visibility = "";
+      var trigger = menu.parentElement.querySelector(".hpc-user-actions-trigger");
+      if (trigger) trigger.setAttribute("aria-expanded", "false");
+    });
+  }
+  function openUserActionMenu(trigger, menu) {
+    closeUserActionMenus(menu);
+    menu.hidden = false;
+    menu.style.visibility = "hidden";
+    var triggerRect = trigger.getBoundingClientRect();
+    var menuRect = menu.getBoundingClientRect();
+    var left = Math.max(8, Math.min(triggerRect.right - menuRect.width, window.innerWidth - menuRect.width - 8));
+    var top = triggerRect.bottom + 5;
+    if (top + menuRect.height > window.innerHeight - 8) {
+      top = Math.max(8, triggerRect.top - menuRect.height - 5);
+    }
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+    menu.style.visibility = "";
+    trigger.setAttribute("aria-expanded", "true");
+    var firstItem = menu.querySelector("button:not(:disabled)");
+    if (firstItem) firstItem.focus();
+  }
+  function bindActionMenus() {
+    document.querySelectorAll(".hpc-user-actions-trigger").forEach(function (trigger) {
+      trigger.onclick = function (event) {
+        event.stopPropagation();
+        var menu = trigger.parentElement.querySelector(".hpc-user-actions-menu");
+        if (!menu) return;
+        if (!menu.hidden) {
+          closeUserActionMenus();
+          trigger.focus();
+          return;
+        }
+        openUserActionMenu(trigger, menu);
+      };
+    });
+    document.querySelectorAll(".hpc-user-actions-menu").forEach(function (menu) {
+      menu.onclick = function (event) { event.stopPropagation(); };
+      menu.onkeydown = function (event) {
+        var items = Array.prototype.slice.call(menu.querySelectorAll("button:not(:disabled)"));
+        if (!items.length) return;
+        var current = items.indexOf(document.activeElement);
+        var next = current;
+        if (event.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % items.length;
+        else if (event.key === "ArrowUp") next = current <= 0 ? items.length - 1 : current - 1;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = items.length - 1;
+        else return;
+        event.preventDefault();
+        items[next].focus();
+      };
+    });
+  }
+  document.addEventListener("click", function () { closeUserActionMenus(); });
+  window.addEventListener("resize", function () { closeUserActionMenus(); });
+  window.addEventListener("scroll", function () { closeUserActionMenus(); }, true);
   function bindRowButtons() {
+    bindActionMenus();
     document.querySelectorAll(".hpc-display-name-btn").forEach(function (btn) {
       btn.onclick = function () {
+        closeUserActionMenus();
         openDisplayNameModal(
           btn.getAttribute("data-username"),
           btn.getAttribute("data-display-name") || ""
@@ -341,6 +424,7 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
     document.querySelectorAll(".hpc-del-btn").forEach(function (btn) {
       btn.onclick = function () {
         var name = btn.getAttribute("data-username");
+        closeUserActionMenus();
         if (!confirm(name + " を削除しますか？ホームディレクトリも削除されます。")) return;
         btn.disabled = true;
         postAction({ action: "delete", username: name })
@@ -358,57 +442,84 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           });
       };
     });
-	    document.querySelectorAll(".hpc-pw-btn").forEach(function (btn) {
-	      btn.onclick = function () {
-	        var name = btn.getAttribute("data-username");
-	        if (!confirm(name + " のパスワードを再発行しますか？\nログイン済みのセッションや実行中アプリは終了しません。")) return;
-	        btn.disabled = true;
-	        postAction({action: "password_regenerate", username: name})
-	          .then(function (body) {
-	            showCredentials(name, body.initial_password, "");
-	            showMsg(document.getElementById("list-msg"), name + " のパスワードを再発行しました", true);
-	          })
-	          .catch(function (e) {
-	            showMsg(document.getElementById("list-msg"), e.message, false);
-	            failOp(e.message);
-	          })
-	          .finally(function () { btn.disabled = false; });
-	      };
-	    });
-	    document.querySelectorAll(".hpc-api-access-btn").forEach(function (btn) {
-	      btn.onclick = function () {
-	        var name = btn.getAttribute("data-username");
-	        var action = btn.getAttribute("data-action");
-	        var apiState = btn.getAttribute("data-api-state") || "";
-	        var enabling = action === "api_enable";
-	        var actionLabel = enabling ? "有効化" : "無効化";
-	        var confirmText = name + " の LLM APIを" + actionLabel + "しますか？";
-	        if (apiState === "unissued") {
-	          confirmText = name + " の LLM APIを有効化して、API keyを発行しますか？";
-	        }
-	        if (!confirm(confirmText)) return;
-	        btn.disabled = true;
-	        postAction({ action: action, username: name })
-	          .then(function (body) {
-	            if (body.api_key) {
-	              showCredentials(name, "", body.api_key);
-	              showMsg(document.getElementById("list-msg"), name + " の LLM APIを有効化し、API keyを発行しました", true);
-	            } else {
-	              showMsg(document.getElementById("list-msg"), name + " の LLM APIを" + actionLabel + "しました", true);
-	            }
-	            return reloadUsers().catch(function (error) {
-	              showWarn(document.getElementById("list-msg"), "LLM APIは" + actionLabel + "しましたが、一覧を再読み込みできませんでした: " + error.message);
-	            });
-	          })
-	          .catch(function (e) {
-	            showMsg(document.getElementById("list-msg"), e.message, false);
-	            failOp(e.message);
-	            return reloadUsers().catch(function () {});
-	          })
-	          .finally(function () { btn.disabled = false; });
-	      };
-	    });
-	  }
+    document.querySelectorAll(".hpc-pw-btn").forEach(function (btn) {
+      btn.onclick = function () {
+        var name = btn.getAttribute("data-username");
+        closeUserActionMenus();
+        if (!confirm(name + " のパスワードを再発行しますか？\nログイン済みのセッションや実行中アプリは終了しません。")) return;
+        btn.disabled = true;
+        postAction({ action: "password_regenerate", username: name })
+          .then(function (body) {
+            showCredentials(name, body.initial_password, "");
+            showMsg(document.getElementById("list-msg"), name + " のパスワードを再発行しました", true);
+          })
+          .catch(function (e) {
+            showMsg(document.getElementById("list-msg"), e.message, false);
+            failOp(e.message);
+          })
+          .finally(function () { btn.disabled = false; });
+      };
+    });
+    document.querySelectorAll(".hpc-api-access-btn").forEach(function (btn) {
+      btn.onclick = function () {
+        var name = btn.getAttribute("data-username");
+        closeUserActionMenus();
+        var action = btn.getAttribute("data-action");
+        var apiState = btn.getAttribute("data-api-state") || "";
+        var enabling = action === "api_enable";
+        var actionLabel = enabling ? "有効化" : "無効化";
+        var confirmText = name + " の LLM APIを" + actionLabel + "しますか？";
+        if (apiState === "unissued") {
+          confirmText = name + " の LLM APIを有効化して、API keyを発行しますか？";
+        }
+        if (!confirm(confirmText)) return;
+        btn.disabled = true;
+        postAction({ action: action, username: name })
+          .then(function (body) {
+            if (body.api_key) {
+              showCredentials(name, "", body.api_key);
+              showMsg(document.getElementById("list-msg"), name + " の LLM APIを有効化し、API keyを発行しました", true);
+            } else {
+              showMsg(document.getElementById("list-msg"), name + " の LLM APIを" + actionLabel + "しました", true);
+            }
+            return reloadUsers().catch(function (error) {
+              showWarn(document.getElementById("list-msg"), "LLM APIは" + actionLabel + "しましたが、一覧を再読み込みできませんでした: " + error.message);
+            });
+          })
+          .catch(function (e) {
+            showMsg(document.getElementById("list-msg"), e.message, false);
+            failOp(e.message);
+            return reloadUsers().catch(function () {});
+          })
+          .finally(function () { btn.disabled = false; });
+      };
+    });
+    document.querySelectorAll(".hpc-sudo-access-btn").forEach(function (btn) {
+      btn.onclick = function () {
+        var name = btn.getAttribute("data-username");
+        var action = btn.getAttribute("data-action");
+        var enabling = action === "sudo_enable";
+        closeUserActionMenus();
+        var confirmText = enabling
+          ? name + " にsudo権限を付与しますか？\nこのユーザーはサーバー全体を管理できるようになります。次回ログインから確実に反映されます。"
+          : name + " のsudo権限を解除しますか？\nログイン済みセッションや実行中アプリは終了せず、次回ログインから確実に反映されます。";
+        if (!confirm(confirmText)) return;
+        btn.disabled = true;
+        postAction({ action: action, username: name })
+          .then(function () {
+            showMsg(document.getElementById("list-msg"), name + " のsudo権限を" + (enabling ? "有効化" : "無効化") + "しました", true);
+            return reloadUsers().catch(function (error) {
+              showWarn(document.getElementById("list-msg"), "sudo権限は変更しましたが、一覧を再読み込みできませんでした: " + error.message);
+            });
+          })
+          .catch(function (e) {
+            showMsg(document.getElementById("list-msg"), e.message, false);
+            failOp(e.message);
+          })
+          .finally(function () { btn.disabled = false; });
+      };
+    });
+  }
   function postAction(payload) {
     return fetch(apiUrl(), {
       method: "POST",
@@ -456,13 +567,6 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           displayNameValue.className = "hpc-display-name-value";
           displayNameValue.textContent = u.display_name || "—";
           displayNameCell.appendChild(displayNameValue);
-          var displayNameButton = document.createElement("button");
-          displayNameButton.type = "button";
-          displayNameButton.className = "hpc-inline-edit-btn hpc-display-name-btn";
-          displayNameButton.setAttribute("data-username", u.username);
-          displayNameButton.setAttribute("data-display-name", u.display_name || "");
-          displayNameButton.textContent = "変更";
-          displayNameCell.appendChild(displayNameButton);
           tr.appendChild(displayNameCell);
 
           var uidCell = document.createElement("td");
@@ -483,6 +587,14 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           storageCell.appendChild(storageValue);
           tr.appendChild(storageCell);
 
+          var sudoStatusCell = document.createElement("td");
+          var sudoStatus = document.createElement("span");
+          sudoStatus.className = "hpc-sudo-status-badge " + (u.sudo_enabled ? "is-enabled" : "is-disabled");
+          sudoStatus.textContent = u.sudo_enabled ? "sudo可" : "一般";
+          sudoStatus.title = "設定されたsudoグループに" + (u.sudo_enabled ? "所属しています" : "所属していません");
+          sudoStatusCell.appendChild(sudoStatus);
+          tr.appendChild(sudoStatusCell);
+
           var apiStatusCell = document.createElement("td");
           var apiStatus = document.createElement("span");
           var apiAccess = ["enabled", "disabled", "unissued"].indexOf(u.api_access) >= 0 ? u.api_access : "unknown";
@@ -493,35 +605,62 @@ window.HPC_XSRF = {{ xsrf_token|tojson }};
           tr.appendChild(apiStatusCell);
 
           var operationCell = document.createElement("td");
-          if (u.protected) {
-            var protectedMark = document.createElement("span");
-            protectedMark.className = "hpc-muted";
-            protectedMark.style.fontSize = "12px";
-            protectedMark.textContent = "—";
-            operationCell.appendChild(protectedMark);
-          } else {
-            var definitions = [
-              ["パスワード再発行", "gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn", ""]
-            ];
-            if (apiAccess === "enabled") {
-              definitions.push(["LLM API無効化", "gx10-admin-btn gx10-admin-btn-warn hpc-api-access-btn", "api_disable", "enabled"]);
-            } else if (apiAccess === "disabled") {
-              definitions.push(["LLM API有効化", "gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn", "api_enable", "disabled"]);
-            } else if (apiAccess === "unissued") {
-              definitions.push(["LLM API有効化", "gx10-admin-btn gx10-admin-btn-enable hpc-api-access-btn", "api_enable", "unissued"]);
-            }
-            definitions.push(["削除", "gx10-admin-btn gx10-admin-btn-danger hpc-del-btn", ""]);
-            definitions.forEach(function (definition) {
-              var actionButton = document.createElement("button");
-              actionButton.type = "button";
-              actionButton.className = definition[1];
-              actionButton.setAttribute("data-username", u.username);
-              if (definition[2]) actionButton.setAttribute("data-action", definition[2]);
-              if (definition[3]) actionButton.setAttribute("data-api-state", definition[3]);
-              actionButton.textContent = definition[0];
-              operationCell.appendChild(actionButton);
-            });
+          operationCell.className = "hpc-user-actions-cell";
+          var actionTrigger = document.createElement("button");
+          actionTrigger.type = "button";
+          actionTrigger.className = "hpc-user-actions-trigger";
+          actionTrigger.setAttribute("aria-label", u.username + " の操作メニューを開く");
+          actionTrigger.setAttribute("aria-haspopup", "menu");
+          actionTrigger.setAttribute("aria-expanded", "false");
+          actionTrigger.textContent = "…";
+          operationCell.appendChild(actionTrigger);
+          var actionMenu = document.createElement("div");
+          actionMenu.className = "hpc-user-actions-menu";
+          actionMenu.setAttribute("role", "menu");
+          actionMenu.hidden = true;
+          function appendActionItem(label, className, action, apiState, disabled, title) {
+            var actionButton = document.createElement("button");
+            actionButton.type = "button";
+            actionButton.setAttribute("role", "menuitem");
+            actionButton.className = "hpc-user-action-item " + className;
+            actionButton.setAttribute("data-username", u.username);
+            if (action) actionButton.setAttribute("data-action", action);
+            if (apiState) actionButton.setAttribute("data-api-state", apiState);
+            if (disabled) actionButton.disabled = true;
+            if (title) actionButton.title = title;
+            actionButton.textContent = label;
+            actionMenu.appendChild(actionButton);
+            return actionButton;
           }
+          var displayAction = appendActionItem("表示名を変更", "hpc-display-name-btn", "", "", false, "");
+          displayAction.setAttribute("data-display-name", u.display_name || "");
+          if (!u.protected) {
+            appendActionItem("パスワード再発行", "hpc-pw-btn", "", "", false, "");
+            if (apiAccess === "enabled") {
+              appendActionItem("LLM API無効化", "hpc-api-access-btn", "api_disable", "enabled", false, "");
+            } else if (apiAccess === "disabled") {
+              appendActionItem("LLM API有効化", "hpc-api-access-btn", "api_enable", "disabled", false, "");
+            } else if (apiAccess === "unissued") {
+              appendActionItem("LLM API有効化", "hpc-api-access-btn", "api_enable", "unissued", false, "");
+            }
+          }
+          var sudoDivider = document.createElement("div");
+          sudoDivider.className = "hpc-user-action-divider";
+          sudoDivider.setAttribute("role", "separator");
+          actionMenu.appendChild(sudoDivider);
+          if (u.sudo_enabled) {
+            appendActionItem("sudo無効化", "is-warning hpc-sudo-access-btn", "sudo_disable", "", u.protected, u.protected ? "保護ユーザーのsudo権限は解除できません" : "");
+          } else {
+            appendActionItem("sudo有効化", "hpc-sudo-access-btn", "sudo_enable", "", false, "");
+          }
+          if (!u.protected) {
+            var deleteDivider = document.createElement("div");
+            deleteDivider.className = "hpc-user-action-divider";
+            deleteDivider.setAttribute("role", "separator");
+            actionMenu.appendChild(deleteDivider);
+            appendActionItem("ユーザー削除", "is-danger hpc-del-btn", "", "", false, "");
+          }
+          operationCell.appendChild(actionMenu);
           tr.appendChild(operationCell);
           tbody.appendChild(tr);
         });

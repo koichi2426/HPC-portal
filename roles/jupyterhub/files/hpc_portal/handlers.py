@@ -55,6 +55,7 @@ from .users import (
     _hpc_run_cmd,
     _hpc_set_linux_display_name,
     _hpc_set_linux_password,
+    _hpc_set_linux_sudo,
     _hpc_validate_display_name,
     _hpc_validate_password,
     _hpc_validate_username,
@@ -62,6 +63,7 @@ from .users import (
 )
 
 HPC_PASSWORD_LOG = logging.getLogger("jupyterhub.hpc-password")
+HPC_USER_ADMIN_LOG = logging.getLogger("jupyterhub.hpc-user-admin")
 HPC_OLLAMA_LOG = logging.getLogger("jupyterhub.hpc-ollama")
 
 _HPC_ADMIN_API_STATUS_CONCURRENCY = 8
@@ -435,6 +437,24 @@ def _hpc_log_password_success(actor: str, target: str) -> None:
     )
 
 
+def _hpc_log_user_admin_success(action: str, actor: str, target: str) -> None:
+    """秘密値を含めず、ユーザー権限操作の成功を監査ログへ記録する。
+
+    Args:
+        action: 実行した操作名。
+        actor: 操作を実行した管理者ユーザー名。
+        target: 操作対象のLinuxユーザー名。
+    """
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    HPC_USER_ADMIN_LOG.info(
+        "timestamp=%s action=%s actor=%s target=%s",
+        timestamp,
+        action,
+        actor,
+        target,
+    )
+
+
 class HpcAdminUsersPageHandler(BaseHandler):
     """Linux ユーザー管理 UI（/hub/admin/users）"""
 
@@ -734,7 +754,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
             if err:
                 return self._api_error(400, err)
             initial_password = _hpc_generate_password()
-            grant_sudo = bool(body.get("sudo", HPC_PORTAL_GRANT_SUDO))
+            grant_sudo = body.get("sudo", HPC_PORTAL_GRANT_SUDO) is True
             err = _hpc_create_linux_user(
                 username,
                 initial_password,
@@ -743,6 +763,8 @@ class HpcAdminUsersApiHandler(BaseHandler):
             )
             if err:
                 return self._api_error(400, err)
+            if grant_sudo:
+                _hpc_log_user_admin_success("sudo_enable", actor, username)
             api_key, key_warning = _hpc_litellm_generate_key(username)
             self.set_status(201)
             body = {
@@ -792,6 +814,21 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 return self._api_error(400, err)
             _hpc_log_password_success(actor, username)
             self.write({"ok": True, "username": username, "initial_password": password})
+            return
+
+        if action in {"sudo_enable", "sudo_disable"}:
+            if not username:
+                return self._api_error(400, "username が必要です")
+            enabled = action == "sudo_enable"
+            if not enabled and username in HPC_PORTAL_PROTECTED_USERS:
+                return self._api_error(400, "保護されたユーザーのsudo権限は解除できません")
+            if not enabled and username == actor:
+                return self._api_error(400, "ログイン中の自分自身のsudo権限は解除できません")
+            err = _hpc_set_linux_sudo(username, enabled)
+            if err:
+                return self._api_error(400, err)
+            _hpc_log_user_admin_success(action, actor, username)
+            self.write({"ok": True, "username": username, "sudo_enabled": enabled})
             return
 
         if action in {"api_disable", "api_enable"}:
