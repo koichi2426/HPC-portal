@@ -250,8 +250,9 @@
     }).then(updateSharedOllama);
   }
 
-  function appendCell(row, text, className) {
+  function appendCell(row, label, text, className) {
     var cell = global.document.createElement("td");
+    cell.setAttribute("data-label", label);
     if (className) {
       var content = global.document.createElement("span");
       content.className = className;
@@ -334,8 +335,9 @@
     }
     apps.forEach(function (app) {
       var row = global.document.createElement("tr");
+      row.className = "hpc-admin-app-row";
       row.setAttribute("data-job-id", String(app.job_id || ""));
-      var userCell = appendCell(row, "");
+      var userCell = appendCell(row, "ユーザー", "");
       var username = global.document.createElement("strong");
       username.textContent = String(app.username || "—");
       userCell.appendChild(username);
@@ -345,17 +347,18 @@
         displayName.textContent = String(app.display_name);
         userCell.appendChild(displayName);
       }
-      appendCell(row, String(app.app || "—"));
+      appendCell(row, "アプリ", String(app.app || "—"));
       appendCell(
         row,
+        "状態",
         String(app.state_label || app.state || "不明"),
         "hpc-admin-app-state is-" + String(app.state || "unknown").toLowerCase()
       );
-      appendCell(row, String(app.cpus || "—") + " vCPU");
-      appendCell(row, String(app.memory || "—"));
-      appendCell(row, String(app.gpus || 0));
-      appendCell(row, String(app.elapsed || "—"));
-      var detailsCell = appendCell(row, "");
+      appendCell(row, "CPU割当", String(app.cpus || "—") + " vCPU");
+      appendCell(row, "メモリ上限", String(app.memory || "—"));
+      appendCell(row, "GPU", String(app.gpus || 0));
+      appendCell(row, "実行時間", String(app.elapsed || "—"));
+      var detailsCell = appendCell(row, "詳細", "");
       var details = buildAdminAppDetails(app, openJobIds, body);
       detailsCell.appendChild(details.toggle);
       body.appendChild(row);
