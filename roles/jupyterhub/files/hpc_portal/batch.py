@@ -83,7 +83,7 @@ Proxy.delete_user = _hpc_proxy_delete_user
 OPENWEBUI_DEFAULT_MODEL_METADATA_JSON = (
     '{"capabilities":{"file_context":true,"web_search":false,'
     '"image_generation":false,"code_interpreter":false,"terminal":false,'
-    '"builtin_tools":true},"builtinTools":{"time":true,"memory":true,'
+    '"builtin_tools":false},"builtinTools":{"time":true,"memory":true,'
     '"notes":true,"chats":false,"knowledge":false,"channels":false,'
     '"web_search":false,"image_generation":false,"code_interpreter":false,'
     '"tasks":false,"automations":false,"calendar":false}}'
