@@ -27,6 +27,9 @@ def _int(name, default):
 
     Returns:
         変換済みの整数値。
+
+    Raises:
+        ValueError: 環境変数が整数として不正な場合。
     """
     raw = _value(name, str(default))
     try:
@@ -44,6 +47,9 @@ def _bool(name, default):
 
     Returns:
         真偽値。
+
+    Raises:
+        ValueError: 環境変数が真偽値として不正な場合。
     """
     raw = _value(name, str(default)).lower()
     if raw in {"1", "true", "yes", "on"}:
@@ -62,6 +68,9 @@ def _json_list(name, default):
 
     Returns:
         各要素を文字列化したタプル。
+
+    Raises:
+        ValueError: 環境変数が文字列配列として不正な場合。
     """
     raw = _value(name, json.dumps(default))
     try:

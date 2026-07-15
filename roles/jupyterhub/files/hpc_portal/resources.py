@@ -1,5 +1,13 @@
 """Slurmノードとホストの空きリソースを取得する。"""
 
+import asyncio
+import re
+import subprocess
+import time
+
+import psutil
+from tornado import web
+
 from .common import (
     BaseHandler,
     HPC_APP_STATUS_JS,
@@ -7,13 +15,7 @@ from .common import (
     HPC_PORTAL_CSS,
     HPC_RESOURCE_METER_JS,
     SLURM_NODE_NAME,
-    asyncio,
     c,
-    psutil,
-    re,
-    subprocess,
-    time,
-    web,
 )
 
 def _hpc_resource_status(available_pct):
@@ -33,7 +35,14 @@ def _hpc_resource_status(available_pct):
 
 
 def _parse_slurm_mem_to_mb(value: str) -> int:
-    """Slurm TRES の mem=4G / mem=8192M などを MB に変換する"""
+    """Slurm TRES の mem=4G / mem=8192M などを MB に変換する
+
+    Args:
+        value: 変換または解析する値。
+
+    Returns:
+        MB単位のメモリ量。
+    """
     s = str(value or "").strip().upper()
     if not s:
         return 0
@@ -45,7 +54,14 @@ def _parse_slurm_mem_to_mb(value: str) -> int:
 
 
 def _parse_slurm_tres(tres: str) -> dict:
-    """CfgTRES / AllocTRES を cpu・mem_mb・gpu に分解する"""
+    """CfgTRES / AllocTRES を cpu・mem_mb・gpu に分解する
+
+    Args:
+        tres: 解析するSlurm TRES文字列。
+
+    Returns:
+        TRES名と値の辞書。
+    """
     out = {"cpu": 0, "mem_mb": 0, "gpu": 0}
     if not tres:
         return out
@@ -66,7 +82,14 @@ def _parse_slurm_tres(tres: str) -> dict:
 
 
 def _slurm_field_map(line: str) -> dict:
-    """scontrol -o の key=value 列を dict にする"""
+    """scontrol -o の key=value 列を dict にする
+
+    Args:
+        line: 解析するSlurm出力行。
+
+    Returns:
+        フィールド名と値の辞書。
+    """
     fields = {}
     for token in str(line or "").split():
         if "=" in token:
@@ -76,7 +99,14 @@ def _slurm_field_map(line: str) -> dict:
 
 
 def _parse_slurm_gres_count(gres: str) -> int:
-    """ノード行の Gres=gpu:1 などから GPU 総数を得る"""
+    """ノード行の Gres=gpu:1 などから GPU 総数を得る
+
+    Args:
+        gres: 解析するSlurm GRES文字列。
+
+    Returns:
+        GPU数。
+    """
     for part in str(gres or "").split(","):
         part = part.strip()
         if part.startswith("gpu:"):
@@ -88,7 +118,11 @@ def _parse_slurm_gres_count(gres: str) -> int:
 
 
 def _hpc_slurm_free_resources():
-    """Slurm が管理している未割り当て CPU / RAM / GPU（ジョブ停止で増える）"""
+    """Slurm が管理している未割り当て CPU / RAM / GPU（ジョブ停止で増える）
+
+    Returns:
+        Slurmが管理する空きリソース。
+    """
     gpu_default = HPC_GPU_COUNT
     try:
         proc = subprocess.run(

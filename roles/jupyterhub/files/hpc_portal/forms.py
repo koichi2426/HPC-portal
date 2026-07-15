@@ -1,5 +1,7 @@
 """アプリ起動フォームの生成と入力値変換を提供する。"""
 
+import html
+
 from .apps import (
     HPC_STOP_SERVER_JS,
     _hpc_allocation_html,
@@ -20,7 +22,6 @@ from .common import (
     HPC_PUBLIC_SCHEME,
     HPC_STATIC_VERSIONS,
     c,
-    html,
     url_escape_path,
     url_path_join,
 )

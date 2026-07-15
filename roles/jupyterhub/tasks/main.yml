@@ -55,12 +55,37 @@
     mode: '0644'
   notify: jupyterhubを再起動
 
+- name: 配置対象のHPCポータルPythonツリーを取得
+  ansible.builtin.set_fact:
+    portal_python_tree: >-
+      {{ query('community.general.filetree', role_path + '/files/hpc_portal') }}
+
+- name: 配置対象のHPCポータルPythonファイルを抽出
+  ansible.builtin.set_fact:
+    portal_python_files: >-
+      {{ portal_python_tree
+         | selectattr('state', 'equalto', 'file')
+         | selectattr('path', 'match', '.*\.py$')
+         | list }}
+
+- name: HPCポータルPythonパッケージディレクトリを作成
+  ansible.builtin.file:
+    path: "/etc/jupyterhub/hpc_portal/{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ portal_python_tree | selectattr('state', 'equalto', 'directory') | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: item.path is not search('(^|/)__pycache__(/|$)')
+
 - name: 配置済みHPCポータルPythonモジュールを確認
   ansible.builtin.find:
     paths: /etc/jupyterhub/hpc_portal
     patterns: '*.py'
     file_type: file
-    recurse: false
+    recurse: true
   register: deployed_portal_python_files
 
 - name: 廃止したHPCポータルPythonモジュールを削除
@@ -71,21 +96,20 @@
   loop_control:
     label: "{{ item.path }}"
   when: >-
-    item.path | basename not in
-    (query('ansible.builtin.fileglob', role_path + '/files/hpc_portal/*.py')
-    | map('basename') | list)
+    (item.path | regex_replace('^/etc/jupyterhub/hpc_portal/', '')) not in
+    (portal_python_files | map(attribute='path') | list)
   notify: jupyterhubを再起動
 
 - name: HPCポータルPythonモジュールを配置
   ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/etc/jupyterhub/hpc_portal/{{ item | basename }}"
+    src: "{{ item.src }}"
+    dest: "/etc/jupyterhub/hpc_portal/{{ item.path }}"
     owner: root
     group: root
     mode: '0644'
-  loop: "{{ query('ansible.builtin.fileglob', role_path + '/files/hpc_portal/*.py') }}"
+  loop: "{{ portal_python_files }}"
   loop_control:
-    label: "{{ item | basename }}"
+    label: "{{ item.path }}"
   notify: jupyterhubを再起動
 
 - name: JupyterHub 環境ファイルを配置

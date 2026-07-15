@@ -1,14 +1,15 @@
 """Slurm上でJupyterLabとOpen WebUIを起動するSpawnerを提供する。"""
 
+import asyncio
+import re
+import subprocess
+
 from .apps import _is_openwebui_spawner, _job_host, _spawner_job_id
 from .common import (
     HPC_PUBLIC_SCHEME,
     SlurmSpawner,
     _HPC_OPENWEBUI_KEY_LOCKS,
     _oauth_job_host_ctx,
-    asyncio,
-    re,
-    subprocess,
     url_escape_path,
     url_path_join,
 )
@@ -112,7 +113,14 @@ class HPCSlurmSpawner(SlurmSpawner):
             await asyncio.sleep(0.75)
 
     async def stop(self, now=False):
-        """Slurm ジョブ停止後、同一ポートの Open WebUI 残骸を掃除して GPU/ポートを解放する"""
+        """Slurm ジョブ停止後、同一ポートの Open WebUI 残骸を掃除して GPU/ポートを解放する
+
+        Args:
+            now: 即時停止する場合はTrue。
+
+        Returns:
+            停止結果。
+        """
         port = getattr(self, "port", None) or 0
         app_choice = str((self.user_options or {}).get("app_choice", ""))
         user_name = self.user.name if getattr(self, "user", None) else ""

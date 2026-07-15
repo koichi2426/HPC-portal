@@ -1,17 +1,17 @@
 """Linuxユーザーの検証、作成、削除、権限・表示名・パスワード変更を提供する。"""
 
 import grp
+import os
+import pwd
+import re
+import secrets
+import subprocess
 
 from .common import (
     HPC_PORTAL_ADMIN_USERS,
     HPC_PORTAL_PROTECTED_USERS,
     HPC_PORTAL_SUDO_GROUP,
     HPC_PORTAL_USER_MIN_UID,
-    os,
-    pwd,
-    re,
-    secrets,
-    subprocess,
 )
 
 _HPC_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
@@ -74,7 +74,14 @@ def _hpc_validate_password(password: str) -> str | None:
 
 
 def _hpc_validate_display_name(display_name: str) -> str | None:
-    """Linux GECOS欄へ保存する表示名を検証する。"""
+    """Linux GECOS欄へ保存する表示名を検証する。
+
+    Args:
+        display_name: 設定する表示名。
+
+    Returns:
+        正常ならNone、不正ならエラーメッセージ。
+    """
     value = (display_name or "").strip()
     if len(value) > _HPC_DISPLAY_NAME_MAX_LENGTH:
         return f"表示名は{_HPC_DISPLAY_NAME_MAX_LENGTH}文字以内にしてください"
@@ -86,7 +93,11 @@ def _hpc_validate_display_name(display_name: str) -> str | None:
 
 
 def _hpc_generate_password() -> str:
-    """英大文字・英小文字・数字を各1文字以上含む12文字のパスワードを生成する。"""
+    """英大文字・英小文字・数字を各1文字以上含む12文字のパスワードを生成する。
+
+    Returns:
+        生成した12文字のランダムパスワード。
+    """
     while True:
         password = "".join(
             secrets.choice(_HPC_RANDOM_PASSWORD_ALPHABET)
@@ -322,7 +333,15 @@ def _hpc_set_linux_sudo(username: str, enabled: bool) -> str | None:
 
 
 def _hpc_set_linux_display_name(username: str, display_name: str) -> str | None:
-    """Linux GECOS欄の表示名を設定または削除する。"""
+    """Linux GECOS欄の表示名を設定または削除する。
+
+    Args:
+        username: 対象のLinuxユーザー名。
+        display_name: 設定する表示名。
+
+    Returns:
+        正常ならNone、失敗時はエラーメッセージ。
+    """
     display_name = (display_name or "").strip()
     err = _hpc_validate_display_name(display_name)
     if err:
@@ -391,7 +410,16 @@ def _hpc_set_linux_password(username: str, password: str) -> str | None:
 def _hpc_verify_linux_password(
     username: str, password: str, service: str = "login"
 ) -> str | None:
-    """PAMでログイン中ユーザーの現在のパスワードを確認する。"""
+    """PAMでログイン中ユーザーの現在のパスワードを確認する。
+
+    Args:
+        username: 対象のLinuxユーザー名。
+        password: 確認する平文パスワード。
+        service: PAM認証で使用するサービス名。
+
+    Returns:
+        認証成功ならTrueとNone、失敗時はFalseとエラーの組。
+    """
     if not password:
         return "現在のパスワードを入力してください"
     try:

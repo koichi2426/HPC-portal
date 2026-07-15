@@ -1,11 +1,12 @@
 """configurable-http-proxyのルート検査と補修を提供する。"""
 
+import asyncio
+import time
+
 from .common import (
     CHECK_ROUTES_DURATION_SECONDS,
     ConfigurableHTTPProxy,
     _one_at_a_time,
-    asyncio,
-    time,
 )
 from .routing import (
     _hpc_chp_target_ready,
@@ -43,6 +44,9 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
             user_dict: JupyterHubユーザー辞書。
             service_dict: JupyterHubサービス辞書。
             routes: 取得済みルート。
+
+        Returns:
+            処理完了時はNone。
         """
         start = time.perf_counter()
         if not routes:
@@ -269,4 +273,3 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
             CHECK_ROUTES_DURATION_SECONDS.observe(stop - start)
         except Exception:
             pass
-

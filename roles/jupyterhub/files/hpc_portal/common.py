@@ -2,12 +2,8 @@
 
 import asyncio
 import hashlib
-import html
-import json
 import logging
-import secrets
 import threading
-import time
 
 from batchspawner import SlurmSpawner
 from jupyterhub.handlers.base import BaseHandler
@@ -28,15 +24,36 @@ except ImportError:
     from jupyterhub.handlers.base import _set_xsrf_cookie
 
     def _get_xsrf_token_cookie(handler):
-        """互換対象のJupyterHubでXSRF Cookie未取得を表す。"""
+        """互換対象のJupyterHubでXSRF Cookie未取得を表す。
+
+        Args:
+            handler: 対象のJupyterHub Handler。
+
+        Returns:
+            Cookie内のXSRF token情報。
+        """
         return (None, None)
 
     def _needs_check_xsrf(handler):
-        """互換対象のJupyterHubでは常にXSRF検証を要求する。"""
+        """互換対象のJupyterHubでは常にXSRF検証を要求する。
+
+        Args:
+            handler: 対象のJupyterHub Handler。
+
+        Returns:
+            XSRF検証が必要ならTrue。
+        """
         return True
 
     def _jh_check_xsrf_cookie(handler):
-        """Handler自身の実装を使ってXSRF Cookieを検証する。"""
+        """Handler自身の実装を使ってXSRF Cookieを検証する。
+
+        Args:
+            handler: 対象のJupyterHub Handler。
+
+        Returns:
+            XSRF検証結果。
+        """
         return handler.check_xsrf_cookie()
 
 try:
@@ -47,7 +64,11 @@ except Exception:  # noqa: S110
         """メトリクスAPIがないJupyterHub向けの代替実装。"""
 
         def observe(self, _t):
-            """計測値を受け取り、互換性維持のため何もしない。"""
+            """計測値を受け取り、互換性維持のため何もしない。
+
+            Args:
+                _t: 観測対象の経過時間。
+            """
             pass
 
     CHECK_ROUTES_DURATION_SECONDS = _DummyMetric()
@@ -58,7 +79,14 @@ try:
 except Exception:  # noqa: S110
 
     def _one_at_a_time(method):
-        """排他デコレーターがない場合に元のメソッドを返す。"""
+        """排他デコレーターがない場合に元のメソッドを返す。
+
+        Args:
+            method: デコレートするメソッド。
+
+        Returns:
+            排他制御を適用したメソッド。
+        """
         return method
 
 try:
@@ -68,14 +96,6 @@ except ImportError:
 import contextvars
 import nest_asyncio
 import os
-import pwd
-import psutil
-import re
-import subprocess
-import urllib.error
-import urllib.parse
-import urllib.request
-from urllib.parse import urlparse
 
 from .runtime import c
 from .settings import (

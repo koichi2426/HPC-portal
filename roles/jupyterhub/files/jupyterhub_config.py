@@ -107,4 +107,6 @@ from hpc_portal import spawner as _spawner  # noqa: E402,F401
 from hpc_portal import proxy as _proxy  # noqa: E402,F401
 from hpc_portal import forms as _forms  # noqa: E402,F401
 from hpc_portal import batch as _batch  # noqa: E402,F401
-from hpc_portal import handlers as _handlers  # noqa: E402,F401
+from hpc_portal.handlers import register_handlers  # noqa: E402
+
+register_handlers()

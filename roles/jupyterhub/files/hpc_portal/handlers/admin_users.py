@@ -1,51 +1,33 @@
-"""HPCポータルの画面とJSON APIハンドラを登録する。"""
+"""管理者向けLinuxユーザー・LLM API・Ollama管理を提供する。"""
 
-import threading
+import asyncio
+import json
+import logging
+import time
 
-from jupyterhub.handlers.pages import SpawnHandler
+from jupyterhub.utils import url_path_join
+from tornado import web
 
-from .apps import (
-    HpcAppDetailHandler,
-    HpcOpenWebuiVersionHandler,
-    _is_openwebui_spawner,
-)
-from .common import (
+from ..apps import _is_openwebui_spawner
+from ..common import (
     BaseHandler,
     HPC_LITELLM_PUBLIC_BASE_URL,
     HPC_PORTAL_GRANT_SUDO,
     HPC_PORTAL_PROTECTED_USERS,
-    asyncio,
-    c,
-    json,
-    logging,
-    re,
-    subprocess,
-    time,
-    url_path_join,
-    web,
 )
-from .litellm import (
+from ..litellm import (
     _hpc_litellm_admin_set_api_access,
     _hpc_litellm_delete_ollama_model,
     _hpc_litellm_delete_user_keys,
     _hpc_litellm_enabled,
     _hpc_litellm_generate_key,
-    _hpc_litellm_list_models,
     _hpc_litellm_register_ollama_model,
-    _hpc_litellm_regenerate_own_key,
     _hpc_litellm_user_external_api_state,
-    _hpc_litellm_user_admin_disabled,
     _hpc_log_litellm_action,
     _hpc_safe_litellm_error,
 )
-from .ollama import _hpc_ollama_cmd, _hpc_ollama_has_model, _hpc_ollama_pull_progress
-from .resources import (
-    HpcAppStatusJsHandler,
-    HpcPortalCssHandler,
-    HpcResourceMeterJsHandler,
-    HpcResourceStatusHandler,
-)
-from .users import (
+from ..ollama import _hpc_ollama_cmd, _hpc_ollama_has_model, _hpc_ollama_pull_progress
+from ..users import (
     _hpc_create_linux_user,
     _hpc_delete_linux_user,
     _hpc_generate_password,
@@ -57,37 +39,17 @@ from .users import (
     _hpc_set_linux_password,
     _hpc_set_linux_sudo,
     _hpc_validate_display_name,
-    _hpc_validate_password,
     _hpc_validate_username,
-    _hpc_verify_linux_password,
 )
+from .password import _hpc_log_password_success
+from .utils import _hpc_format_storage_bytes
 
-HPC_PASSWORD_LOG = logging.getLogger("jupyterhub.hpc-password")
 HPC_USER_ADMIN_LOG = logging.getLogger("jupyterhub.hpc-user-admin")
 HPC_OLLAMA_LOG = logging.getLogger("jupyterhub.hpc-ollama")
 
 _HPC_ADMIN_API_STATUS_CONCURRENCY = 8
 _HPC_ADMIN_STORAGE_CONCURRENCY = 4
 _HPC_OLLAMA_REGISTRATION_TASKS: dict[str, asyncio.Task] = {}
-_HPC_ADMIN_APPS_CACHE_SECONDS = 5.0
-_HPC_ADMIN_APPS_RSS_CACHE_SECONDS = 30.0
-_HPC_ADMIN_APPS_CACHE_LOCK = threading.Lock()
-_HPC_ADMIN_APPS_CACHE: dict = {
-    "expires_at": 0.0,
-    "apps": [],
-    "error": "",
-}
-_HPC_ADMIN_APPS_RSS_CACHE: dict = {
-    "expires_at": 0.0,
-    "job_ids": (),
-    "usage": {},
-}
-_HPC_PORTAL_SLURM_APPS = {
-    "jhub-app": "JupyterLab",
-    "jhub-openwebui": "Open WebUI",
-    "shared-ollama": "Ollama",
-}
-
 
 async def _hpc_watch_ollama_pull_and_register(model: str) -> None:
     """Ollama pull完了を監視してLiteLLMへ登録する。
@@ -139,7 +101,6 @@ async def _hpc_watch_ollama_pull_and_register(model: str) -> None:
         if _HPC_OLLAMA_REGISTRATION_TASKS.get(model) is current:
             _HPC_OLLAMA_REGISTRATION_TASKS.pop(model, None)
 
-
 def _hpc_start_ollama_registration_watcher(model: str) -> None:
     """モデル登録監視タスクを重複なく開始する。
 
@@ -153,27 +114,6 @@ def _hpc_start_ollama_registration_watcher(model: str) -> None:
         _hpc_watch_ollama_pull_and_register(model)
     )
 
-
-def _hpc_format_storage_bytes(value: int) -> str:
-    """ストレージ使用量を管理画面向けの短い表記にする。
-
-    Args:
-        value: ストレージ使用量のバイト数。
-
-    Returns:
-        単位を付けて整形した使用量。
-    """
-    size = float(max(value, 0))
-    units = ("B", "KB", "MB", "GB", "TB", "PB")
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
-            if unit == "B":
-                return f"{int(size)} {unit}"
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} PB"
-
-
 def _hpc_litellm_access_state(username: str) -> tuple[str, str]:
     """管理者によるLLM API利用状態を一覧表示用に取得する。
 
@@ -185,7 +125,6 @@ def _hpc_litellm_access_state(username: str) -> tuple[str, str]:
     """
     state, err = _hpc_litellm_user_external_api_state(username)
     return state, ("LLM APIの状態を取得できません" if err else "")
-
 
 async def _hpc_admin_users_snapshot() -> list[dict]:
     """Linuxユーザー一覧へLLM API状態とホーム使用量を付加する。
@@ -248,195 +187,6 @@ async def _hpc_admin_users_snapshot() -> list[dict]:
 
     return list(await asyncio.gather(*(enrich(row) for row in rows)))
 
-
-def _hpc_slurm_memory_bytes(value: str) -> int | None:
-    """SlurmのK/M/G/T表記をバイトへ変換する。
-
-    Args:
-        value: ``sstat``が返すMaxRSSなどの値。
-
-    Returns:
-        バイト数。空値または不正値の場合はNone。
-    """
-    raw = str(value or "").strip().upper()
-    if not raw or raw in {"N/A", "UNKNOWN", "-"}:
-        return None
-    multipliers = {
-        "K": 1024,
-        "M": 1024**2,
-        "G": 1024**3,
-        "T": 1024**4,
-    }
-    suffix = raw[-1]
-    multiplier = multipliers.get(suffix, 1)
-    number = raw[:-1] if suffix in multipliers else raw
-    try:
-        return max(0, int(float(number) * multiplier))
-    except (TypeError, ValueError):
-        return None
-
-
-def _hpc_slurm_max_rss(job_ids: list[str]) -> dict[str, int]:
-    """実行中Slurmジョブの最大RSSをまとめて取得する。
-
-    Args:
-        job_ids: 確認するSlurm Job IDの一覧。
-
-    Returns:
-        Job IDをキー、最大RSSのバイト数を値とする辞書。
-    """
-    if not job_ids:
-        return {}
-    cache_key = tuple(sorted(set(job_ids)))
-    now = time.monotonic()
-    if (
-        _HPC_ADMIN_APPS_RSS_CACHE["job_ids"] == cache_key
-        and now < _HPC_ADMIN_APPS_RSS_CACHE["expires_at"]
-    ):
-        return dict(_HPC_ADMIN_APPS_RSS_CACHE["usage"])
-    try:
-        result = _hpc_run_cmd(
-            [
-                "sstat",
-                "--jobs=" + ",".join(f"{job_id}.batch" for job_id in job_ids),
-                "--noheader",
-                "--parsable2",
-                "--format=JobID,MaxRSS",
-            ],
-            timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        usage = {}
-    else:
-        usage = {}
-        if result.returncode == 0:
-            requested = set(job_ids)
-            for line in result.stdout.splitlines():
-                step_id, separator, rss_value = line.partition("|")
-                if not separator:
-                    continue
-                job_id = step_id.strip().split(".", 1)[0]
-                if job_id not in requested:
-                    continue
-                rss_bytes = _hpc_slurm_memory_bytes(rss_value.rstrip("|"))
-                if rss_bytes is not None:
-                    usage[job_id] = max(usage.get(job_id, 0), rss_bytes)
-    _HPC_ADMIN_APPS_RSS_CACHE.update(
-        {
-            "expires_at": time.monotonic() + _HPC_ADMIN_APPS_RSS_CACHE_SECONDS,
-            "job_ids": cache_key,
-            "usage": dict(usage),
-        }
-    )
-    return usage
-
-
-def _hpc_admin_apps_snapshot() -> tuple[list[dict], str]:
-    """ポータルから起動したSlurmアプリの割当と利用状況を取得する。
-
-    Returns:
-        アプリ情報の一覧と、取得失敗時のメッセージ。
-    """
-    with _HPC_ADMIN_APPS_CACHE_LOCK:
-        now = time.monotonic()
-        if now < _HPC_ADMIN_APPS_CACHE["expires_at"]:
-            return (
-                [dict(app) for app in _HPC_ADMIN_APPS_CACHE["apps"]],
-                str(_HPC_ADMIN_APPS_CACHE["error"]),
-            )
-        apps, error = _hpc_admin_apps_snapshot_uncached()
-        _HPC_ADMIN_APPS_CACHE.update(
-            {
-                "expires_at": time.monotonic() + _HPC_ADMIN_APPS_CACHE_SECONDS,
-                "apps": [dict(app) for app in apps],
-                "error": error,
-            }
-        )
-        return apps, error
-
-
-def _hpc_admin_apps_snapshot_uncached() -> tuple[list[dict], str]:
-    """Slurmへ問い合わせてポータル由来の起動中アプリを取得する。
-
-    Returns:
-        アプリ情報の一覧と、取得失敗時のメッセージ。
-    """
-    try:
-        result = _hpc_run_cmd(
-            [
-                "squeue",
-                "--noheader",
-                "--format=%i|%u|%j|%T|%C|%m|%b|%M|%S",
-            ],
-            timeout=3,
-        )
-    except subprocess.TimeoutExpired:
-        return [], "Slurmからの応答がタイムアウトしました"
-    except OSError as exc:
-        return [], str(exc)[:300]
-    if result.returncode != 0:
-        message = (result.stderr or result.stdout or "squeue failed").strip()
-        return [], message[:300]
-    display_names = {
-        row["username"]: row.get("display_name", "")
-        for row in _hpc_linux_users_snapshot()
-    }
-    rows = []
-    for line in result.stdout.splitlines():
-        fields = [field.strip() for field in line.split("|", 8)]
-        if len(fields) != 9:
-            continue
-        job_id, username, job_name, state, cpus, memory, gres, elapsed, started_at = fields
-        app_label = _HPC_PORTAL_SLURM_APPS.get(job_name)
-        if not app_label:
-            continue
-        gpu_match = re.search(r"(?:^|[/,:])gpu(?::[^,:]+)?:(\d+)", gres, re.I)
-        gpu_count = int(gpu_match.group(1)) if gpu_match else 0
-        rows.append(
-            {
-                "job_id": job_id,
-                "username": username,
-                "display_name": "共有" if job_name == "shared-ollama" else display_names.get(username, ""),
-                "app": app_label,
-                "state": state,
-                "state_label": {
-                    "RUNNING": "実行中",
-                    "PENDING": "実行待ち",
-                    "COMPLETING": "停止処理中",
-                    "CONFIGURING": "起動処理中",
-                }.get(state, state or "不明"),
-                "cpus": cpus or "—",
-                "memory": memory or "—",
-                "gpus": gpu_count,
-                "elapsed": elapsed or "—",
-                "started_at": "—" if started_at in {"", "N/A", "Unknown"} else started_at,
-            }
-        )
-    max_rss = _hpc_slurm_max_rss([row["job_id"] for row in rows if row["state"] == "RUNNING"])
-    for row in rows:
-        rss_bytes = max_rss.get(row["job_id"])
-        row["max_rss_bytes"] = rss_bytes
-        if rss_bytes is not None:
-            row["max_rss_label"] = _hpc_format_storage_bytes(rss_bytes)
-        elif row["state"] == "RUNNING":
-            row["max_rss_label"] = "取得不可"
-        else:
-            row["max_rss_label"] = "計測待ち"
-    rows.sort(key=lambda row: (row["username"], row["app"], row["job_id"]))
-    return rows, ""
-
-
-def _hpc_log_password_success(actor: str, target: str) -> None:
-    """パスワードを含めず、変更・再発行の成功を監査ログへ記録する。"""
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    HPC_PASSWORD_LOG.info(
-        "timestamp=%s actor=%s target=%s",
-        timestamp,
-        actor,
-        target,
-    )
-
-
 def _hpc_log_user_admin_success(action: str, actor: str, target: str) -> None:
     """秘密値を含めず、ユーザー権限操作の成功を監査ログへ記録する。
 
@@ -454,188 +204,16 @@ def _hpc_log_user_admin_success(action: str, actor: str, target: str) -> None:
         target,
     )
 
-
-class HpcAdminUsersPageHandler(BaseHandler):
-    """Linux ユーザー管理 UI（/hub/admin/users）"""
-
-    @web.authenticated
-    async def get(self):
-        """管理者向けLinuxユーザー管理画面を表示する。
-
-        Raises:
-            web.HTTPError: ポータル管理者ではない場合。
-        """
-        if not _hpc_is_portal_admin(self.current_user):
-            raise web.HTTPError(403, "管理者のみアクセスできます")
-        # JS 無効時の form GET 送信でパスワードが URL に載るのを防ぐ
-        if self.get_argument("username", default=None) or self.get_argument(
-            "password", default=None
-        ):
-            self.redirect(url_path_join(self.hub.base_url, "admin", "users"))
-            return
-        users = await _hpc_admin_users_snapshot()
-        xsrf_token = self.xsrf_token
-        if isinstance(xsrf_token, bytes):
-            xsrf_token = xsrf_token.decode("utf-8", errors="replace")
-        html_out = await self.render_template(
-            "admin_users.html",
-            users=users,
-            grant_sudo_default=HPC_PORTAL_GRANT_SUDO,
-            xsrf_token=xsrf_token,
-        )
-        self.finish(html_out)
-
-
-class HpcLlmApiPageHandler(BaseHandler):
-    """本人用 LLM API 管理 UI を表示する handler。
-
-    ログイン中ユーザーの API key 状態、利用可能 model、API 利用例を
-    `/hub/llm-api` に表示する。API key の生値はここでは取得しない。
-    """
-
-    @web.authenticated
-    async def get(self):
-        """ログイン中ユーザーのLLM API管理画面を表示する。"""
-        xsrf_token = self.xsrf_token
-        if isinstance(xsrf_token, bytes):
-            xsrf_token = xsrf_token.decode("utf-8", errors="replace")
-        disabled = False
-        status_error = ""
-        if _hpc_litellm_enabled():
-            disabled, err = _hpc_litellm_user_admin_disabled(self.current_user.name)
-            status_error = err or ""
-        else:
-            status_error = "LiteLLM Admin API が未設定です"
-        models, models_error = _hpc_litellm_list_models()
-        default_model = models[0]["id"] if models else ""
-        html_out = await self.render_template(
-            "llm_api.html",
-            xsrf_token=xsrf_token,
-            api_disabled=disabled,
-            status_error=status_error,
-            models=models,
-            models_error=models_error,
-            default_model=default_model,
-        )
-        self.finish(html_out)
-
-
-class HpcLlmApiApiHandler(BaseHandler):
-    """本人用 LiteLLM API key 操作 API。
-
-    ログイン中ユーザー本人の key 再発行だけを受け付ける。
-    管理者が無効化したユーザーは、下位の LiteLLM key 管理関数で拒否される。
-    """
-
-    def get_json_body(self):
-        """リクエスト本文をJSONオブジェクトとして取得する。
-
-        Returns:
-            JSON本文。本文が空の場合は空の辞書。
-
-        Raises:
-            web.HTTPError: JSONとして解釈できない場合。
-        """
-        if not self.request.body:
-            return {}
-        try:
-            return json.loads(self.request.body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise web.HTTPError(400, f"Invalid JSON: {exc}") from exc
-
-    def _api_error(self, status: int, message: str):
-        """APIエラーをJSONで返す。
-
-        Args:
-            status: HTTPステータスコード。
-            message: 利用者へ返すエラーメッセージ。
-        """
-        self.set_status(status)
-        self.set_header("Content-Type", "application/json; charset=UTF-8")
-        self.finish({"error": message})
-
-    @web.authenticated
-    async def post(self):
-        """ログイン中ユーザー本人のLiteLLM APIキーを再発行する。"""
-        body = self.get_json_body()
-        action = str(body.get("action", "")).strip().lower()
-        if action != "regenerate":
-            return self._api_error(400, "不明な action です")
-        api_key, err = _hpc_litellm_regenerate_own_key(self.current_user.name)
-        if err:
-            return self._api_error(400, err)
-        self.write({
-            "ok": True,
-            "api_key": api_key,
-            "api_base_url": HPC_LITELLM_PUBLIC_BASE_URL,
-        })
-
-
-class HpcPasswordPageHandler(BaseHandler):
-    """ログイン中ユーザー本人のパスワード変更画面。"""
-
-    @web.authenticated
-    async def get(self):
-        """本人用パスワード変更画面を表示する。"""
-        self.set_header("Cache-Control", "no-store")
-        xsrf_token = self.xsrf_token
-        if isinstance(xsrf_token, bytes):
-            xsrf_token = xsrf_token.decode("utf-8", errors="replace")
-        html_out = await self.render_template(
-            "account_password.html",
-            xsrf_token=xsrf_token,
-        )
-        self.finish(html_out)
-
-
-class HpcPasswordApiHandler(BaseHandler):
-    """ログイン中ユーザー本人のパスワード変更API。"""
-
-    def _api_error(self, status: int, message: str):
-        """JSON形式のAPIエラーを返す。
-
-        Args:
-            status: HTTPステータスコード。
-            message: 利用者へ返すエラーメッセージ。
-        """
-        self.set_status(status)
-        self.set_header("Content-Type", "application/json; charset=UTF-8")
-        self.finish({"error": message})
-
-    @web.authenticated
-    async def post(self):
-        """現在のパスワードを確認して本人のLinuxパスワードを変更する。"""
-        self.set_header("Cache-Control", "no-store")
-        username = self.current_user.name
-        try:
-            body = json.loads(self.request.body.decode("utf-8")) if self.request.body else {}
-        except json.JSONDecodeError as exc:
-            return self._api_error(400, f"Invalid JSON: {exc}")
-        current_password = str(body.get("current_password", ""))
-        new_password = str(body.get("new_password", ""))
-        confirm_password = str(body.get("confirm_password", ""))
-        if new_password != confirm_password:
-            return self._api_error(400, "新しいパスワードが確認入力と一致しません")
-        err = _hpc_validate_password(new_password)
-        if err:
-            return self._api_error(400, err)
-        pam_service = str(getattr(self.authenticator, "service", "login") or "login")
-        err = _hpc_verify_linux_password(
-            username,
-            current_password,
-            service=pam_service,
-        )
-        if err:
-            return self._api_error(400, err)
-        err = _hpc_set_linux_password(username, new_password)
-        if err:
-            return self._api_error(400, err)
-        _hpc_log_password_success(username, username)
-        self.write({"ok": True})
-
-
 async def _hpc_stop_user_openwebui_servers(handler, username: str) -> str | None:
-    """管理中spawnerと残存Slurm jobの両方からOpen WebUIを停止する。"""
+    """管理中spawnerと残存Slurm jobの両方からOpen WebUIを停止する。
+
+    Args:
+        handler: 対象のJupyterHub Handler。
+        username: 対象のLinuxユーザー名。
+
+    Returns:
+        正常ならNone、停止に失敗した場合はエラーメッセージ。
+    """
     errors = []
     try:
         target_user = handler.find_user(username)
@@ -671,23 +249,35 @@ async def _hpc_stop_user_openwebui_servers(handler, username: str) -> str | None
     _hpc_log_litellm_action("openwebui_stop", username, "ok")
     return None
 
-
-class HpcAdminAppsApiHandler(BaseHandler):
-    """管理者へポータル由来の起動中Slurmアプリ一覧を返す。"""
+class HpcAdminUsersPageHandler(BaseHandler):
+    """Linux ユーザー管理 UI（/hub/admin/users）"""
 
     @web.authenticated
     async def get(self):
-        """アプリの割当と最大RSSをJSONで返す。
+        """管理者向けLinuxユーザー管理画面を表示する。
 
         Raises:
             web.HTTPError: ポータル管理者ではない場合。
         """
         if not _hpc_is_portal_admin(self.current_user):
             raise web.HTTPError(403, "管理者のみアクセスできます")
-        apps, error = await asyncio.to_thread(_hpc_admin_apps_snapshot)
-        self.set_header("Cache-Control", "no-store")
-        self.write({"apps": apps, "error": error, "updated_at": time.time()})
-
+        # JS 無効時の form GET 送信でパスワードが URL に載るのを防ぐ
+        if self.get_argument("username", default=None) or self.get_argument(
+            "password", default=None
+        ):
+            self.redirect(url_path_join(self.hub.base_url, "admin", "users"))
+            return
+        users = await _hpc_admin_users_snapshot()
+        xsrf_token = self.xsrf_token
+        if isinstance(xsrf_token, bytes):
+            xsrf_token = xsrf_token.decode("utf-8", errors="replace")
+        html_out = await self.render_template(
+            "admin_users.html",
+            users=users,
+            grant_sudo_default=HPC_PORTAL_GRANT_SUDO,
+            xsrf_token=xsrf_token,
+        )
+        self.finish(html_out)
 
 class HpcAdminUsersApiHandler(BaseHandler):
     """Linux ユーザー管理 API"""
@@ -938,62 +528,3 @@ class HpcAdminUsersApiHandler(BaseHandler):
             return
 
         self._api_error(400, "不明な action です")
-
-
-class HpcAdminRedirectHandler(BaseHandler):
-    """JupyterHub 標準 /hub/admin を Linux ユーザー管理へ転送する"""
-
-    @web.authenticated
-    async def get(self, *args, **kwargs):
-        """標準管理画面から権限に応じたポータル画面へ転送する。
-
-        Args:
-            *args: JupyterHubから渡される未使用の位置引数。
-            **kwargs: JupyterHubから渡される未使用のキーワード引数。
-        """
-        if _hpc_is_portal_admin(self.current_user):
-            self.redirect(url_path_join(self.hub.base_url, "admin", "users"))
-        else:
-            self.redirect(url_path_join(self.hub.base_url, "home"))
-
-
-class HpcSpawnHandler(SpawnHandler):
-    """起動要求後の遷移先をポータルHomeへ変更する。"""
-
-    def _get_pending_url(self, user, server_name):
-        """標準Pending画面ではなく、状態監視機能を持つHomeを返す。
-
-        Args:
-            user: 起動対象のJupyterHubユーザー。
-            server_name: 起動対象のnamed server名。
-
-        Returns:
-            ポータルHomeのURL。
-        """
-        return url_path_join(self.hub.base_url, "home")
-
-
-import jupyterhub.handlers as _jh_handlers
-import jupyterhub.handlers.pages as _jh_pages_handlers
-
-for _handlers in (_jh_pages_handlers.default_handlers, _jh_handlers.default_handlers):
-    for _idx, (_route, _handler_cls) in enumerate(_handlers):
-        if _route == "/admin":
-            _handlers[_idx] = (_route, HpcAdminRedirectHandler)
-        elif _handler_cls is SpawnHandler:
-            _handlers[_idx] = (_route, HpcSpawnHandler)
-
-
-c.JupyterHub.extra_handlers.append((r"/hpc-resource-meter.js", HpcResourceMeterJsHandler))
-c.JupyterHub.extra_handlers.append((r"/hpc-app-status.js", HpcAppStatusJsHandler))
-c.JupyterHub.extra_handlers.append((r"/hpc-portal.css", HpcPortalCssHandler))
-c.JupyterHub.extra_handlers.append((r"/hpc-resource-status", HpcResourceStatusHandler))
-c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)/version", HpcOpenWebuiVersionHandler))
-c.JupyterHub.extra_handlers.append((r"/apps/([^/]+)", HpcAppDetailHandler))
-c.JupyterHub.extra_handlers.append((r"/llm-api/api", HpcLlmApiApiHandler))
-c.JupyterHub.extra_handlers.append((r"/llm-api", HpcLlmApiPageHandler))
-c.JupyterHub.extra_handlers.append((r"/account/password/api", HpcPasswordApiHandler))
-c.JupyterHub.extra_handlers.append((r"/account/password", HpcPasswordPageHandler))
-c.JupyterHub.extra_handlers.append((r"/admin/apps/api", HpcAdminAppsApiHandler))
-c.JupyterHub.extra_handlers.append((r"/admin/users/api", HpcAdminUsersApiHandler))
-c.JupyterHub.extra_handlers.append((r"/admin/users", HpcAdminUsersPageHandler))
