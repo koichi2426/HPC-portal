@@ -4,4 +4,4 @@
     name: litellm
     state: restarted
     daemon_reload: true
-  when: not (hpc_skip_service_restarts | default(false) | bool)
+  when: not (hpc_force_service_restarts | default(false) | bool)

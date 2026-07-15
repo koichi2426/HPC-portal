@@ -10,7 +10,7 @@ ANSIBLE      ?= ansible
 PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup check ping deploy deploy-safe cleanup cleanup-purge-data \
+.PHONY: help setup check ping deploy deploy-restart cleanup cleanup-purge-data \
 	common slurm postgres litellm ollama jupyterhub apptainer cloudflared \
 	status gpu cuda services processes
 
@@ -34,11 +34,17 @@ check: check-inv ## 変更内容のドライラン（--check --diff）
 ping: check-inv ## 接続確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m ping
 
-deploy: check-inv ## フルデプロイ (site.yml)
+deploy: check-inv ## ジョブを維持して差分デプロイ
 	$(PB) site.yml
 
-deploy-safe: check-inv ## 再起動抑止デプロイ (site_safe.yml)
-	$(PB) site_safe.yml
+deploy-restart: check-inv ## ジョブ停止・サービス再起動を伴う全体デプロイ
+	@printf '実行中ジョブを停止し、関連サービスを再起動します。続行するには「restart」と入力してください: '; \
+	read -r confirm; \
+	if [ "$$confirm" != "restart" ]; then \
+		echo "中止しました"; \
+		exit 1; \
+	fi
+	$(PB) site_restart.yml
 
 cleanup: check-inv ## 環境クリーンアップ (cleanup.yml)
 	$(PB) cleanup.yml

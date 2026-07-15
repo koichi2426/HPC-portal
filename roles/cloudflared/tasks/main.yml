@@ -15,6 +15,7 @@
     url: "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{{ cloudflared_arch }}"
     dest: /usr/local/bin/cloudflared
     mode: "0755"
+  notify: cloudflaredを再起動
 
 - name: cloudflared設定ディレクトリを作成
   ansible.builtin.file:
@@ -45,9 +46,3 @@
     name: cloudflared
     enabled: true
     state: started
-  when: not (hpc_skip_service_restarts | default(false) | bool)
-
-- name: 再起動抑止モード時は設定変更が未反映であることを通知
-  ansible.builtin.debug:
-    msg: "hpc_skip_service_restarts=true のため cloudflared は再起動していません。反映には通常デプロイ（site.yml）を実行してください。"
-  when: hpc_skip_service_restarts | default(false) | bool

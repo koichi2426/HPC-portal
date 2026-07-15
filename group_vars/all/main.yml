@@ -38,9 +38,6 @@ cloudflared_ingress:
     port: "{{ litellm_port | default(4000) }}"
   - hostname: "*.{{ hpc_base_domain | default('example.com') }}"
 
-# true のとき設定反映のみ行い、サービス再起動を抑止（運用中の 502 瞬断を回避）
-hpc_skip_service_restarts: false
-
 # nvcc 未検出時に apt で CUDA Toolkit を入れる（GB10 等で別途 NVIDIA 公式 CUDA が必要な場合あり）
 hpc_install_cuda_toolkit: true
 hpc_cuda_toolkit_packages:

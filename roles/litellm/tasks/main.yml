@@ -80,9 +80,7 @@
     PRISMA_BINARY_CACHE_DIR: /var/lib/litellm/.cache/prisma-python/binaries
   register: litellm_prisma_generate
   changed_when: >
-    litellm_pip.changed or
-    'Generated Prisma Client' in litellm_prisma_generate.stdout or
-    '✔ Generated' in litellm_prisma_generate.stdout
+    litellm_pip.changed
   notify: LiteLLM を再起動
   when: not ansible_check_mode
 
@@ -139,20 +137,13 @@
     state: started
   when:
     - not ansible_check_mode
-    - not (hpc_skip_service_restarts | default(false) | bool)
 
 - name: LiteLLM の設定変更を起動確認前に反映
   ansible.builtin.meta: flush_handlers
   when:
     - not ansible_check_mode
-    - not (hpc_skip_service_restarts | default(false) | bool)
 
 - name: 廃止した共有 Open WebUI key を削除
   ansible.builtin.file:
     path: /etc/litellm/openwebui.key
     state: absent
-
-- name: 再起動抑止モード時は LiteLLM 設定変更が未反映であることを通知
-  ansible.builtin.debug:
-    msg: "hpc_skip_service_restarts=true のため litellm は再起動していません。反映には通常デプロイ（site.yml）を実行してください。"
-  when: hpc_skip_service_restarts | default(false) | bool

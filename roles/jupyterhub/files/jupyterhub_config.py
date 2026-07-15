@@ -64,6 +64,8 @@ c.JupyterHub.trusted_downstream_ips = ["127.0.0.1", "::1"]
 c.JupyterHub.default_url = "/hub/home"
 c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
 c.JupyterHub.allow_named_servers = True
+# Hubの再起動時もBatchSpawnerが投入したSlurmジョブは停止しない。
+c.JupyterHub.cleanup_servers = False
 
 c.Authenticator.allow_all = True
 # Linuxユーザーを正とし、OS側で削除済みのユーザーをHub DBへ残さない。

@@ -1,0 +1,65 @@
+---
+- name: HPC単一ノードポータルを停止を伴って全体反映
+  hosts: gx10
+  become: true
+  vars:
+    hpc_force_service_restarts: true
+    hpc_defer_slurm_config_apply: true
+  roles:
+    - common
+    - slurm
+    - postgres
+    - apptainer
+    - ollama
+    - litellm
+    - jupyterhub
+    - cloudflared
+
+  post_tasks:
+    - name: 実行中Slurmジョブを停止
+      ansible.builtin.shell: |
+        set -euo pipefail
+        job_ids="$(squeue -h -o '%A' | sort -u)"
+        if [ -n "$job_ids" ]; then
+          printf '%s\n' "$job_ids" | xargs -r scancel
+          printf '%s\n' "$job_ids"
+        fi
+      args:
+        executable: /bin/bash
+      register: stopped_slurm_jobs
+      changed_when: stopped_slurm_jobs.stdout | trim | length > 0
+
+    - name: Slurmジョブの停止完了を待機
+      ansible.builtin.command: squeue -h -o "%A"
+      register: remaining_slurm_jobs
+      changed_when: false
+      until: remaining_slurm_jobs.stdout | trim | length == 0
+      retries: 30
+      delay: 2
+
+    - name: 検証済みSlurm設定を反映
+      ansible.builtin.include_role:
+        name: slurm
+        tasks_from: apply_config
+      when: (slurm_gres_change_required | bool) or (slurm_main_change_required | bool)
+
+    - name: 関連サービスを順番に再起動
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+        daemon_reload: true
+        enabled: true
+      loop:
+        - postgresql
+        - munge
+        - slurmctld
+        - slurmd
+        - litellm
+        - jupyterhub
+        - cloudflared
+
+    - name: 全体反映の完了を通知
+      ansible.builtin.debug:
+        msg: >-
+          全体反映と関連サービスの再起動が完了しました。
+          停止したSlurmアプリケーション（Ollamaなど）は、必要に応じてポータルから再起動してください。

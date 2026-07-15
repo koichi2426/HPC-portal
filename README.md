@@ -146,14 +146,18 @@ sequenceDiagram
 |----------|------|
 | `make ping` | 接続確認 |
 | `make check` | ドライラン（`--check --diff`） |
-| `make deploy` | フルデプロイ（`site.yml`） |
-| `make deploy-safe` | 再起動抑止デプロイ（`site_safe.yml`） |
+| `make deploy` | ジョブを維持し、変更されたコンポーネントだけを安全に反映 |
+| `make deploy-restart` | 全ジョブ停止・関連サービス再起動を伴う全体反映（`restart`確認あり） |
 | `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
 | `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
-| `make jupyterhub` | JupyterHub ロールのみ |
-| `make slurm` | Slurm ロールのみ |
-| `make ollama` | shared Ollama ロールのみ |
-| `make apptainer` | Apptainer ロールのみ |
+| `make common` | OS共通設定を差分反映。OSは自動再起動しない |
+| `make jupyterhub` | JupyterHubだけを差分反映。Hub再起動時もジョブを維持 |
+| `make slurm` | Slurmだけを差分反映。ジョブ実行中に設定差分があれば未変更のままスキップ |
+| `make postgres` | PostgreSQLだけを差分反映 |
+| `make litellm` | PostgreSQL・LiteLLMだけを差分反映 |
+| `make ollama` | shared Ollamaの次回起動設定だけを差分反映 |
+| `make apptainer` | ApptainerとSIFを差分反映。実行中コンテナは維持 |
+| `make cloudflared` | cloudflaredだけを差分反映 |
 | `make status` | Slurm ジョブ・ディスク空き |
 | `make gpu` | GPU / VRAM |
 | `make services` | サービス・shared Ollama 状態・主要ログ |
@@ -166,6 +170,20 @@ sequenceDiagram
 ```bash
 make deploy
 ```
+
+通常のデプロイはSlurmジョブを`scancel`しません。CSS・JavaScriptなどは配置だけで反映し、JupyterHub・LiteLLM・cloudflaredは設定変更時だけ対象サービスを再起動します。JupyterHubは再起動しても実行中アプリを維持します。アプリ起動時に渡す環境変数やリソース設定は、すでに起動中のアプリへは注入せず、次回起動から適用します。
+
+Slurm設定に差分があり、実行中または待機中のジョブが存在する場合、通常デプロイはSlurm設定ファイルを変更せずにその部分だけをスキップし、ほかの更新は最後まで続けます。最後に`make deploy-restart`が必要だと表示されます。
+
+全ジョブを停止してSlurm設定を含むすべての変更を反映し、関連サービスを再起動する場合は、次を実行して確認に`restart`と入力します。このジョブ維持方式を初めて反映するときも、こちらを使用してください。パッケージ取得・SIFビルド・Slurm候補設定の検証を先に完了し、成功した場合だけジョブを停止します。
+
+```bash
+make deploy-restart
+```
+
+停止したSlurmアプリケーションは自動起動しません。完了後、Ollamaなど必要なアプリケーションをポータルから起動してください。
+
+Slurm設定は固定名の一時バックアップを使って一組として反映します。成功時、または失敗後の復元成功時にバックアップを削除するため、日時付きバックアップが増え続けることはありません。強制終了などでバックアップが残った場合は、上書きせず安全のため次回デプロイを中断します。
 
 #### 🧹 クリーンアップ
 

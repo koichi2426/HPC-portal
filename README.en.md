@@ -145,11 +145,16 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 |---------|-------------|
 | `make ping` | Connectivity check |
 | `make check` | Dry run (`--check --diff`) |
-| `make deploy` | Full deploy (`site.yml`) |
-| `make deploy-safe` | Deploy without service restarts (`site_safe.yml`) |
+| `make deploy` | Safely apply changed components while preserving Slurm jobs |
+| `make deploy-restart` | Stop all jobs and restart related services, with `restart` confirmation |
 | `make cleanup` | Cleanup services and config while keeping model/DB data |
 | `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
-| `make jupyterhub` / `make slurm` / `make ollama` | Single role or tag |
+| `make common` | Apply common OS settings without rebooting the host |
+| `make jupyterhub` | Apply JupyterHub changes while preserving running jobs |
+| `make slurm` | Apply Slurm changes; leave its config untouched when active jobs require a restart |
+| `make postgres` / `make litellm` | Apply PostgreSQL or LiteLLM changes only |
+| `make ollama` / `make apptainer` | Apply settings or images for the next app start |
+| `make cloudflared` | Apply cloudflared changes only |
 | `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
 
 Override inventory: `make deploy INV=inventory/staging.ini`
@@ -159,6 +164,20 @@ Override inventory: `make deploy INV=inventory/staging.ini`
 ```bash
 make deploy
 ```
+
+The normal deploy never calls `scancel`. Static portal assets are copied without a service restart, while JupyterHub, LiteLLM, and cloudflared restart only when their runtime configuration changes. Running JupyterHub applications are preserved. App launch environment and resource changes take effect the next time an app starts.
+
+When Slurm configuration differs and running or queued jobs exist, a normal deploy leaves the Slurm configuration files untouched, skips only that update, and completes the remaining roles. A final message tells you that `make deploy-restart` is required.
+
+To stop all jobs, apply every change including Slurm configuration, and restart related services, run the following command and enter `restart` at the prompt. Use this command for the initial migration to job-preserving Hub restarts as well. Package downloads, SIF builds, and validation of staged Slurm configuration finish before any jobs are stopped.
+
+```bash
+make deploy-restart
+```
+
+Stopped Slurm applications are not started automatically. After completion, start Ollama and any other required applications from the portal.
+
+Slurm configuration is applied as a pair using fixed-name temporary backups. Backups are removed after success or successful rollback, so timestamped files do not accumulate. If an interrupted deploy leaves a backup behind, the next deploy stops instead of overwriting it.
 
 #### 🧹 Cleanup
 

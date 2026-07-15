@@ -88,7 +88,16 @@
   register: apptainer_image_stat
 
 - name: SIFイメージをビルド（定義更新時は再作成）
-  ansible.builtin.command: "apptainer build --force {{ item.image }} {{ item.def }}"
+  ansible.builtin.shell: |
+    set -euo pipefail
+    temporary_image="{{ item.image }}.new"
+    trap 'rm -f "$temporary_image"' EXIT
+    apptainer build --force "$temporary_image" "{{ item.def }}"
+    mv -f "$temporary_image" "{{ item.image }}"
+    trap - EXIT
+  args:
+    executable: /bin/bash
+  changed_when: true
   loop:
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
     - { src: ollama.def, image: /opt/images/ollama.sif, def: /opt/apptainer/ollama.def }
