@@ -251,7 +251,11 @@
 {% endblock %}
 
 {% block script %}
-<script src="/hub/hpc-resource-meter.js?v={{ hpc_static_versions.resource_meter_js }}"></script>
-<script src="/hub/hpc-app-status.js?v={{ hpc_static_versions.app_status_js }}"></script>
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/resource-meter.js?v={{ hpc_static_versions['js/resource-meter.js'] }}"></script>
+<script src="/hub/hpc-js/app-status.js?v={{ hpc_static_versions['js/app-status.js'] }}"></script>
+{% if user and user.name in hpc_portal_admin_users %}
+<script src="/hub/hpc-js/admin-apps.js?v={{ hpc_static_versions['js/admin-apps.js'] }}"></script>
+{% endif %}
 {% endblock %}
 {% endraw %}

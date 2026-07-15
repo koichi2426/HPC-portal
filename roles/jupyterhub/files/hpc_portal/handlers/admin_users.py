@@ -1,7 +1,6 @@
 """管理者向けLinuxユーザー・LLM API・Ollama管理を提供する。"""
 
 import asyncio
-import json
 import logging
 import time
 
@@ -27,6 +26,11 @@ from ..litellm import (
     _hpc_safe_litellm_error,
 )
 from ..ollama import _hpc_ollama_cmd, _hpc_ollama_has_model, _hpc_ollama_pull_progress
+from ..schemas import (
+    HpcAdminUsersRequest,
+    HpcRequestValidationError,
+    parse_json_request,
+)
 from ..users import (
     _hpc_create_linux_user,
     _hpc_delete_linux_user,
@@ -282,22 +286,6 @@ class HpcAdminUsersPageHandler(BaseHandler):
 class HpcAdminUsersApiHandler(BaseHandler):
     """Linux ユーザー管理 API"""
 
-    def get_json_body(self):
-        """リクエスト本文をJSONオブジェクトとして取得する。
-
-        Returns:
-            JSON本文。本文が空の場合は空の辞書。
-
-        Raises:
-            web.HTTPError: JSONとして解釈できない場合。
-        """
-        if not self.request.body:
-            return {}
-        try:
-            return json.loads(self.request.body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise web.HTTPError(400, f"Invalid JSON: {exc}") from exc
-
     def _require_admin(self):
         """操作ユーザーがポータル管理者であることを検証する。
 
@@ -330,21 +318,26 @@ class HpcAdminUsersApiHandler(BaseHandler):
         """ユーザー・APIアクセス・shared Ollamaの管理操作を実行する。"""
         self._require_admin()
         self.set_header("Cache-Control", "no-store")
-        body = self.get_json_body() or {}
-        action = str(body.get("action", "")).strip().lower()
-        username = str(body.get("username", "")).strip().lower()
+        try:
+            request = parse_json_request(self.request.body, HpcAdminUsersRequest)
+        except HpcRequestValidationError as exc:
+            return self._api_error(400, str(exc))
+        action = request.action
+        username = request.username
         actor = self.current_user.name
 
         if action == "create":
             err = _hpc_validate_username(username)
             if err:
                 return self._api_error(400, err)
-            display_name = str(body.get("display_name") or "").strip()
+            display_name = request.display_name
             err = _hpc_validate_display_name(display_name)
             if err:
                 return self._api_error(400, err)
             initial_password = _hpc_generate_password()
-            grant_sudo = body.get("sudo", HPC_PORTAL_GRANT_SUDO) is True
+            grant_sudo = (
+                HPC_PORTAL_GRANT_SUDO if request.sudo is None else request.sudo
+            )
             err = _hpc_create_linux_user(
                 username,
                 initial_password,
@@ -373,7 +366,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
         if action == "display_name":
             if not username:
                 return self._api_error(400, "username が必要です")
-            display_name = str(body.get("display_name") or "").strip()
+            display_name = request.display_name
             err = _hpc_set_linux_display_name(username, display_name)
             if err:
                 return self._api_error(400, err)
@@ -443,7 +436,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
             return
 
         if action == "ollama_register_model":
-            model = str(body.get("model", "")).strip()
+            model = request.model
             exists, err = await asyncio.to_thread(_hpc_ollama_has_model, model)
             if err or not exists:
                 return self._api_error(400, err or "Ollamaにモデルがありません")
@@ -456,7 +449,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
             return
 
         if action == "ollama_delete":
-            model = str(body.get("model", "")).strip()
+            model = request.model
             tags, err = await asyncio.to_thread(_hpc_ollama_cmd, "tags")
             if err:
                 return self._api_error(400, err)
@@ -497,7 +490,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 "ollama_pull_cancel": "pull-cancel",
                 "ollama_pull_status": "pull-status",
             }
-            model = str(body.get("model", "")).strip()
+            model = request.model
             if action == "ollama_pull_status":
                 data, err = await asyncio.to_thread(
                     _hpc_ollama_pull_progress, model or None
@@ -517,8 +510,8 @@ class HpcAdminUsersApiHandler(BaseHandler):
                     _hpc_ollama_cmd,
                     mapping[action],
                     model if action in {"ollama_pull", "ollama_pull_cancel"} else None,
-                    str(body.get("cpus", "")).strip() if action == "ollama_start" else None,
-                    str(body.get("memory", "")).strip() if action == "ollama_start" else None,
+                    request.cpus if action == "ollama_start" else None,
+                    request.memory if action == "ollama_start" else None,
                 )
             if err:
                 return self._api_error(400, err)

@@ -1,12 +1,16 @@
 """本人用パスワード変更画面とAPIを提供する。"""
 
-import json
 import logging
 import time
 
 from tornado import web
 
 from ..common import BaseHandler
+from ..schemas import (
+    HpcPasswordChangeRequest,
+    HpcRequestValidationError,
+    parse_json_request,
+)
 from ..users import (
     _hpc_set_linux_password,
     _hpc_validate_password,
@@ -66,12 +70,15 @@ class HpcPasswordApiHandler(BaseHandler):
         self.set_header("Cache-Control", "no-store")
         username = self.current_user.name
         try:
-            body = json.loads(self.request.body.decode("utf-8")) if self.request.body else {}
-        except json.JSONDecodeError as exc:
-            return self._api_error(400, f"Invalid JSON: {exc}")
-        current_password = str(body.get("current_password", ""))
-        new_password = str(body.get("new_password", ""))
-        confirm_password = str(body.get("confirm_password", ""))
+            request = parse_json_request(
+                self.request.body,
+                HpcPasswordChangeRequest,
+            )
+        except HpcRequestValidationError as exc:
+            return self._api_error(400, str(exc))
+        current_password = request.current_password
+        new_password = request.new_password
+        confirm_password = request.confirm_password
         if new_password != confirm_password:
             return self._api_error(400, "新しいパスワードが確認入力と一致しません")
         err = _hpc_validate_password(new_password)

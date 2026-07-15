@@ -9,6 +9,7 @@ import time
 from tornado import web
 
 from ..common import BaseHandler
+from ..schemas import HpcAdminAppsResponse
 from ..users import (
     _hpc_is_portal_admin,
     _hpc_linux_users_snapshot,
@@ -222,4 +223,7 @@ class HpcAdminAppsApiHandler(BaseHandler):
             raise web.HTTPError(403, "管理者のみアクセスできます")
         apps, error = await asyncio.to_thread(_hpc_admin_apps_snapshot)
         self.set_header("Cache-Control", "no-store")
-        self.write({"apps": apps, "error": error, "updated_at": time.time()})
+        response = HpcAdminAppsResponse.model_validate(
+            {"apps": apps, "error": error, "updated_at": time.time()}
+        )
+        self.write(response.model_dump())

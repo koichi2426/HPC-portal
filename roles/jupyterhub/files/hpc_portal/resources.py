@@ -1,6 +1,7 @@
 """Slurmノードとホストの空きリソースを取得する。"""
 
 import asyncio
+import os
 import re
 import subprocess
 import time
@@ -10,13 +11,14 @@ from tornado import web
 
 from .common import (
     BaseHandler,
-    HPC_APP_STATUS_JS,
     HPC_GPU_COUNT,
     HPC_PORTAL_CSS,
-    HPC_RESOURCE_METER_JS,
+    HPC_PORTAL_JS_DIR,
+    HPC_PORTAL_JS_FILES,
     SLURM_NODE_NAME,
     c,
 )
+from .schemas import HpcResourceSnapshot
 
 def _hpc_resource_status(available_pct):
     """空き率を画面表示用の混雑度へ変換する。
@@ -293,37 +295,30 @@ class HpcResourceStatusHandler(BaseHandler):
         self.set_header("Cache-Control", "no-store, no-cache, must-revalidate")
         payload = await asyncio.to_thread(_hpc_resource_snapshot)
         payload["updated_at"] = time.time()
-        self.write(payload)
+        self.write(HpcResourceSnapshot.model_validate(payload).model_dump())
 
 
-class HpcResourceMeterJsHandler(BaseHandler):
-    """リソースメーター自動更新スクリプト（/hub/static が使えない環境向け）"""
+class HpcPortalJsHandler(BaseHandler):
+    """HPCポータルの責務別JavaScriptを配信する。"""
 
-    async def get(self):
-        """リソースメーター用JavaScriptを返す。"""
+    async def get(self, filename: str):
+        """許可済みJavaScriptファイルを返す。
+
+        Args:
+            filename: URLで指定されたJavaScriptファイル名。
+        """
         self.set_header("Content-Type", "application/javascript; charset=UTF-8")
         self.set_header("Cache-Control", "public, max-age=300")
+        self.set_header("X-Content-Type-Options", "nosniff")
+        if filename not in HPC_PORTAL_JS_FILES:
+            raise web.HTTPError(404)
         try:
-            with open(HPC_RESOURCE_METER_JS, encoding="utf-8") as f:
+            path = os.path.join(HPC_PORTAL_JS_DIR, filename)
+            with open(path, encoding="utf-8") as f:
                 self.write(f.read())
         except OSError:
             self.set_status(404)
-            self.write("/* hpc-resource-meter.js not found */")
-
-
-class HpcAppStatusJsHandler(BaseHandler):
-    """アプリ起動状態の自動更新スクリプトを配信する。"""
-
-    async def get(self):
-        """アプリ状態ポーリング用JavaScriptを返す。"""
-        self.set_header("Content-Type", "application/javascript; charset=UTF-8")
-        self.set_header("Cache-Control", "public, max-age=300")
-        try:
-            with open(HPC_APP_STATUS_JS, encoding="utf-8") as f:
-                self.write(f.read())
-        except OSError:
-            self.set_status(404)
-            self.write("/* hpc-app-status.js not found */")
+            self.write("/* hpc portal JavaScript not found */")
 
 
 class HpcPortalCssHandler(BaseHandler):

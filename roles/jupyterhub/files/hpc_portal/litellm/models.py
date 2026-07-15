@@ -4,6 +4,7 @@ import re
 import threading
 
 from ..common import HPC_LITELLM_LOG, HPC_OLLAMA_API_BASE
+from ..schemas import HpcLlmModel
 from .client import (
     _hpc_litellm_enabled,
     _hpc_litellm_request,
@@ -65,10 +66,16 @@ def _hpc_litellm_list_models() -> tuple[list[dict], str | None]:
         if not model_id or model_id in seen:
             continue
         seen.add(model_id)
-        models.append({
-            "id": model_id,
-            "owned_by": str(record.get("owned_by") or record.get("provider") or "").strip(),
-        })
+        models.append(
+            HpcLlmModel.model_validate(
+                {
+                    "id": model_id,
+                    "owned_by": str(
+                        record.get("owned_by") or record.get("provider") or ""
+                    ).strip(),
+                }
+            ).model_dump()
+        )
     models.sort(key=lambda item: item["id"])
     return models, None
 

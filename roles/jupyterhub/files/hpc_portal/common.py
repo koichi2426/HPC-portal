@@ -129,8 +129,19 @@ nest_asyncio.apply()
 # Spawn中だけJOBID由来のホスト名をOAuth URL計算へ渡す。
 _oauth_job_host_ctx = contextvars.ContextVar("hpc_oauth_job_host", default=None)
 
-HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
-HPC_APP_STATUS_JS = "/etc/jupyterhub/static/hpc-app-status.js"
+HPC_PORTAL_JS_DIR = "/etc/jupyterhub/static/hpc-portal-js"
+HPC_PORTAL_JS_FILES = (
+    "core.js",
+    "resource-meter.js",
+    "app-status.js",
+    "app-detail.js",
+    "admin-apps.js",
+    "admin-users.js",
+    "ollama-admin.js",
+    "llm-api.js",
+    "password.js",
+    "spawn-form.js",
+)
 HPC_PORTAL_CSS = "/etc/jupyterhub/static/hpc-portal.css"
 
 
@@ -179,11 +190,15 @@ class _HpcStaticVersions:
         return _hpc_static_file_version(self._paths[name])
 
 
-HPC_STATIC_VERSIONS = _HpcStaticVersions({
-    "resource_meter_js": HPC_RESOURCE_METER_JS,
-    "app_status_js": HPC_APP_STATUS_JS,
-    "portal_css": HPC_PORTAL_CSS,
-})
+HPC_STATIC_VERSIONS = _HpcStaticVersions(
+    {
+        "portal_css": HPC_PORTAL_CSS,
+        **{
+            f"js/{filename}": os.path.join(HPC_PORTAL_JS_DIR, filename)
+            for filename in HPC_PORTAL_JS_FILES
+        },
+    }
+)
 HPC_LITELLM_INTERNAL_BASE_URL = os.environ.get(
     "HPC_LITELLM_INTERNAL_BASE_URL", "http://127.0.0.1:4000"
 ).rstrip("/")

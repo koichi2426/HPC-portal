@@ -1,7 +1,5 @@
 """本人用LLM API管理画面とAPIを提供する。"""
 
-import json
-
 from tornado import web
 
 from ..common import BaseHandler, HPC_LITELLM_PUBLIC_BASE_URL
@@ -11,6 +9,7 @@ from ..litellm import (
     _hpc_litellm_regenerate_own_key,
     _hpc_litellm_user_admin_disabled,
 )
+from ..schemas import HpcLlmApiRequest, HpcRequestValidationError, parse_json_request
 
 class HpcLlmApiPageHandler(BaseHandler):
     """本人用 LLM API 管理 UI を表示する handler。
@@ -52,22 +51,6 @@ class HpcLlmApiApiHandler(BaseHandler):
     管理者が無効化したユーザーは、下位の LiteLLM key 管理関数で拒否される。
     """
 
-    def get_json_body(self):
-        """リクエスト本文をJSONオブジェクトとして取得する。
-
-        Returns:
-            JSON本文。本文が空の場合は空の辞書。
-
-        Raises:
-            web.HTTPError: JSONとして解釈できない場合。
-        """
-        if not self.request.body:
-            return {}
-        try:
-            return json.loads(self.request.body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise web.HTTPError(400, f"Invalid JSON: {exc}") from exc
-
     def _api_error(self, status: int, message: str):
         """APIエラーをJSONで返す。
 
@@ -82,10 +65,10 @@ class HpcLlmApiApiHandler(BaseHandler):
     @web.authenticated
     async def post(self):
         """ログイン中ユーザー本人のLiteLLM APIキーを再発行する。"""
-        body = self.get_json_body()
-        action = str(body.get("action", "")).strip().lower()
-        if action != "regenerate":
-            return self._api_error(400, "不明な action です")
+        try:
+            parse_json_request(self.request.body, HpcLlmApiRequest)
+        except HpcRequestValidationError as exc:
+            return self._api_error(400, str(exc))
         api_key, err = _hpc_litellm_regenerate_own_key(self.current_user.name)
         if err:
             return self._api_error(400, err)

@@ -3,7 +3,6 @@
 import html
 
 from .apps import (
-    HPC_STOP_SERVER_JS,
     _hpc_allocation_html,
     _hpc_runtime_from_hours_choice,
     _hpc_stop_button_html,
@@ -199,7 +198,7 @@ def make_options_form(spawner):
     )
 
     header_html = f"""
-    <div id="resource-dashboard" data-hpc-resource-meter>
+    <div id="resource-dashboard" data-hpc-resource-meter data-hpc-user="{html.escape(user.name, quote=True)}">
         <div class="gx10-card">
             <h3 class="hpc-page-title">gx10-ac12 Control Center</h3>
             <div class="hpc-muted hpc-spawn-resource-head" style="font-size:0.8rem;">Node: gx10-ac12 <span class="hpc-refresh-status" data-resource-refresh-status aria-live="polite"><span class="hpc-refresh-spinner" aria-hidden="true"></span><span data-resource-updated-at>最終更新 --:--:--</span><span class="visually-hidden" data-resource-refresh-live>取得中</span></span></div>
@@ -291,83 +290,19 @@ def make_options_form(spawner):
     </div>
     """
 
-    hub_user_js = html.escape(user.name, quote=True)
-    js_code = (
-        f"""
-    <script>
-    window.HPC_HUB_USER = "{hub_user_js}";
-"""
-        + HPC_STOP_SERVER_JS
-        + """
-    document.addEventListener("DOMContentLoaded", function() {
-        const form = document.querySelector('form');
-        const appChoice = document.querySelector('select[name="app_choice"]');
-        const sharedBox = document.getElementById("shared-ollama-options");
-        const standardBox = document.getElementById("standard-resource-options");
-        const standardHelp = document.getElementById("standard-resource-help");
-        const appVersionHelp = document.getElementById("app-version-help");
-        function refreshAppChoice() {
-            if (!appChoice) return;
-            const isSharedOllama = appChoice.value === "shared-ollama";
-            if (sharedBox) sharedBox.style.display = isSharedOllama ? "block" : "none";
-            if (standardBox) {
-                standardBox.style.display = isSharedOllama ? "none" : "block";
-                standardBox.querySelectorAll("input, select, textarea, button").forEach(function(el) {
-                    el.disabled = isSharedOllama;
-                });
-            }
-            if (standardHelp) standardHelp.style.display = isSharedOllama ? "none" : "block";
-            if (appVersionHelp) {
-                const labelKey = appChoice.value === "open-webui"
-                    ? "openwebuiLabel"
-                    : (isSharedOllama ? "ollamaLabel" : "ubuntuLabel");
-                appVersionHelp.textContent = "新規起動: " + appVersionHelp.dataset[labelKey];
-            }
-        }
-        if (appChoice) {
-            appChoice.addEventListener("change", refreshAppChoice);
-            refreshAppChoice();
-        }
-        if (form) {
-            form.onsubmit = function(ev) {
-                if (appChoice && appChoice.value === "shared-ollama") {
-                    ev.preventDefault();
-                    const xsrf = hpcReadXsrf();
-                    const cpus = document.querySelector('select[name="ollama_cpus"]').value;
-                    const memory = document.querySelector('select[name="ollama_memory"]').value;
-                    fetch("/hub/admin/users/api", {
-                        method: "POST",
-                        credentials: "same-origin",
-                        headers: Object.assign({"Content-Type": "application/json"}, xsrf ? {"X-XSRFToken": xsrf} : {}),
-                        body: JSON.stringify({ action: "ollama_start", cpus: cpus, memory: memory })
-                    }).then(function(r) {
-                        return r.json().then(function(body) {
-                            if (!r.ok) throw new Error(body.error || "Ollama の起動に失敗しました");
-                            window.location.href = "/hub/apps/shared-ollama";
-                        });
-                    }).catch(function(e) {
-                        alert(e.message || "Ollama の起動に失敗しました");
-                    });
-                    return false;
-                }
-                const inputs = document.querySelectorAll('input[name="_xsrf"]');
-                if (inputs.length > 1) {
-                    for (let i = 1; i < inputs.length; i++) inputs[i].remove();
-                }
-            };
-        }
-    });
-    </script>
-    """
+    static_js = "".join(
+        '<script src="/hub/hpc-js/{filename}?v={version}"></script>'.format(
+            filename=filename,
+            version=HPC_STATIC_VERSIONS["js/" + filename],
+        )
+        for filename in (
+            "core.js",
+            "resource-meter.js",
+            "app-status.js",
+            "spawn-form.js",
+        )
     )
-    static_js = (
-        '<script src="/hub/hpc-resource-meter.js?v={resource_meter_js}"></script>'
-        '<script src="/hub/hpc-app-status.js?v={app_status_js}"></script>'
-    ).format(
-        resource_meter_js=HPC_STATIC_VERSIONS["resource_meter_js"],
-        app_status_js=HPC_STATIC_VERSIONS["app_status_js"],
-    )
-    return header_html + static_js + js_code
+    return header_html + static_js
 
 
 # 3. データの受け取り

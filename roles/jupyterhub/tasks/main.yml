@@ -39,6 +39,7 @@
       - jupyter-server-proxy
       - nest-asyncio
       - psutil
+      - 'pydantic>=2,<3'
       - open-webui
       - batchspawner
     virtualenv: /opt/jupyterhub/venv
@@ -187,21 +188,52 @@
     - /etc/jupyterhub/templates/admin_nav.html
     - /etc/jupyterhub/static/hpc-admin-nav.js
 
-- name: リソースメーター用JSを配置
-  ansible.builtin.copy:
-    src: hpc-resource-meter.js
-    dest: /etc/jupyterhub/static/hpc-resource-meter.js
+- name: HPCポータルJavaScriptディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/jupyterhub/static/hpc-portal-js
+    state: directory
     owner: root
     group: root
-    mode: '0644'
+    mode: '0755'
 
-- name: アプリ状態自動更新用JSを配置
+- name: 配置済みHPCポータルJavaScriptを確認
+  ansible.builtin.find:
+    paths: /etc/jupyterhub/static/hpc-portal-js
+    patterns: '*.js'
+    file_type: file
+    recurse: false
+  register: deployed_portal_javascript_files
+
+- name: 廃止したHPCポータルJavaScriptを削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ deployed_portal_javascript_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: >-
+    item.path | basename not in
+    (query('ansible.builtin.fileglob', role_path + '/files/hpc-portal-js/*.js')
+    | map('basename') | list)
+
+- name: HPCポータルJavaScriptを配置
   ansible.builtin.copy:
-    src: hpc-app-status.js
-    dest: /etc/jupyterhub/static/hpc-app-status.js
+    src: "{{ item }}"
+    dest: "/etc/jupyterhub/static/hpc-portal-js/{{ item | basename }}"
     owner: root
     group: root
     mode: '0644'
+  loop: "{{ query('ansible.builtin.fileglob', role_path + '/files/hpc-portal-js/*.js') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: 旧HPCポータルJavaScriptを削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/jupyterhub/static/hpc-resource-meter.js
+    - /etc/jupyterhub/static/hpc-app-status.js
 
 - name: HPCポータルCSS断片を結合して配置
   ansible.builtin.assemble:

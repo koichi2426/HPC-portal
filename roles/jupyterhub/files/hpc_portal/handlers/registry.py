@@ -11,9 +11,8 @@ from ..apps import (
 )
 from ..common import c
 from ..resources import (
-    HpcAppStatusJsHandler,
     HpcPortalCssHandler,
-    HpcResourceMeterJsHandler,
+    HpcPortalJsHandler,
     HpcResourceStatusHandler,
 )
 from .admin_apps import HpcAdminAppsApiHandler
@@ -40,8 +39,7 @@ def register_handlers() -> None:
 
     c.JupyterHub.extra_handlers.extend([
         (r"/new", HpcNewApplicationHandler),
-        (r"/hpc-resource-meter.js", HpcResourceMeterJsHandler),
-        (r"/hpc-app-status.js", HpcAppStatusJsHandler),
+        (r"/hpc-js/([a-z0-9-]+\.js)", HpcPortalJsHandler),
         (r"/hpc-portal.css", HpcPortalCssHandler),
         (r"/hpc-resource-status", HpcResourceStatusHandler),
         (r"/apps/([^/]+)/version", HpcOpenWebuiVersionHandler),
@@ -55,4 +53,3 @@ def register_handlers() -> None:
         (r"/admin/users", HpcAdminUsersPageHandler),
     ])
     _REGISTERED = True
-
