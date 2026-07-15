@@ -7,6 +7,13 @@
 
   var INTERVAL_MS = 5000;
   var API_URL = "/hub/hpc-resource-status";
+  var CHANGE_THRESHOLDS = {
+    cpu_available: 1,
+    mem_available: 0.5,
+    disk_available: 0.1,
+  };
+  var previousSnapshots = new WeakMap();
+  var changeTimers = new WeakMap();
 
   function format1(value) {
     return Number(value || 0).toFixed(1);
@@ -72,7 +79,88 @@
     return "最終更新 " + new Date().toLocaleTimeString("ja-JP");
   }
 
+  function hasMeaningfulChange(previous, current, valueKey, statusKey) {
+    if (previous[statusKey] !== current[statusKey]) {
+      return true;
+    }
+    var before = Number(previous[valueKey]);
+    var after = Number(current[valueKey]);
+    return (
+      Number.isFinite(before) &&
+      Number.isFinite(after) &&
+      Math.abs(after - before) >= CHANGE_THRESHOLDS[valueKey]
+    );
+  }
+
+  function changedResources(previous, current) {
+    if (!previous) {
+      return [];
+    }
+    var changed = [];
+    if (hasMeaningfulChange(previous, current, "cpu_available", "cpu_status")) {
+      changed.push("cpu_available");
+    }
+    if (hasMeaningfulChange(previous, current, "mem_available", "mem_status")) {
+      changed.push("mem_available");
+    }
+    if (hasMeaningfulChange(previous, current, "disk_available", "disk_status")) {
+      changed.push("disk_available");
+    }
+    if (
+      previous.gpu_processes_available !== current.gpu_processes_available ||
+      previous.gpu_process_count !== current.gpu_process_count
+    ) {
+      changed.push("gpu_processes");
+    }
+    return changed;
+  }
+
+  function pulseResource(meter) {
+    if (!meter) {
+      return;
+    }
+    var timer = changeTimers.get(meter);
+    if (timer) {
+      global.clearTimeout(timer);
+    }
+    meter.classList.remove("hpc-resource-changed");
+    void meter.offsetWidth;
+    meter.classList.add("hpc-resource-changed");
+    changeTimers.set(
+      meter,
+      global.setTimeout(function () {
+        meter.classList.remove("hpc-resource-changed");
+        changeTimers.delete(meter);
+      }, 700)
+    );
+  }
+
+  function pulseChangedResources(root, changed) {
+    changed.forEach(function (key) {
+      var marker =
+        key === "gpu_processes"
+          ? root.querySelector("[data-gpu-process-count]")
+          : root.querySelector('[data-resource-width="' + key + '"]');
+      pulseResource(marker && marker.closest(".gx10-resource-meter, .resource-meter"));
+    });
+  }
+
+  function resourceSnapshot(data) {
+    return {
+      cpu_available: Number(data.cpu_available),
+      cpu_status: data.cpu_status,
+      mem_available: Number(data.mem_available),
+      mem_status: data.mem_status,
+      disk_available: Number(data.disk_available),
+      disk_status: data.disk_status,
+      gpu_processes_available: data.gpu_processes_available !== false,
+      gpu_process_count: Array.isArray(data.gpu_processes) ? data.gpu_processes.length : 0,
+    };
+  }
+
   function apply(root, data) {
+    var currentSnapshot = resourceSnapshot(data);
+    var changed = changedResources(previousSnapshots.get(root), currentSnapshot);
     var text = buildTextMap(data);
     root.querySelectorAll("[data-resource-text]").forEach(function (el) {
       var key = el.getAttribute("data-resource-text");
@@ -94,10 +182,8 @@
     root.querySelectorAll("[data-resource-refresh-live]").forEach(function (el) {
       el.textContent = "";
     });
-    root.classList.add("hpc-resource-refreshed");
-    global.setTimeout(function () {
-      root.classList.remove("hpc-resource-refreshed");
-    }, 450);
+    pulseChangedResources(root, changed);
+    previousSnapshots.set(root, currentSnapshot);
   }
 
   function setLoading(root) {

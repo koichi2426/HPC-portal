@@ -224,7 +224,6 @@ def make_options_form(spawner):
                         <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
                         <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{max(0, mem_total_gb - mem_available_gb):.1f} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</dd></div></dl>
                         <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
-                        {'<a href="/hub/home#running-applications">起動中アプリの割当を見る →</a>' if is_portal_admin else ''}
                     </div>
                 </details>
                 <div class="resource-meter">

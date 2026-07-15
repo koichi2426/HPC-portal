@@ -53,7 +53,6 @@
           <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
           <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</dd></div></dl>
           <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
-          {% if user and user.name in hpc_portal_admin_users %}<a href="/hub/home#running-applications">起動中アプリの割当を見る →</a>{% endif %}
         </div>
       </details>
       <div class="gx10-resource-meter">

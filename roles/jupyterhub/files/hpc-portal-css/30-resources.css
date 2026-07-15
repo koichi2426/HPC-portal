@@ -63,6 +63,24 @@
   height: 100%;
   border-radius: 999px;
   background: var(--hpc-meter-fill);
+  transition: width 0.35s ease, filter 0.2s ease;
+}
+
+@keyframes hpc-resource-change {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hpc-link) 45%, transparent); }
+  40% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--hpc-link) 25%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.hpc-resource-changed .gx10-meter-track,
+.hpc-resource-changed .meter-track,
+.hpc-gpu-processes.hpc-resource-changed > summary {
+  animation: hpc-resource-change 0.65s ease-out;
+}
+
+.hpc-resource-changed .gx10-meter-fill,
+.hpc-resource-changed .meter-fill {
+  filter: brightness(1.15);
 }
 
 .gx10-meter-numbers,
@@ -336,6 +354,12 @@
     animation: none;
     transition: none;
   }
+
+  .hpc-resource-changed .gx10-meter-track,
+  .hpc-resource-changed .meter-track,
+  .hpc-gpu-processes.hpc-resource-changed > summary {
+    animation: none;
+  }
 }
 
 .meter-numbers {
@@ -355,10 +379,4 @@
 
 [data-hpc-resource-meter] [data-resource-updated-at].hpc-resource-loading {
   color: var(--hpc-warning);
-}
-
-[data-hpc-resource-meter].hpc-resource-refreshed .gx10-meter-fill,
-[data-hpc-resource-meter].hpc-resource-refreshed .meter-fill {
-  filter: brightness(1.12);
-  transition: width 0.35s ease, filter 0.2s ease;
 }
