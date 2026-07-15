@@ -210,7 +210,7 @@ def _hpc_run_cmd(
 
 
 def _hpc_ensure_user_home(username: str) -> str | None:
-    """ユーザーのホームディレクトリを必要に応じて作成する。
+    """ユーザーのホームディレクトリを0700で準備する。
 
     Args:
         username: 対象のLinuxユーザー名。
@@ -223,13 +223,18 @@ def _hpc_ensure_user_home(username: str) -> str | None:
     except KeyError:
         return "ユーザーが見つかりません"
     home = ent.pw_dir
-    if os.path.isdir(home):
-        return None
-    result = _hpc_run_cmd(
-        ["install", "-d", "-m", "755", "-o", username, "-g", str(ent.pw_gid), home]
-    )
-    if result.returncode != 0:
-        return (result.stderr or result.stdout or "ホームディレクトリの作成に失敗しました").strip()
+    if not os.path.isdir(home):
+        result = _hpc_run_cmd(
+            ["install", "-d", "-m", "0700", "-o", username, "-g", str(ent.pw_gid), home]
+        )
+        if result.returncode != 0:
+            return (
+                result.stderr or result.stdout or "ホームディレクトリの作成に失敗しました"
+            ).strip()
+    try:
+        os.chmod(home, 0o700)
+    except OSError:
+        return "ホームディレクトリの権限を設定できません"
     return None
 
 
@@ -259,7 +264,7 @@ def _hpc_create_linux_user(
         return "ユーザーは既に存在します"
     except KeyError:
         pass
-    cmd = ["useradd", "-m", "-s", "/bin/bash"]
+    cmd = ["useradd", "-m", "-K", "HOME_MODE=0700", "-s", "/bin/bash"]
     if display_name:
         cmd.extend(["-c", display_name])
     if grant_sudo:
@@ -274,6 +279,7 @@ def _hpc_create_linux_user(
         return (chpw.stderr or chpw.stdout or "chpasswd failed").strip()
     err = _hpc_ensure_user_home(username)
     if err:
+        _hpc_run_cmd(["userdel", "-r", username])
         return err
     return None
 
