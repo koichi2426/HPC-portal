@@ -28,6 +28,34 @@
   margin-bottom: 15px;
 }
 
+.hpc-shared-options .hpc-form-grid-2 > div,
+.hpc-shared-options .hpc-form-grid-3 > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.hpc-shared-options .hpc-form-grid-2 > div > .label,
+.hpc-shared-options .hpc-form-grid-3 > div > .label {
+  display: flex;
+  height: 3em;
+  align-items: flex-end;
+}
+
+.hpc-ollama-advanced {
+  margin-top: 12px;
+  border-top: 1px solid var(--hpc-border);
+  padding-top: 10px;
+}
+
+.hpc-ollama-advanced summary {
+  width: fit-content;
+  margin-bottom: 10px;
+  color: var(--hpc-link);
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .hpc-resource-recommendation {
   position: relative;
   overflow: hidden;

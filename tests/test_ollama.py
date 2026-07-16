@@ -44,7 +44,7 @@ def test_ollama_detail_skips_model_api_while_api_is_starting(monkeypatch):
 
 @pytest.mark.parametrize(
     ("cpus", "memory", "expected"),
-    [(None, None, ("8", "32G", None)), ("8", "32g", ("8", "32G", None))],
+    [(None, None, ("8", "64G", None)), ("8", "32g", ("8", "32G", None))],
 )
 def test_ollama_resources_accept_allowed_values(cpus, memory, expected):
     assert ollama._hpc_validate_ollama_resources(cpus, memory) == expected
@@ -71,8 +71,43 @@ def test_ollama_start_builds_fixed_command_arguments(monkeypatch):
     data, error = ollama._hpc_ollama_cmd("start", cpus="8", memory="32G")
 
     assert error is None
-    assert commands == [["/usr/local/sbin/hpc-ollama", "start", "--cpus", "8", "--memory", "32G"]]
+    assert commands == [[
+        "/usr/local/sbin/hpc-ollama",
+        "start",
+        "--cpus",
+        "8",
+        "--memory",
+        "32G",
+        "--parallel",
+        "2",
+        "--max-loaded-models",
+        "2",
+        "--context-length",
+        "65536",
+        "--kv-cache-type",
+        "q8_0",
+        "--keep-alive",
+        "30m",
+        "--max-queue",
+        "64",
+        "--flash-attention",
+        "1",
+    ]]
     assert data["gpus"] == "1"
+
+
+def test_ollama_start_rejects_runtime_values_outside_allowlist(monkeypatch):
+    """許可されていない起動設定を管理コマンドへ渡さないことを確認する。"""
+    monkeypatch.setattr(
+        ollama,
+        "_hpc_run_cmd",
+        lambda command: pytest.fail("実行されてはいけません"),
+    )
+
+    data, error = ollama._hpc_ollama_cmd("start", parallel="999")
+
+    assert data is None
+    assert "同時処理数" in error
 
 
 @pytest.mark.parametrize("model", ["../bad model", "model;id", "$(id)", "a" * 129, "日本語"])

@@ -12,7 +12,21 @@ DEFAULT_MEMORY="{{ ollama_slurm_default_memory }}"
 GPUS="{{ ollama_slurm_gpus | default(1) }}"
 ALLOWED_CPUS="{{ ollama_slurm_allowed_cpus | default([4, 8, 12, 16, 20]) | join(' ') }}"
 ALLOWED_MEMORY="{{ ollama_slurm_allowed_memory | default(['16G', '32G', '64G', '96G', '112G']) | join(' ') }}"
+DEFAULT_PARALLEL="{{ ollama_default_parallel | default(2) }}"
+ALLOWED_PARALLEL="{{ ollama_allowed_parallel | default([1, 2, 4]) | join(' ') }}"
+DEFAULT_MAX_LOADED_MODELS="{{ ollama_default_max_loaded_models | default(2) }}"
+ALLOWED_MAX_LOADED_MODELS="{{ ollama_allowed_max_loaded_models | default([1, 2, 3]) | join(' ') }}"
+DEFAULT_CONTEXT_LENGTH="{{ ollama_default_context_length | default(65536) }}"
+ALLOWED_CONTEXT_LENGTHS="{{ ollama_allowed_context_lengths | default([32768, 65536, 131072, 262144]) | join(' ') }}"
+DEFAULT_KV_CACHE_TYPE="{{ ollama_default_kv_cache_type | default('q8_0') }}"
+ALLOWED_KV_CACHE_TYPES="{{ ollama_allowed_kv_cache_types | default(['f16', 'q8_0', 'q4_0']) | join(' ') }}"
+DEFAULT_KEEP_ALIVE="{{ ollama_default_keep_alive | default('30m') }}"
+ALLOWED_KEEP_ALIVE="{{ ollama_allowed_keep_alive | default(['5m', '30m', '1h', '-1']) | join(' ') }}"
+DEFAULT_MAX_QUEUE="{{ ollama_default_max_queue | default(64) }}"
+ALLOWED_MAX_QUEUE="{{ ollama_allowed_max_queue | default([32, 64, 128, 256]) | join(' ') }}"
+DEFAULT_FLASH_ATTENTION="{{ '1' if ollama_default_flash_attention | default(true) | bool else '0' }}"
 PULL_STATE_DIR="/run/hpc-ollama"
+START_STATE_FILE="$PULL_STATE_DIR/start-settings"
 PULL_LOCK_DIR="$PULL_STATE_DIR/pull.lock"
 PULL_PID_FILE="$PULL_STATE_DIR/pull.pid"
 PULL_MODEL_FILE="$PULL_STATE_DIR/pull.model"
@@ -43,6 +57,13 @@ json_escape() {
 parse_start_args() {
   cpus="$DEFAULT_CPUS"
   memory="$DEFAULT_MEMORY"
+  parallel="$DEFAULT_PARALLEL"
+  max_loaded_models="$DEFAULT_MAX_LOADED_MODELS"
+  context_length="$DEFAULT_CONTEXT_LENGTH"
+  kv_cache_type="$DEFAULT_KV_CACHE_TYPE"
+  keep_alive="$DEFAULT_KEEP_ALIVE"
+  max_queue="$DEFAULT_MAX_QUEUE"
+  flash_attention="$DEFAULT_FLASH_ATTENTION"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --cpus)
@@ -51,6 +72,34 @@ parse_start_args() {
         ;;
       --memory)
         memory="${2:-}"
+        shift 2
+        ;;
+      --parallel)
+        parallel="${2:-}"
+        shift 2
+        ;;
+      --max-loaded-models)
+        max_loaded_models="${2:-}"
+        shift 2
+        ;;
+      --context-length)
+        context_length="${2:-}"
+        shift 2
+        ;;
+      --kv-cache-type)
+        kv_cache_type="${2:-}"
+        shift 2
+        ;;
+      --keep-alive)
+        keep_alive="${2:-}"
+        shift 2
+        ;;
+      --max-queue)
+        max_queue="${2:-}"
+        shift 2
+        ;;
+      --flash-attention)
+        flash_attention="${2:-}"
         shift 2
         ;;
       *)
@@ -69,6 +118,26 @@ parse_start_args() {
     echo "invalid memory: $memory" >&2
     exit 2
   fi
+  # shellcheck disable=SC2086
+  contains_word "$parallel" $ALLOWED_PARALLEL || { echo "invalid parallel: $parallel" >&2; exit 2; }
+  # shellcheck disable=SC2086
+  contains_word "$max_loaded_models" $ALLOWED_MAX_LOADED_MODELS || { echo "invalid max loaded models: $max_loaded_models" >&2; exit 2; }
+  # shellcheck disable=SC2086
+  contains_word "$context_length" $ALLOWED_CONTEXT_LENGTHS || { echo "invalid context length: $context_length" >&2; exit 2; }
+  # shellcheck disable=SC2086
+  contains_word "$kv_cache_type" $ALLOWED_KV_CACHE_TYPES || { echo "invalid KV cache type: $kv_cache_type" >&2; exit 2; }
+  # shellcheck disable=SC2086
+  contains_word "$keep_alive" $ALLOWED_KEEP_ALIVE || { echo "invalid keep alive: $keep_alive" >&2; exit 2; }
+  # shellcheck disable=SC2086
+  contains_word "$max_queue" $ALLOWED_MAX_QUEUE || { echo "invalid max queue: $max_queue" >&2; exit 2; }
+  contains_word "$flash_attention" 0 1 || { echo "invalid Flash Attention: $flash_attention" >&2; exit 2; }
+}
+
+state_value() {
+  key="$1"
+  fallback="$2"
+  value="$(sed -n "s/^${key}=//p" "$START_STATE_FILE" 2>/dev/null | head -n 1 || true)"
+  printf '%s' "${value:-$fallback}"
 }
 
 cleanup_partial_download() {
@@ -116,11 +185,29 @@ case "$cmd" in
       printf '{"status":"already_running","job_ids":"%s"}\n' "$(json_escape "$ids_csv")"
       exit 0
     fi
-    exec sudo -u "$SERVICE_USER" sbatch \
+    mkdir -p "$PULL_STATE_DIR"
+    sbatch_output="$(sudo -u "$SERVICE_USER" sbatch \
+      --parsable \
       --cpus-per-task="$cpus" \
       --mem="$memory" \
       --gres="gpu:$GPUS" \
-      "$SBATCH_SCRIPT"
+      --export="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin,OLLAMA_NUM_PARALLEL=$parallel,OLLAMA_MAX_LOADED_MODELS=$max_loaded_models,OLLAMA_CONTEXT_LENGTH=$context_length,OLLAMA_KV_CACHE_TYPE=$kv_cache_type,OLLAMA_KEEP_ALIVE=$keep_alive,OLLAMA_MAX_QUEUE=$max_queue,OLLAMA_FLASH_ATTENTION=$flash_attention" \
+      "$SBATCH_SCRIPT")"
+    job_id="${sbatch_output%%;*}"
+    state_tmp="${START_STATE_FILE}.tmp"
+    umask 077
+    {
+      printf 'JOB_ID=%s\n' "$job_id"
+      printf 'PARALLEL=%s\n' "$parallel"
+      printf 'MAX_LOADED_MODELS=%s\n' "$max_loaded_models"
+      printf 'CONTEXT_LENGTH=%s\n' "$context_length"
+      printf 'KV_CACHE_TYPE=%s\n' "$kv_cache_type"
+      printf 'KEEP_ALIVE=%s\n' "$keep_alive"
+      printf 'MAX_QUEUE=%s\n' "$max_queue"
+      printf 'FLASH_ATTENTION=%s\n' "$flash_attention"
+    } >"$state_tmp"
+    mv "$state_tmp" "$START_STATE_FILE"
+    printf '{"status":"started","job_ids":"%s"}\n' "$(json_escape "$job_id")"
     ;;
   stop)
     ids="$(running_job_ids)"
@@ -128,16 +215,30 @@ case "$cmd" in
       echo "shared ollama is not running"
       exit 0
     fi
-    exec scancel $ids
+    scancel $ids
+    rm -f "$START_STATE_FILE"
+    printf '{"status":"stopped"}\n'
     ;;
   status)
     ids="$(running_job_ids)"
     if [ -z "$ids" ]; then
+      rm -f "$START_STATE_FILE"
       printf '{"running":false,"api":false,"version":"","target_version":"%s"}\n' "$(json_escape "$TARGET_VERSION")"
       exit 0
     fi
     ids_csv="$(printf '%s' "$ids" | tr '\n' ',' | sed 's/,$//')"
     first_id="$(printf '%s\n' "$ids" | head -n 1)"
+    state_job_id="$(state_value JOB_ID '')"
+    if [ "$state_job_id" != "$first_id" ]; then
+      rm -f "$START_STATE_FILE"
+    fi
+    job_parallel="$(state_value PARALLEL '')"
+    job_max_loaded_models="$(state_value MAX_LOADED_MODELS '')"
+    job_context_length="$(state_value CONTEXT_LENGTH '')"
+    job_kv_cache_type="$(state_value KV_CACHE_TYPE '')"
+    job_keep_alive="$(state_value KEEP_ALIVE '')"
+    job_max_queue="$(state_value MAX_QUEUE '')"
+    job_flash_attention="$(state_value FLASH_ATTENTION '')"
     job_info="$(squeue -h -j "$first_id" -o '%C|%m|%b' 2>/dev/null | head -n 1 || true)"
     job_cpus="$(printf '%s' "$job_info" | awk -F'|' '{print $1}')"
     job_memory="$(printf '%s' "$job_info" | awk -F'|' '{print $2}')"
@@ -149,9 +250,9 @@ case "$cmd" in
     fi
     if version_response="$(curl -fsS "$OLLAMA_URL/api/version" 2>/dev/null)"; then
       running_version="$(printf '%s' "$version_response" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-      printf '{"running":true,"api":true,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s","version":"%s","target_version":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")" "$(json_escape "$running_version")" "$(json_escape "$TARGET_VERSION")"
+      printf '{"running":true,"api":true,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s","version":"%s","target_version":"%s","parallel":"%s","max_loaded_models":"%s","context_length":"%s","kv_cache_type":"%s","keep_alive":"%s","max_queue":"%s","flash_attention":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")" "$(json_escape "$running_version")" "$(json_escape "$TARGET_VERSION")" "$(json_escape "$job_parallel")" "$(json_escape "$job_max_loaded_models")" "$(json_escape "$job_context_length")" "$(json_escape "$job_kv_cache_type")" "$(json_escape "$job_keep_alive")" "$(json_escape "$job_max_queue")" "$(json_escape "$job_flash_attention")"
     else
-      printf '{"running":true,"api":false,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s","version":"","target_version":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")" "$(json_escape "$TARGET_VERSION")"
+      printf '{"running":true,"api":false,"job_ids":"%s","cpus":"%s","memory":"%s","gpus":"%s","version":"","target_version":"%s","parallel":"%s","max_loaded_models":"%s","context_length":"%s","kv_cache_type":"%s","keep_alive":"%s","max_queue":"%s","flash_attention":"%s"}\n' "$(json_escape "$ids_csv")" "$(json_escape "$job_cpus")" "$(json_escape "$job_memory")" "$(json_escape "$job_gpus")" "$(json_escape "$TARGET_VERSION")" "$(json_escape "$job_parallel")" "$(json_escape "$job_max_loaded_models")" "$(json_escape "$job_context_length")" "$(json_escape "$job_kv_cache_type")" "$(json_escape "$job_keep_alive")" "$(json_escape "$job_max_queue")" "$(json_escape "$job_flash_attention")"
     fi
     ;;
   tags)

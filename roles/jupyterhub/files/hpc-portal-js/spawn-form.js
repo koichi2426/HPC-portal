@@ -109,11 +109,34 @@
         event.preventDefault();
         var cpus = global.document.querySelector('select[name="ollama_cpus"]').value;
         var memory = global.document.querySelector('select[name="ollama_memory"]').value;
+        var parallel = global.document.querySelector('select[name="ollama_parallel"]').value;
+        var maxLoadedModels = global.document.querySelector('select[name="ollama_max_loaded_models"]').value;
+        var contextLength = global.document.querySelector('select[name="ollama_context_length"]').value;
+        var kvCacheType = global.document.querySelector('select[name="ollama_kv_cache_type"]').value;
+        var keepAlive = global.document.querySelector('select[name="ollama_keep_alive"]').value;
+        var maxQueue = global.document.querySelector('select[name="ollama_max_queue"]').value;
+        var flashAttention = global.document.querySelector('select[name="ollama_flash_attention"]').value === "1";
         portal.requestJson("/hub/admin/users/api", {
           method: "POST",
-          body: JSON.stringify({ action: "ollama_start", cpus: cpus, memory: memory }),
+          body: JSON.stringify({
+            action: "ollama_start",
+            cpus: cpus,
+            memory: memory,
+            parallel: parallel,
+            max_loaded_models: maxLoadedModels,
+            context_length: contextLength,
+            kv_cache_type: kvCacheType,
+            keep_alive: keepAlive,
+            max_queue: maxQueue,
+            flash_attention: flashAttention,
+          }),
         })
-          .then(function () { global.location.href = "/hub/apps/shared-ollama"; })
+          .then(function (body) {
+            if (body.data && body.data.status === "already_running") {
+              global.alert("Ollamaはすでに起動中です。選択した設定は停止後の次回起動時に反映されます。");
+            }
+            global.location.href = "/hub/apps/shared-ollama";
+          })
           .catch(function (error) {
             global.alert(error.message || "Ollama の起動に失敗しました");
           });

@@ -19,7 +19,7 @@ def test_app_resource_recommendations_match_supported_workloads():
     assert recommendations["open-webui"]["cpu"] == "2"
     assert recommendations["open-webui"]["memory"] == "4"
     assert recommendations["shared-ollama"]["cpu"] == "8"
-    assert recommendations["shared-ollama"]["memory"] == "32G"
+    assert recommendations["shared-ollama"]["memory"] == "64G"
     assert recommendations["shared-ollama"]["gpu"] == "1"
 
 
@@ -88,8 +88,49 @@ def test_shared_ollama_memory_default_keeps_single_unit_suffix():
     user_options = forms.options_from_form({"app_choice": ["shared-ollama"]})
 
     assert user_options["nprocs"] == "8"
-    assert user_options["memory"] == "32G"
+    assert user_options["memory"] == "64G"
     assert user_options["gpu"] == "1"
+
+
+def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
+    """管理者の起動画面へ共有Ollamaの初期設定を描画する。"""
+    resource = {
+        "cpu_available": 50.0,
+        "cpu_available_count": 10.0,
+        "cpu_total": 20,
+        "cpu_status": "余裕あり",
+        "mem_available": 75.0,
+        "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0,
+        "mem_status": "余裕あり",
+        "disk_available": 60.0,
+        "disk_available_gb": 600.0,
+        "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり",
+        "gpu_max": 1,
+        "gpu_processes": [],
+        "gpu_processes_available": True,
+    }
+    user = SimpleNamespace(name="admin", spawners={})
+    spawner = SimpleNamespace(
+        user=user, notebook_dir="/home/admin", homedir="/home/admin"
+    )
+    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: True)
+    monkeypatch.setattr(
+        forms,
+        "_hpc_shared_ollama_detail_context",
+        lambda: {"active": False},
+    )
+
+    rendered = forms.make_options_form(spawner)
+
+    assert 'name="ollama_memory"' in rendered
+    assert '<option value="64G" selected>64G RAM</option>' in rendered
+    assert 'name="ollama_parallel"' in rendered
+    assert 'name="ollama_context_length"' in rendered
+    assert '<option value="65536" selected>64K</option>' in rendered
+    assert '<option value="q8_0" selected>q8_0</option>' in rendered
 
 
 def test_spawn_script_applies_selected_recommendation_to_form_values():

@@ -87,11 +87,12 @@ Proxy.delete_user = _hpc_proxy_delete_user
 
 OPENWEBUI_DEFAULT_MODEL_METADATA_JSON = (
     '{"capabilities":{"file_context":true,"web_search":true,'
-    '"image_generation":false,"code_interpreter":false,"terminal":false,'
+    '"image_generation":false,"code_interpreter":true,"terminal":false,'
     '"builtin_tools":true},"builtinTools":{"time":true,"memory":true,'
     '"notes":true,"chats":false,"knowledge":false,"channels":false,'
-    '"web_search":true,"image_generation":false,"code_interpreter":false,'
-    '"tasks":false,"automations":false,"calendar":false}}'
+    '"web_search":true,"image_generation":false,"code_interpreter":true,'
+    '"tasks":false,"automations":false,"calendar":false},'
+    '"defaultFeatureIds":["web_search","code_interpreter"]}'
 )
 OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON = '{"think":false,"function_calling":"native"}'
 
@@ -255,7 +256,7 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
       "ENABLE_RAG_LOCAL_WEB_FETCH=False" \
       "ENABLE_WEB_SEARCH_CONFIRMATION=False" \
       "ENABLE_IMAGE_GENERATION=False" \
-      "ENABLE_CODE_INTERPRETER=False" \
+      "ENABLE_CODE_INTERPRETER=True" \
       "ENABLE_CHANNELS=False" \
       "ENABLE_CALENDAR=False" \
       "ENABLE_AUTOMATIONS=False" \

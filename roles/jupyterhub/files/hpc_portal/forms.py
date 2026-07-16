@@ -12,9 +12,22 @@ from .apps import (
 from .common import (
     HPC_GPU_COUNT,
     HPC_OLLAMA_ALLOWED_CPUS,
+    HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+    HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+    HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+    HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+    HPC_OLLAMA_ALLOWED_MAX_QUEUE,
     HPC_OLLAMA_ALLOWED_MEMORY,
+    HPC_OLLAMA_ALLOWED_PARALLEL,
     HPC_OLLAMA_DEFAULT_CPUS,
+    HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+    HPC_OLLAMA_DEFAULT_FLASH_ATTENTION,
+    HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+    HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+    HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+    HPC_OLLAMA_DEFAULT_MAX_QUEUE,
     HPC_OLLAMA_DEFAULT_MEMORY,
+    HPC_OLLAMA_DEFAULT_PARALLEL,
     HPC_OLLAMA_VERSION,
     HPC_JUPYTER_UBUNTU_VERSION,
     HPC_OPENWEBUI_VERSION,
@@ -44,6 +57,28 @@ def _hpc_memory_display_label(memory: str) -> str:
     elif normalized.endswith("G"):
         normalized = normalized[:-1]
     return f"{normalized} GB"
+
+
+def _hpc_select_options(
+    values: tuple[str, ...], default: str, labels: dict[str, str] | None = None
+) -> str:
+    """許可値だけを含むselect要素用option一覧を生成する。
+
+    Args:
+        values: 選択を許可する値。
+        default: 初期選択する値。
+        labels: 値ごとの表示名。省略時は値をそのまま表示する。
+
+    Returns:
+        HTMLエスケープ済みのoption要素一覧。
+    """
+    labels = labels or {}
+    return "".join(
+        f'<option value="{html.escape(value, quote=True)}"'
+        f'{" selected" if value == default else ""}>'
+        f'{html.escape(labels.get(value, value))}</option>'
+        for value in values
+    )
 
 
 def _hpc_app_resource_recommendations() -> dict[str, dict[str, str]]:
@@ -301,13 +336,49 @@ def make_options_form(spawner):
         )
     app_options_html = "".join(app_options)
     initial_recommendation = recommendations["ubuntu-cli"]
-    shared_cpu_options = "".join(
-        f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_CPUS else ""}>{html.escape(v)} vCPU</option>'
-        for v in HPC_OLLAMA_ALLOWED_CPUS
+    shared_cpu_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_CPUS,
+        HPC_OLLAMA_DEFAULT_CPUS,
+        {value: f"{value} vCPU" for value in HPC_OLLAMA_ALLOWED_CPUS},
     )
-    shared_memory_options = "".join(
-        f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_MEMORY else ""}>{html.escape(v)} RAM</option>'
-        for v in HPC_OLLAMA_ALLOWED_MEMORY
+    shared_memory_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_MEMORY,
+        HPC_OLLAMA_DEFAULT_MEMORY,
+        {value: f"{value} RAM" for value in HPC_OLLAMA_ALLOWED_MEMORY},
+    )
+    shared_parallel_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_PARALLEL, HPC_OLLAMA_DEFAULT_PARALLEL
+    )
+    shared_loaded_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+        HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+    )
+    shared_context_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+        HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+        {
+            "32768": "32K",
+            "65536": "64K",
+            "131072": "128K",
+            "262144": "256K",
+        },
+    )
+    shared_kv_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+        HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+    )
+    shared_keep_alive_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+        HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+        {"5m": "5分", "30m": "30分", "1h": "1時間", "-1": "常時"},
+    )
+    shared_queue_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_MAX_QUEUE, HPC_OLLAMA_DEFAULT_MAX_QUEUE
+    )
+    shared_flash_options = _hpc_select_options(
+        ("1", "0"),
+        "1" if HPC_OLLAMA_DEFAULT_FLASH_ATTENTION else "0",
+        {"1": "ON", "0": "OFF"},
     )
 
     header_html = f"""
@@ -367,12 +438,29 @@ def make_options_form(spawner):
                      data-openwebui-label="Open WebUI v{html.escape(HPC_OPENWEBUI_VERSION, quote=True)}"
                      data-ollama-label="Ollama v{html.escape(HPC_OLLAMA_VERSION, quote=True)}">バージョン: Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</div>
                 <div id="shared-ollama-options" class="hpc-shared-options">
-                    <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
+                    <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は共有 Slurm job として起動します。この設定は全ユーザーに共通で、停止後の次回起動時に反映されます。</div>
                     <div class="hpc-form-grid-3">
-                        <div><label class="label">Ollama vCPUs</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
-                        <div><label class="label">Ollama RAM</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
-                        <div><label class="label">Ollama GPUs</label><input type="text" class="form-control input-dark" value="1" readonly></div>
+                        <div><label class="label">vCPU</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
+                        <div><label class="label">メモリ割り当て</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
+                        <div><label class="label">GPU</label><input type="text" class="form-control input-dark" value="1" readonly></div>
                     </div>
+                    <div class="hpc-form-grid-2">
+                        <div><label class="label">同時処理数</label><select class="form-control input-dark" name="ollama_parallel">{shared_parallel_options}</select></div>
+                        <div><label class="label">同時ロードモデル数</label><select class="form-control input-dark" name="ollama_max_loaded_models">{shared_loaded_options}</select></div>
+                    </div>
+                    <div class="hpc-form-grid-2">
+                        <div><label class="label">コンテキスト長</label><select class="form-control input-dark" name="ollama_context_length">{shared_context_options}</select></div>
+                        <div><label class="label">KVキャッシュ</label><select class="form-control input-dark" name="ollama_kv_cache_type">{shared_kv_options}</select></div>
+                    </div>
+                    <details class="hpc-ollama-advanced">
+                        <summary>詳細設定</summary>
+                        <div class="hpc-form-grid-3">
+                            <div><label class="label">モデル保持時間</label><select class="form-control input-dark" name="ollama_keep_alive">{shared_keep_alive_options}</select></div>
+                            <div><label class="label">最大待機数</label><select class="form-control input-dark" name="ollama_max_queue">{shared_queue_options}</select></div>
+                            <div><label class="label">Flash Attention</label><select class="form-control input-dark" name="ollama_flash_attention">{shared_flash_options}</select></div>
+                        </div>
+                    </details>
+                    <div class="hpc-muted" style="font-size:0.74rem;margin-top:8px;">並列数とコンテキスト長を増やすと、KVキャッシュのメモリ使用量が増えます。</div>
                 </div>
                 <div id="standard-resource-options">
                     <div class="hpc-form-grid-2">

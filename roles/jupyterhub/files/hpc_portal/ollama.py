@@ -5,9 +5,22 @@ import re
 
 from .common import (
     HPC_OLLAMA_ALLOWED_CPUS,
+    HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+    HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+    HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+    HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+    HPC_OLLAMA_ALLOWED_MAX_QUEUE,
     HPC_OLLAMA_ALLOWED_MEMORY,
+    HPC_OLLAMA_ALLOWED_PARALLEL,
     HPC_OLLAMA_DEFAULT_CPUS,
+    HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+    HPC_OLLAMA_DEFAULT_FLASH_ATTENTION,
+    HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+    HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+    HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+    HPC_OLLAMA_DEFAULT_MAX_QUEUE,
     HPC_OLLAMA_DEFAULT_MEMORY,
+    HPC_OLLAMA_DEFAULT_PARALLEL,
     HPC_OLLAMA_MODELS_DIR,
     HPC_OLLAMA_PORT,
     HPC_OLLAMA_RUNTIME,
@@ -19,7 +32,30 @@ from .users import _hpc_run_cmd
 _HPC_OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
 HPC_OLLAMA_GPUS = "1"
 
-def _hpc_validate_ollama_resources(cpus: str | None, memory: str | None) -> tuple[str | None, str | None, str | None]:
+
+def _hpc_normalize_ollama_choice(
+    value: str | None, default: str, allowed: tuple[str, ...], label: str
+) -> tuple[str | None, str | None]:
+    """Ollama起動設定を許可値へ正規化する。
+
+    Args:
+        value: 入力された設定値。
+        default: 未入力時の既定値。
+        allowed: 選択を許可する値。
+        label: エラーメッセージへ表示する設定名。
+
+    Returns:
+        ``(正規化値, エラー)``。
+    """
+    normalized = str(value if value not in (None, "") else default).strip()
+    if normalized not in allowed:
+        return None, f"{label} は {', '.join(allowed)} から選択してください"
+    return normalized, None
+
+
+def _hpc_validate_ollama_resources(
+    cpus: str | None, memory: str | None
+) -> tuple[str | None, str | None, str | None]:
     """共有Ollamaへ割り当てるCPUとメモリを検証する。
 
     Args:
@@ -38,7 +74,117 @@ def _hpc_validate_ollama_resources(cpus: str | None, memory: str | None) -> tupl
     return c, m, None
 
 
-def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = None, memory: str | None = None) -> tuple[dict | None, str | None]:
+def _hpc_validate_ollama_start_settings(
+    cpus: str | None = None,
+    memory: str | None = None,
+    parallel: str | None = None,
+    max_loaded_models: str | None = None,
+    context_length: str | None = None,
+    kv_cache_type: str | None = None,
+    keep_alive: str | None = None,
+    max_queue: str | None = None,
+    flash_attention: bool | None = None,
+) -> tuple[dict[str, str] | None, str | None]:
+    """共有Ollamaの全起動設定を検証する。
+
+    Args:
+        cpus: Slurmへ要求するCPU数。
+        memory: Slurmへ要求するメモリ。
+        parallel: 1モデルあたりの同時処理数。
+        max_loaded_models: 同時ロードモデル数の上限。
+        context_length: 既定コンテキスト長。
+        kv_cache_type: KVキャッシュ量子化形式。
+        keep_alive: モデルをメモリへ保持する時間。
+        max_queue: 待機リクエスト数の上限。
+        flash_attention: Flash Attentionの有効状態。
+
+    Returns:
+        ``(正規化済み設定, エラー)``。
+    """
+    normalized_cpus, normalized_memory, error = _hpc_validate_ollama_resources(
+        cpus, memory
+    )
+    if error:
+        return None, error
+    choices = (
+        (
+            "parallel",
+            parallel,
+            HPC_OLLAMA_DEFAULT_PARALLEL,
+            HPC_OLLAMA_ALLOWED_PARALLEL,
+            "同時処理数",
+        ),
+        (
+            "max_loaded_models",
+            max_loaded_models,
+            HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+            HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+            "同時ロードモデル数",
+        ),
+        (
+            "context_length",
+            context_length,
+            HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+            HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+            "コンテキスト長",
+        ),
+        (
+            "kv_cache_type",
+            kv_cache_type,
+            HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+            HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+            "KVキャッシュ",
+        ),
+        (
+            "keep_alive",
+            keep_alive,
+            HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+            HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+            "モデル保持時間",
+        ),
+        (
+            "max_queue",
+            max_queue,
+            HPC_OLLAMA_DEFAULT_MAX_QUEUE,
+            HPC_OLLAMA_ALLOWED_MAX_QUEUE,
+            "最大待機数",
+        ),
+    )
+    settings = {
+        "cpus": normalized_cpus or HPC_OLLAMA_DEFAULT_CPUS,
+        "memory": normalized_memory or HPC_OLLAMA_DEFAULT_MEMORY,
+    }
+    for key, value, default, allowed, label in choices:
+        normalized, error = _hpc_normalize_ollama_choice(
+            value, default, allowed, label
+        )
+        if error:
+            return None, error
+        settings[key] = normalized or default
+    enabled = (
+        HPC_OLLAMA_DEFAULT_FLASH_ATTENTION
+        if flash_attention is None
+        else flash_attention
+    )
+    if not isinstance(enabled, bool):
+        return None, "Flash Attention は真偽値で指定してください"
+    settings["flash_attention"] = "1" if enabled else "0"
+    return settings, None
+
+
+def _hpc_ollama_cmd(
+    action: str,
+    model: str | None = None,
+    cpus: str | None = None,
+    memory: str | None = None,
+    parallel: str | None = None,
+    max_loaded_models: str | None = None,
+    context_length: str | None = None,
+    kv_cache_type: str | None = None,
+    keep_alive: str | None = None,
+    max_queue: str | None = None,
+    flash_attention: bool | None = None,
+) -> tuple[dict | None, str | None]:
     """hpc-ollama管理コマンドを実行する。
 
     Args:
@@ -46,16 +192,46 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
         model: pullまたはdelete対象のモデル名。
         cpus: start時のCPU数。
         memory: start時の要求メモリ。
+        parallel: start時の同時処理数。
+        max_loaded_models: start時の同時ロードモデル数。
+        context_length: start時のコンテキスト長。
+        kv_cache_type: start時のKVキャッシュ形式。
+        keep_alive: start時のモデル保持時間。
+        max_queue: start時の最大待機数。
+        flash_attention: start時のFlash Attention設定。
 
     Returns:
         ``(JSON結果, エラー)``。
     """
     cmd = ["/usr/local/sbin/hpc-ollama", action]
+    start_settings = None
     if action == "start":
-        c, m, err = _hpc_validate_ollama_resources(cpus, memory)
+        start_settings, err = _hpc_validate_ollama_start_settings(
+            cpus,
+            memory,
+            parallel,
+            max_loaded_models,
+            context_length,
+            kv_cache_type,
+            keep_alive,
+            max_queue,
+            flash_attention,
+        )
         if err:
             return None, err
-        cmd.extend(["--cpus", c or HPC_OLLAMA_DEFAULT_CPUS, "--memory", m or HPC_OLLAMA_DEFAULT_MEMORY])
+        option_names = {
+            "cpus": "--cpus",
+            "memory": "--memory",
+            "parallel": "--parallel",
+            "max_loaded_models": "--max-loaded-models",
+            "context_length": "--context-length",
+            "kv_cache_type": "--kv-cache-type",
+            "keep_alive": "--keep-alive",
+            "max_queue": "--max-queue",
+            "flash_attention": "--flash-attention",
+        }
+        for key, option in option_names.items():
+            cmd.extend([option, start_settings[key]])
     if model:
         if not _HPC_OLLAMA_MODEL_RE.fullmatch(model):
             return None, "モデル名に使用できない文字が含まれています"
@@ -77,12 +253,17 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
     if action == "start" and body:
         try:
             data = json.loads(body)
-            data.setdefault("cpus", cpus or HPC_OLLAMA_DEFAULT_CPUS)
-            data.setdefault("memory", memory or HPC_OLLAMA_DEFAULT_MEMORY)
+            for key, value in (start_settings or {}).items():
+                data.setdefault(key, value)
             data.setdefault("gpus", HPC_OLLAMA_GPUS)
             return data, None
         except json.JSONDecodeError:
-            return {"ok": True, "output": body, "cpus": cpus or HPC_OLLAMA_DEFAULT_CPUS, "memory": memory or HPC_OLLAMA_DEFAULT_MEMORY, "gpus": HPC_OLLAMA_GPUS}, None
+            return {
+                "ok": True,
+                "output": body,
+                **(start_settings or {}),
+                "gpus": HPC_OLLAMA_GPUS,
+            }, None
     return {"ok": True, "output": body}, None
 
 
@@ -229,6 +410,35 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
                 })
     running_version = str(status.get("version") or "").removeprefix("v")
     target_version = HPC_OLLAMA_VERSION.removeprefix("v")
+    def running_setting(key: str, default: str) -> str:
+        """稼働中は実測値だけを、停止中は次回起動の既定値を返す。
+
+        Args:
+            key: status JSON内の設定名。
+            default: 停止中に表示する次回起動の既定値。
+
+        Returns:
+            画面表示へ使用する設定値。
+        """
+        return str(status.get(key) or "") if running else default
+
+    context_length = running_setting(
+        "context_length", HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH
+    )
+    try:
+        context_length_label = f"{int(context_length) // 1024}K"
+    except ValueError:
+        context_length_label = context_length or "不明"
+    keep_alive = running_setting("keep_alive", HPC_OLLAMA_DEFAULT_KEEP_ALIVE)
+    keep_alive_label = {
+        "5m": "5分",
+        "30m": "30分",
+        "1h": "1時間",
+        "-1": "常時",
+    }.get(keep_alive, keep_alive or "不明")
+    flash_attention = running_setting(
+        "flash_attention", "1" if HPC_OLLAMA_DEFAULT_FLASH_ATTENTION else "0"
+    )
     return {
         "shared_ollama": True,
         "server_name": "shared-ollama",
@@ -257,6 +467,30 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
         "update_available": bool(
             running_version and target_version and running_version != target_version
         ),
+        "ollama_settings": {
+            "parallel": running_setting(
+                "parallel", HPC_OLLAMA_DEFAULT_PARALLEL
+            ) or "不明",
+            "max_loaded_models": running_setting(
+                "max_loaded_models", HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS
+            ) or "不明",
+            "context_length": context_length,
+            "context_length_label": context_length_label,
+            "kv_cache_type": running_setting(
+                "kv_cache_type", HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE
+            ) or "不明",
+            "keep_alive": keep_alive,
+            "keep_alive_label": keep_alive_label,
+            "max_queue": running_setting(
+                "max_queue", HPC_OLLAMA_DEFAULT_MAX_QUEUE
+            ) or "不明",
+            "flash_attention": {
+                "value": flash_attention,
+                "label": {"1": "ON", "0": "OFF"}.get(
+                    flash_attention, "不明"
+                ),
+            },
+        },
         "models": models,
         "status_error": status_err or tags_err or "",
     }

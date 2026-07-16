@@ -130,6 +130,21 @@
             String(data.cpus || "—") + " vCPU · " +
             String(data.memory || "—") + " RAM · 1 GPU · 無制限";
         });
+        root.querySelectorAll("[data-hpc-ollama-setting]").forEach(function (setting) {
+          var key = setting.getAttribute("data-hpc-ollama-setting");
+          var value = data[key];
+          if (value === undefined || value === null || value === "") return;
+          if (key === "context_length") {
+            var numericContext = Number(value);
+            setting.textContent = numericContext ? String(numericContext / 1024) + "K" : String(value);
+          } else if (key === "keep_alive") {
+            setting.textContent = { "5m": "5分", "30m": "30分", "1h": "1時間", "-1": "常時" }[value] || String(value);
+          } else if (key === "flash_attention") {
+            setting.textContent = value === "1" ? "ON" : (value === "0" ? "OFF" : "不明");
+          } else {
+            setting.textContent = String(value);
+          }
+        });
         root.querySelectorAll("[data-hpc-ollama-api-status]").forEach(function (status) {
           status.textContent = data.api ? "OK" : "起動待ち / 未応答";
           status.classList.toggle("hpc-status-ok", Boolean(data.api));

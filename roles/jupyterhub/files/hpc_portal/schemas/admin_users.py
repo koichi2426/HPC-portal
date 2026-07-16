@@ -38,6 +38,13 @@ class HpcAdminUsersRequest(BaseModel):
     model: str = ""
     cpus: str = ""
     memory: str = ""
+    parallel: str = ""
+    max_loaded_models: str = ""
+    context_length: str = ""
+    kv_cache_type: str = ""
+    keep_alive: str = ""
+    max_queue: str = ""
+    flash_attention: bool | None = None
 
     @field_validator("action", "username", mode="before")
     @classmethod
@@ -52,7 +59,19 @@ class HpcAdminUsersRequest(BaseModel):
         """
         return value.strip().lower() if isinstance(value, str) else value
 
-    @field_validator("display_name", "model", "cpus", "memory", mode="before")
+    @field_validator(
+        "display_name",
+        "model",
+        "cpus",
+        "memory",
+        "parallel",
+        "max_loaded_models",
+        "context_length",
+        "kv_cache_type",
+        "keep_alive",
+        "max_queue",
+        mode="before",
+    )
     @classmethod
     def normalize_text(cls, value: object) -> object:
         """文字列入力の前後空白を除去する。

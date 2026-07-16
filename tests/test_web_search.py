@@ -24,12 +24,16 @@ def test_openwebui_enables_selected_builtin_tools_by_default():
     script = batch.c.HPCSlurmSpawner.batch_script
 
     assert metadata["capabilities"]["web_search"] is True
+    assert metadata["capabilities"]["code_interpreter"] is True
     assert metadata["capabilities"]["builtin_tools"] is True
     assert metadata["builtinTools"]["time"] is True
     assert metadata["builtinTools"]["memory"] is True
     assert metadata["builtinTools"]["notes"] is True
     assert metadata["builtinTools"]["web_search"] is True
+    assert metadata["builtinTools"]["code_interpreter"] is True
+    assert metadata["defaultFeatureIds"] == ["web_search", "code_interpreter"]
     assert '"ENABLE_WEB_SEARCH=True"' in script
+    assert '"ENABLE_CODE_INTERPRETER=True"' in script
     assert '"WEB_SEARCH_ENGINE=searxng"' in script
     assert '"SEARXNG_QUERY_URL=http://127.0.0.1:8888/search?q=<query>"' in script
 

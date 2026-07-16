@@ -520,6 +520,13 @@ class HpcAdminUsersApiHandler(BaseHandler):
                     model if action in {"ollama_pull", "ollama_pull_cancel"} else None,
                     request.cpus if action == "ollama_start" else None,
                     request.memory if action == "ollama_start" else None,
+                    request.parallel if action == "ollama_start" else None,
+                    request.max_loaded_models if action == "ollama_start" else None,
+                    request.context_length if action == "ollama_start" else None,
+                    request.kv_cache_type if action == "ollama_start" else None,
+                    request.keep_alive if action == "ollama_start" else None,
+                    request.max_queue if action == "ollama_start" else None,
+                    request.flash_attention if action == "ollama_start" else None,
                 )
             if err:
                 return self._api_error(400, err)

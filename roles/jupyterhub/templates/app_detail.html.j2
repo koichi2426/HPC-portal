@@ -88,6 +88,15 @@
       <tr><th>メモリ</th><td>{{ d.allocation['memory'] }}</td></tr>
       <tr><th>GPU</th><td>{{ d.allocation['gpu_label'] }}</td></tr>
       <tr><th>最大実行時間</th><td>{{ d.allocation['runtime'] }} <span class="hpc-muted">({{ d.allocation['hours'] }})</span></td></tr>
+      {% if d.shared_ollama %}
+      <tr><th>同時処理数</th><td data-hpc-ollama-setting="parallel">{{ d.ollama_settings.parallel }}</td></tr>
+      <tr><th>同時ロードモデル数</th><td data-hpc-ollama-setting="max_loaded_models">{{ d.ollama_settings.max_loaded_models }}</td></tr>
+      <tr><th>コンテキスト長</th><td data-hpc-ollama-setting="context_length">{{ d.ollama_settings.context_length_label }}</td></tr>
+      <tr><th>KVキャッシュ</th><td data-hpc-ollama-setting="kv_cache_type">{{ d.ollama_settings.kv_cache_type }}</td></tr>
+      <tr><th>モデル保持時間</th><td data-hpc-ollama-setting="keep_alive">{{ d.ollama_settings.keep_alive_label }}</td></tr>
+      <tr><th>最大待機数</th><td data-hpc-ollama-setting="max_queue">{{ d.ollama_settings.max_queue }}</td></tr>
+      <tr><th>Flash Attention</th><td data-hpc-ollama-setting="flash_attention">{{ d.ollama_settings.flash_attention.label }}</td></tr>
+      {% endif %}
       {% if d.app_choice == 'open-webui' %}
       <tr data-hpc-openwebui-version-url="/hub/apps/{{ d.server_name_path }}/version">
         <th>バージョン</th>

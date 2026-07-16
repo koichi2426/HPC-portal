@@ -6,6 +6,11 @@
     grid-template-columns: 1fr;
   }
 
+  .hpc-shared-options .hpc-form-grid-2 > div > .label,
+  .hpc-shared-options .hpc-form-grid-3 > div > .label {
+    height: auto;
+  }
+
   .hpc-page-header,
   .hpc-heading-row,
   .hpc-row-between {

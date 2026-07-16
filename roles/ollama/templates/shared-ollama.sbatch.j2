@@ -8,8 +8,15 @@ set -euo pipefail
 
 export OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }}
 export OLLAMA_MODELS={{ ollama_models_dir }}
-export OLLAMA_CONTEXT_LENGTH={{ ollama_context_length }}
-export OLLAMA_FLASH_ATTENTION={{ '1' if ollama_flash_attention | bool else '0' }}
+: "${OLLAMA_NUM_PARALLEL:={{ ollama_default_parallel | default(2) }}}"
+: "${OLLAMA_MAX_LOADED_MODELS:={{ ollama_default_max_loaded_models | default(2) }}}"
+: "${OLLAMA_CONTEXT_LENGTH:={{ ollama_default_context_length | default(65536) }}}"
+: "${OLLAMA_KV_CACHE_TYPE:={{ ollama_default_kv_cache_type | default('q8_0') }}}"
+: "${OLLAMA_KEEP_ALIVE:={{ ollama_default_keep_alive | default('30m') }}}"
+: "${OLLAMA_MAX_QUEUE:={{ ollama_default_max_queue | default(64) }}}"
+: "${OLLAMA_FLASH_ATTENTION:={{ '1' if ollama_default_flash_attention | default(true) | bool else '0' }}}"
+export OLLAMA_NUM_PARALLEL OLLAMA_MAX_LOADED_MODELS OLLAMA_CONTEXT_LENGTH
+export OLLAMA_KV_CACHE_TYPE OLLAMA_KEEP_ALIVE OLLAMA_MAX_QUEUE OLLAMA_FLASH_ATTENTION
 export HOME={{ ollama_service_home }}
 
 exec apptainer exec --nv \
@@ -17,8 +24,13 @@ exec apptainer exec --nv \
   --bind {{ ollama_service_home }}:{{ ollama_service_home }} \
   --env OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }} \
   --env OLLAMA_MODELS={{ ollama_models_dir }} \
-  --env OLLAMA_CONTEXT_LENGTH={{ ollama_context_length }} \
-  --env OLLAMA_FLASH_ATTENTION={{ '1' if ollama_flash_attention | bool else '0' }} \
+  --env OLLAMA_NUM_PARALLEL="$OLLAMA_NUM_PARALLEL" \
+  --env OLLAMA_MAX_LOADED_MODELS="$OLLAMA_MAX_LOADED_MODELS" \
+  --env OLLAMA_CONTEXT_LENGTH="$OLLAMA_CONTEXT_LENGTH" \
+  --env OLLAMA_KV_CACHE_TYPE="$OLLAMA_KV_CACHE_TYPE" \
+  --env OLLAMA_KEEP_ALIVE="$OLLAMA_KEEP_ALIVE" \
+  --env OLLAMA_MAX_QUEUE="$OLLAMA_MAX_QUEUE" \
+  --env OLLAMA_FLASH_ATTENTION="$OLLAMA_FLASH_ATTENTION" \
   --env HOME={{ ollama_service_home }} \
   {{ ollama_apptainer_image }} \
   ollama serve

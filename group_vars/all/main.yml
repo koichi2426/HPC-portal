@@ -81,15 +81,27 @@ ollama_apptainer_image: /opt/images/ollama.sif
 ollama_slurm_job_name: shared-ollama
 ollama_slurm_partition: debug
 ollama_slurm_default_cpus: 8
-ollama_slurm_default_memory: 32G
+ollama_slurm_default_memory: 64G
 ollama_slurm_allowed_cpus: [4, 8, 12, 16, 20]
 ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
 ollama_slurm_gpus: 1
 ollama_slurm_time: "INFINITE"
-# Web検索やツール利用に必要な長さを確保しつつ、KVキャッシュを抑える。
-ollama_context_length: 65536
+ollama_default_parallel: 2
+ollama_allowed_parallel: [1, 2, 4]
+ollama_default_max_loaded_models: 2
+ollama_allowed_max_loaded_models: [1, 2, 3]
+# Web検索やツール利用に必要な長さを確保する。
+ollama_default_context_length: 65536
+ollama_allowed_context_lengths: [32768, 65536, 131072, 262144]
+# q8_0はKVキャッシュをf16の約半分に抑えつつ、精度低下を小さくする。
+ollama_default_kv_cache_type: q8_0
+ollama_allowed_kv_cache_types: [f16, q8_0, q4_0]
+ollama_default_keep_alive: 30m
+ollama_allowed_keep_alive: [5m, 30m, 1h, -1]
+ollama_default_max_queue: 64
+ollama_allowed_max_queue: [32, 64, 128, 256]
 # 長いコンテキストでもAttention計算時のGPUメモリ使用量を抑える。
-ollama_flash_attention: true
+ollama_default_flash_attention: true
 
 
 # Ubuntu/JupyterLab
