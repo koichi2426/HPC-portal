@@ -16,7 +16,7 @@
 
 ### 2. システムアーキテクチャ
 
-単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM を連携させます。外部公開は Cloudflare Tunnel 経由だけで、Ollama と PostgreSQL はホスト内部からのみ利用します。
+単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、SearXNGはホスト内部からのみ利用します。
 
 #### 全体構成
 
@@ -24,6 +24,7 @@
 flowchart LR
     User[利用者]
     CF[Cloudflare Tunnel]
+    Search[外部検索サービス]
 
     subgraph Host[単一ノード]
         Proxy[configurable-http-proxy<br/>公開入口 :8000]
@@ -31,7 +32,8 @@ flowchart LR
         Slurm[Slurm]
         Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
         LiteLLM[LiteLLM<br/>API Gateway]
-        Ollama[共有 Ollama]
+        Ollama[共有 Ollama<br/>Slurmジョブ]
+        SearXNG[SearXNG<br/>内部検索API]
         DB[(PostgreSQL)]
         Models[(共有モデル保存領域)]
     end
@@ -41,12 +43,16 @@ flowchart LR
     Proxy --> JHub
     Proxy --> Apps
     JHub -->|動的ルートを登録| Proxy
-    JHub -->|ジョブ投入| Slurm
+    JHub -->|アプリ・共有Ollamaのジョブ投入| Slurm
     Slurm --> Apps
-    Apps -->|利用者別 Virtual Key| LiteLLM
+    Slurm --> Ollama
+    JHub -->|ユーザー・Key・モデル管理| LiteLLM
+    Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
+    Apps -->|Web検索| SearXNG
+    SearXNG --> Search
     CF -->|LLM API・管理UI| LiteLLM
     LiteLLM <--> DB
-    LiteLLM --> Ollama
+    LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
 ```
 
@@ -65,6 +71,7 @@ sequenceDiagram
         participant App as 利用者ごとの Slurm ジョブ<br/>JupyterLab / Open WebUI
         participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
         participant Ollama as 共有 Ollama Slurm ジョブ<br/>127.0.0.1:11434
+        participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
 
@@ -96,10 +103,17 @@ sequenceDiagram
     LiteLLM-->>App: OpenAI互換レスポンス
     App-->>User: 応答を表示
 
+    opt Web検索を利用
+        App->>SearXNG: 検索語を内部JSON APIへ送信
+        SearXNG-->>App: 複数検索サービスの結果を返す
+    end
+
     Note over User,LiteLLM: 外部API利用時
     User->>CF: LLM API / 管理UIへアクセス
     CF->>LiteLLM: API / 管理UIを転送
 ```
+
+Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Web検索には内部SearXNGを使用します。
 
 ---
 
@@ -195,7 +209,7 @@ make deploy-restart
 
 #### 🔎 Web検索（SearXNG）
 
-SearXNGはApptainer上のsystemdサービスとして常時起動し、`127.0.0.1`だけで待ち受けます。Cloudflare Tunnelには公開しません。Open WebUIではWeb検索機能を利用できますが、検索はチャットごとに利用者が明示的に有効化した場合だけ実行されます。
+SearXNGはApptainer上のsystemdサービスとして常時起動し、`127.0.0.1`だけで待ち受けます。Cloudflare Tunnelには公開しません。新規Open WebUI DB・新規モデルではWeb検索を初期ONにし、利用者はチャットごとにOFFへ切り替えられます。
 
 初回デプロイ前に、ランダムな秘密値を生成します。
 

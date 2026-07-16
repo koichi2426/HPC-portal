@@ -16,7 +16,7 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 
 ### 2. System Architecture
 
-JupyterHub, Slurm, shared Ollama, and LiteLLM run together on one node. External access goes through Cloudflare Tunnel only; Ollama and PostgreSQL remain internal to the host.
+JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, and SearXNG remain internal to the host.
 
 #### Overview
 
@@ -24,6 +24,7 @@ JupyterHub, Slurm, shared Ollama, and LiteLLM run together on one node. External
 flowchart LR
     User[User]
     CF[Cloudflare Tunnel]
+    Search[External search services]
 
     subgraph Host[Single node]
         Proxy[configurable-http-proxy<br/>public entry :8000]
@@ -31,7 +32,8 @@ flowchart LR
         Slurm[Slurm]
         Apps[Per-user applications<br/>JupyterLab / Open WebUI]
         LiteLLM[LiteLLM<br/>API Gateway]
-        Ollama[Shared Ollama]
+        Ollama[Shared Ollama<br/>Slurm job]
+        SearXNG[SearXNG<br/>internal search API]
         DB[(PostgreSQL)]
         Models[(Shared model storage)]
     end
@@ -41,12 +43,16 @@ flowchart LR
     Proxy --> JHub
     Proxy --> Apps
     JHub -->|Register dynamic routes| Proxy
-    JHub -->|Submit jobs| Slurm
+    JHub -->|Submit app and shared Ollama jobs| Slurm
     Slurm --> Apps
-    Apps -->|Per-user Virtual Key| LiteLLM
+    Slurm --> Ollama
+    JHub -->|Manage users, keys, and models| LiteLLM
+    Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
+    Apps -->|Web search| SearXNG
+    SearXNG --> Search
     CF -->|LLM API and admin UI| LiteLLM
     LiteLLM <--> DB
-    LiteLLM --> Ollama
+    LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
 ```
 
@@ -65,6 +71,7 @@ sequenceDiagram
         participant App as Per-user Slurm job<br/>JupyterLab / Open WebUI
         participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
         participant Ollama as Shared Ollama Slurm job<br/>127.0.0.1:11434
+        participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
 
@@ -96,10 +103,17 @@ sequenceDiagram
     LiteLLM-->>App: OpenAI-compatible response
     App-->>User: Display the response
 
+    opt Use web search
+        App->>SearXNG: Send the query to the internal JSON API
+        SearXNG-->>App: Return aggregated search results
+    end
+
     Note over User,LiteLLM: External API use
     User->>CF: Access the LLM API or admin UI
     CF->>LiteLLM: Forward API or admin UI traffic
 ```
+
+Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Web search uses the internal SearXNG service.
 
 ---
 
@@ -189,7 +203,7 @@ If `make deploy` detects pending Slurm configuration changes while jobs are acti
 
 #### 🔎 Web search (SearXNG)
 
-SearXNG runs continuously as a systemd service in Apptainer and listens only on `127.0.0.1`. It is not exposed through Cloudflare Tunnel. Web search is available in Open WebUI, but a search runs only when a user explicitly enables it for a chat.
+SearXNG runs continuously as a systemd service in Apptainer and listens only on `127.0.0.1`. It is not exposed through Cloudflare Tunnel. Web search starts enabled for new Open WebUI databases and new model settings, and users can disable it per chat.
 
 Before the first deployment, generate a random secret:
 
