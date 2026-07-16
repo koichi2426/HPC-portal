@@ -145,6 +145,7 @@ sequenceDiagram
 | コマンド | 内容 |
 |----------|------|
 | `make ping` | 接続確認 |
+| `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
 | `make check` | ドライラン（`--check --diff`） |
 | `make deploy` | ジョブを維持し、変更されたコンポーネントだけを安全に反映 |
 | `make deploy-restart` | 全ジョブ停止・関連サービス再起動を伴う全体反映（`restart`確認あり） |
@@ -169,7 +170,10 @@ sequenceDiagram
 
 ```bash
 make deploy
+make smoke
 ```
+
+`make smoke` はユーザー、ジョブ、モデル、パスワードなどを変更しません。必須サービス、Slurm、PostgreSQL、GPU、Pydantic、Apptainerイメージ、JupyterHub、ポータルのCSS・JavaScript、LiteLLMを確認します。共有Ollamaは、停止中なら正常なスキップ、起動中ならAPI応答まで確認します。
 
 通常のデプロイはSlurmジョブを`scancel`しません。CSS・JavaScriptなどは配置だけで反映し、JupyterHub・LiteLLM・cloudflaredは設定変更時だけ対象サービスを再起動します。JupyterHubは再起動しても実行中アプリを維持します。アプリ起動時に渡す環境変数やリソース設定は、すでに起動中のアプリへは注入せず、次回起動から適用します。
 

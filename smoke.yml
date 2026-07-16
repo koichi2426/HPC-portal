@@ -1,0 +1,182 @@
+---
+- name: HPCポータルの読み取り専用スモークテスト
+  hosts: gx10
+  become: true
+  gather_facts: false
+  vars:
+    smoke_required_services:
+      - jupyterhub
+      - slurmctld
+      - slurmd
+      - cloudflared
+      - litellm
+      - postgresql
+    smoke_required_images:
+      - /opt/images/jupyter-cpu.sif
+      - /opt/images/openwebui.sif
+      - /opt/images/ollama.sif
+    smoke_portal_assets:
+      - hpc-portal.css
+      - hpc-js/core.js
+      - hpc-js/resource-meter.js
+      - hpc-js/app-status.js
+      - hpc-js/app-detail.js
+      - hpc-js/admin-apps.js
+      - hpc-js/admin-users.js
+      - hpc-js/ollama-admin.js
+      - hpc-js/llm-api.js
+      - hpc-js/password.js
+      - hpc-js/spawn-form.js
+
+  tasks:
+    - name: 必須サービスが起動していることを確認
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - "{{ item }}"
+      loop: "{{ smoke_required_services }}"
+      register: smoke_service_status
+      changed_when: false
+      failed_when:
+        - smoke_service_status.rc != 0 or smoke_service_status.stdout | trim != 'active'
+
+    - name: Slurmコントローラの応答を確認
+      ansible.builtin.command:
+        argv:
+          - scontrol
+          - ping
+      register: smoke_slurm_ping
+      changed_when: false
+      failed_when:
+        - smoke_slurm_ping.rc != 0 or 'is UP' not in smoke_slurm_ping.stdout
+
+    - name: Slurmノード情報を取得できることを確認
+      ansible.builtin.command:
+        argv:
+          - scontrol
+          - show
+          - nodes
+          - -o
+      register: smoke_slurm_node
+      changed_when: false
+      failed_when:
+        - smoke_slurm_node.rc != 0 or 'NodeName=' not in smoke_slurm_node.stdout
+
+    - name: Slurmキューを取得できることを確認
+      ansible.builtin.command:
+        argv:
+          - squeue
+          - --noheader
+      changed_when: false
+
+    - name: PostgreSQLが接続を受け付けていることを確認
+      ansible.builtin.command:
+        argv:
+          - pg_isready
+          - --host
+          - "{{ litellm_database_host }}"
+          - --port
+          - "{{ litellm_database_port | string }}"
+          - --dbname
+          - "{{ litellm_database_name }}"
+      changed_when: false
+
+    - name: NVIDIA GPUを認識できることを確認
+      ansible.builtin.command:
+        argv:
+          - nvidia-smi
+          - -L
+      register: smoke_gpu
+      changed_when: false
+      failed_when:
+        - smoke_gpu.rc != 0 or 'GPU ' not in smoke_gpu.stdout
+
+    - name: JupyterHub環境でPydantic v2を読み込めることを確認
+      ansible.builtin.command:
+        argv:
+          - /opt/jupyterhub/venv/bin/python
+          - -c
+          - >-
+            import pydantic;
+            assert int(pydantic.__version__.split('.', 1)[0]) == 2;
+            print(pydantic.__version__)
+      changed_when: false
+
+    - name: 必須Apptainerイメージを確認
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ smoke_required_images }}"
+      register: smoke_image_stats
+
+    - name: 必須Apptainerイメージが空でないことを確認
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg | default(false)
+          - item.stat.size | default(0) | int > 0
+        fail_msg: "{{ item.item }} が存在しないか空です"
+        quiet: true
+      loop: "{{ smoke_image_stats.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: JupyterHubのヘルスエンドポイントを確認
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ jupyterhub_port }}/hub/health"
+        method: GET
+        status_code: 200
+        return_content: false
+        timeout: 5
+
+    - name: HPCポータルのCSSとJavaScript配信を確認
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ jupyterhub_port }}/hub/{{ item }}"
+        method: GET
+        status_code: 200
+        return_content: false
+        timeout: 5
+      loop: "{{ smoke_portal_assets }}"
+
+    - name: LiteLLMの認証付きモデルAPIを確認
+      ansible.builtin.uri:
+        url: "{{ litellm_internal_base_url }}/v1/models"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ litellm_master_key }}"
+        status_code: 200
+        return_content: false
+        timeout: 10
+      no_log: true
+
+    - name: 共有Ollamaの状態を取得
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/hpc-ollama
+          - status
+      register: smoke_ollama_status_command
+      changed_when: false
+
+    - name: 共有Ollamaの状態JSONを解析
+      ansible.builtin.set_fact:
+        smoke_ollama_status: "{{ smoke_ollama_status_command.stdout | from_json }}"
+
+    - name: 起動中の共有Ollama APIを確認
+      ansible.builtin.assert:
+        that:
+          - smoke_ollama_status.api | default(false) | bool
+        fail_msg: 共有OllamaのSlurmジョブは起動中ですが、APIが応答していません
+        success_msg: 共有Ollamaは起動中で、APIも応答しています
+        quiet: true
+      when: smoke_ollama_status.running | default(false) | bool
+
+    - name: 停止中の共有OllamaをSKIPとして表示
+      ansible.builtin.debug:
+        msg: "[SKIP] 共有Ollamaは停止中です"
+      when: not (smoke_ollama_status.running | default(false) | bool)
+
+    - name: スモークテスト成功を表示
+      ansible.builtin.debug:
+        msg: >-
+          [OK] 必須サービス、Slurm、PostgreSQL、GPU、Pydantic、Apptainerイメージ、
+          JupyterHub、HPCポータル静的ファイル、LiteLLMを確認しました。

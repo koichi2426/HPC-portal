@@ -10,7 +10,7 @@ ANSIBLE      ?= ansible
 PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup check ping deploy deploy-restart cleanup cleanup-purge-data \
+.PHONY: help setup check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
 	common slurm postgres litellm ollama jupyterhub apptainer cloudflared \
 	status gpu cuda services processes
 
@@ -33,6 +33,9 @@ check: check-inv ## 変更内容のドライラン（--check --diff）
 
 ping: check-inv ## 接続確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m ping
+
+smoke: check-inv ## 実機の主要機能を読み取り専用で確認
+	$(PB) smoke.yml
 
 deploy: check-inv ## ジョブを維持して差分デプロイ
 	$(PB) site.yml
