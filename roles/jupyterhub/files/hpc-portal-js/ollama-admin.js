@@ -181,6 +181,31 @@ function hpcOllamaRegisterRetry(btn) {
     btn.textContent = "LiteLLM登録を再試行";
   });
 }
+function hpcOllamaSync(btn) {
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "同期中…";
+  hpcOllamaPost({action: "ollama_sync_models"}).then(function (body) {
+    var data = body.data || {};
+    var failed = Number(data.failed || 0);
+    var message = Number(data.total || 0) + "件を確認し、" + Number(data.changed || 0) + "件を同期しました";
+    if (failed > 0) {
+      var failures = (data.results || []).filter(function (item) {
+        return item.state === "failed";
+      }).map(function (item) {
+        return item.model + ": " + (item.message || "同期失敗");
+      });
+      hpcOllamaMsg(message + "。失敗 " + failed + "件: " + failures.join(" / "), false);
+      return;
+    }
+    hpcOllamaMsg(message, true);
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+  }).finally(function () {
+    btn.disabled = false;
+    btn.textContent = "LiteLLMと同期";
+  });
+}
 function hpcOllamaPollPull(model, btn, attempts, failures) {
   attempts = attempts || 0;
   failures = failures || 0;

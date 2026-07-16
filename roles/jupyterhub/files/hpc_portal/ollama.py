@@ -69,7 +69,7 @@ def _hpc_ollama_cmd(action: str, model: str | None = None, cpus: str | None = No
             return json.loads(body), None
         except json.JSONDecodeError:
             return {"raw": body}, None
-    if action in {"tags", "ps", "pull-status", "pull-cancel"} and body:
+    if action in {"tags", "show", "ps", "pull-status", "pull-cancel"} and body:
         try:
             return json.loads(body), None
         except json.JSONDecodeError:
@@ -163,6 +163,41 @@ def _hpc_ollama_has_model(model: str) -> tuple[bool, str | None]:
     return False, f"Ollamaにモデル {model} がありません"
 
 
+def _hpc_ollama_model_names() -> tuple[list[str], str | None]:
+    """Ollamaへインストール済みのモデル名を取得する。
+
+    Returns:
+        ``(重複を除いて並べ替えたモデル名, エラー)``。
+    """
+    tags, err = _hpc_ollama_cmd("tags")
+    if err:
+        return [], err
+    names = {
+        str(item.get("name") or "").strip()
+        for item in (tags or {}).get("models", []) or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
+    return sorted(names), None
+
+
+def _hpc_ollama_model_supports_tools(model: str) -> tuple[bool | None, str | None]:
+    """Ollamaモデルがツール呼び出しに対応するか確認する。
+
+    Args:
+        model: 確認するOllamaモデル名。
+
+    Returns:
+        ``(tools capabilityの有無, エラー)``。取得失敗時の値はNone。
+    """
+    data, err = _hpc_ollama_cmd("show", model)
+    if err:
+        return None, err
+    capabilities = (data or {}).get("capabilities", [])
+    if not isinstance(capabilities, list):
+        capabilities = []
+    return "tools" in {str(item).strip().lower() for item in capabilities}, None
+
+
 def _hpc_shared_ollama_detail_context(user=None) -> dict:
     """Ollama 詳細表示用コンテキストを作成する。
 
@@ -177,8 +212,12 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
         app_detail.htmlとhome.htmlで使うOllamaの表示情報。
     """
     status, status_err = _hpc_ollama_cmd("status")
-    tags, tags_err = _hpc_ollama_cmd("tags")
     status = status or {}
+    running = bool(status.get("running"))
+    api = bool(status.get("api"))
+    # Slurmジョブの起動直後はAPIがまだ待受を開始していないため、
+    # 接続失敗をモデル取得エラーとして画面へ出さない。
+    tags, tags_err = _hpc_ollama_cmd("tags") if api else (None, None)
     models = []
     if tags and isinstance(tags, dict):
         for item in tags.get("models", []) or []:
@@ -188,8 +227,6 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
                     "size": item.get("size", ""),
                     "modified_at": item.get("modified_at", ""),
                 })
-    running = bool(status.get("running"))
-    api = bool(status.get("api"))
     running_version = str(status.get("version") or "").removeprefix("v")
     target_version = HPC_OLLAMA_VERSION.removeprefix("v")
     return {

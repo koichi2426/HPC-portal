@@ -197,6 +197,21 @@ async def test_ollama_delete_restores_litellm_registration_when_backend_delete_f
 
 
 @pytest.mark.asyncio
+async def test_ollama_sync_models_returns_sync_summary(monkeypatch):
+    handler = _FakeHandler(b'{"action":"ollama_sync_models"}')
+    summary = {"total": 3, "changed": 2, "failed": 0, "results": []}
+    monkeypatch.setattr(
+        admin_users,
+        "_hpc_litellm_sync_ollama_models",
+        lambda: (summary, None),
+    )
+
+    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
+
+    assert handler.response == {"ok": True, "data": summary}
+
+
+@pytest.mark.asyncio
 async def test_password_change_updates_only_logged_in_user_after_verification(monkeypatch):
     handler = _FakeHandler(
         b'{"current_password":"OldPass12","new_password":"NewPass34","confirm_password":"NewPass34"}',
@@ -282,4 +297,3 @@ async def test_llm_api_rejects_unknown_action_without_key_operation(monkeypatch)
 
     assert handler.status == 400
     assert handler.response == {"error": "不明な action です"}
-

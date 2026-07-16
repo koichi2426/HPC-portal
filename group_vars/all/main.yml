@@ -67,7 +67,7 @@ litellm_public_base_url: "{{ hpc_llm_public_base_url }}"
 litellm_proxy_base_url: "{{ hpc_llm_admin_base_url }}"
 litellm_admin_url: "{{ hpc_llm_admin_url }}"
 litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
-# 宣言的に同梱するモデルはなし。利用モデルは LiteLLM 管理画面で登録する。
+# 宣言的に同梱するモデルはなし。OllamaモデルはHPCポータルからDBへ同期する。
 litellm_initial_models: []
 
 # shared Ollama
@@ -86,6 +86,10 @@ ollama_slurm_allowed_cpus: [4, 8, 12, 16, 20]
 ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
 ollama_slurm_gpus: 1
 ollama_slurm_time: "INFINITE"
+# Web検索やツール利用に必要な長さを確保しつつ、KVキャッシュを抑える。
+ollama_context_length: 65536
+# 長いコンテキストでもAttention計算時のGPUメモリ使用量を抑える。
+ollama_flash_attention: true
 
 
 # Ubuntu/JupyterLab
@@ -105,7 +109,7 @@ searxng_apptainer_image: /opt/images/searxng.sif
 searxng_instance_name: "HPC Search"
 searxng_safe_search: 1
 searxng_query_url: "http://{{ searxng_host }}:{{ searxng_port }}/search?q=<query>"
-openwebui_web_search_result_count: 3
+openwebui_web_search_result_count: 6
 openwebui_web_search_concurrent_requests: 1
 openwebui_web_loader_concurrent_requests: 2
 openwebui_web_fetch_max_content_length: 12000

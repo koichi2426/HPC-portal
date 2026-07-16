@@ -139,10 +139,15 @@
         {% if hpc_litellm_admin_url %}
         <a class="gx10-primary-btn hpc-external-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" aria-label="LiteLLM 管理画面を新しいタブで開く"><span>LiteLLM 管理画面</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>
         {% endif %}
+        {% if d.api %}
+        <button id="ollama-sync-button" type="button" class="gx10-primary-btn" onclick="hpcOllamaSync(this)">LiteLLMと同期</button>
+        {% endif %}
         <button type="button" class="gx10-primary-btn" onclick="window.location.reload()">更新</button>
       </div>
     </div>
-    {% if d.models %}
+    {% if not d.api %}
+      <div class="hpc-empty">Ollama APIの起動を待っています。起動後に自動更新します。</div>
+    {% elif d.models %}
       <table class="gx10-detail-table">
         {% for model in d.models %}
         <tr>
@@ -157,6 +162,7 @@
     {% else %}
       <div class="hpc-empty">モデルはまだありません。</div>
     {% endif %}
+    {% if d.api %}
     <div class="hpc-help" style="margin-top:14px;">
       モデル名は <a class="hpc-external-link" href="https://ollama.com/library" target="_blank" rel="noopener noreferrer" aria-label="Ollama libraryを新しいタブで開く"><span>Ollama library</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a> で確認できます。
     </div>
@@ -170,6 +176,7 @@
       <div class="hpc-progress"><div id="ollama-pull-progress-fill" class="hpc-progress-fill"></div></div>
     </div>
     <button id="ollama-register-retry" type="button" class="gx10-primary-btn gx10-model-register-retry" hidden onclick="hpcOllamaRegisterRetry(this)">LiteLLM登録を再試行</button>
+    {% endif %}
   </div>
   {% endif %}
 

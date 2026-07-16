@@ -13,6 +13,8 @@ from .client import (
 
 _HPC_LITELLM_MODEL_LOCKS: dict[str, threading.Lock] = {}
 _HPC_LITELLM_MODEL_LOCKS_GUARD = threading.Lock()
+_HPC_LITELLM_OLLAMA_SOURCE = "hpc-portal-ollama"
+_HPC_LITELLM_OLLAMA_BACKENDS = ("ollama_chat/", "ollama/")
 
 def _hpc_litellm_model_records(value):
     """LiteLLM の model 一覧レスポンスから model record を取り出す。
@@ -91,17 +93,86 @@ def _hpc_litellm_model_lock(model: str) -> threading.Lock:
     with _HPC_LITELLM_MODEL_LOCKS_GUARD:
         return _HPC_LITELLM_MODEL_LOCKS.setdefault(model, threading.Lock())
 
-def _hpc_litellm_register_ollama_model(model: str) -> tuple[dict | None, str | None]:
-    """OllamaモデルをLiteLLMへ重複なく登録する。
 
-    LiteLLMのモデル一覧に同名モデルがあれば登録済みとして扱う。未登録の場合は
-    Ollamaのモデル名を公開名にし、DB保存される ``/model/new`` へ追加する。
+def _hpc_litellm_model_info() -> tuple[dict | list | None, str | None]:
+    """LiteLLMのdeployment情報を取得する。
+
+    Returns:
+        ``(APIレスポンス, エラー)``。取得成功時のエラーはNone。
+    """
+    try:
+        return _hpc_litellm_request("/v1/model/info", method="GET"), None
+    except RuntimeError as exc:
+        return None, _hpc_safe_litellm_error(exc)
+
+
+def _hpc_litellm_ollama_deployments(value, model: str) -> list[dict]:
+    """指定Ollamaモデルに対応するLiteLLM deploymentを抽出する。
+
+    Args:
+        value: ``/v1/model/info`` のJSON互換レスポンス。
+        model: 公開モデル名およびOllamaモデル名。
+
+    Returns:
+        backend、ID、DB由来か、ポータル管理かを持つdeployment一覧。
+    """
+    deployments = []
+    expected_backends = {prefix + model for prefix in _HPC_LITELLM_OLLAMA_BACKENDS}
+    for record in _hpc_litellm_model_records(value):
+        litellm_params = record.get("litellm_params") or {}
+        model_info = record.get("model_info") or {}
+        if not isinstance(litellm_params, dict) or not isinstance(model_info, dict):
+            continue
+        if str(record.get("model_name") or "") != model:
+            continue
+        backend = str(litellm_params.get("model") or "")
+        if backend not in expected_backends:
+            continue
+        is_db_model = bool(model_info.get("db_model"))
+        source = str(model_info.get("source") or "")
+        deployments.append(
+            {
+                "id": str(model_info.get("id") or "").strip(),
+                "backend": backend,
+                "db_model": is_db_model,
+                "portal_managed": is_db_model
+                and source == _HPC_LITELLM_OLLAMA_SOURCE,
+                "supports_function_calling": bool(
+                    model_info.get("supports_function_calling")
+                ),
+            }
+        )
+    return deployments
+
+
+def _hpc_litellm_delete_deployments(deployment_ids: list[str]) -> str | None:
+    """LiteLLMのDB deploymentをID指定で削除する。
+
+    Args:
+        deployment_ids: 削除するLiteLLM model ID。
+
+    Returns:
+        正常時はNone、失敗時は安全化したエラーメッセージ。
+    """
+    for model_id in dict.fromkeys(item for item in deployment_ids if item):
+        try:
+            _hpc_litellm_request("/model/delete", {"id": model_id})
+        except RuntimeError as exc:
+            return _hpc_safe_litellm_error(exc)
+    return None
+
+def _hpc_litellm_register_ollama_model(model: str) -> tuple[dict | None, str | None]:
+    """OllamaモデルをLiteLLMのchat backendへ安全に同期する。
+
+    正しい ``ollama_chat/`` deploymentを作成・確認してから、旧
+    ``ollama/`` deploymentを削除する。ポータル管理外の設定モデルや手動登録
+    モデルは変更しない。
 
     Args:
         model: Ollamaに登録済みのモデル名。
 
     Returns:
-        ``(登録状態, エラー)``。登録状態の ``state`` は ``registered`` または
+        ``(同期状態, エラー)``。状態は ``registered`` または
         ``already_registered``。
     """
     model = str(model or "").strip()
@@ -114,51 +185,140 @@ def _hpc_litellm_register_ollama_model(model: str) -> tuple[dict | None, str | N
 
     with _hpc_litellm_model_lock(model):
         # 削除とpull完了が競合した場合に、Ollamaにないモデルを再登録しない。
-        from ..ollama import _hpc_ollama_has_model
+        from ..ollama import (
+            _hpc_ollama_has_model,
+            _hpc_ollama_model_supports_tools,
+        )
 
         exists, ollama_err = _hpc_ollama_has_model(model)
         if ollama_err or not exists:
             return None, ollama_err or f"Ollamaにモデル {model} がありません"
-        models, err = _hpc_litellm_list_models()
+        supports_tools, capability_err = _hpc_ollama_model_supports_tools(model)
+        if capability_err or supports_tools is None:
+            return None, capability_err or "Ollamaモデルの機能を確認できません"
+
+        response, err = _hpc_litellm_model_info()
         if err:
             return None, err
-        if any(item.get("id") == model for item in models):
-            return {
-                "state": "already_registered",
-                "model": model,
-                "message": "LiteLLM登録済み",
-            }, None
+        deployments = _hpc_litellm_ollama_deployments(response, model)
+        target_backend = f"ollama_chat/{model}"
+        correct = [
+            item
+            for item in deployments
+            if item["backend"] == target_backend
+        ]
+        legacy = [
+            item
+            for item in deployments
+            if item["portal_managed"] and item["backend"] == f"ollama/{model}"
+        ]
+        unmanaged_legacy = [
+            item
+            for item in deployments
+            if not item["portal_managed"] and item["backend"] == f"ollama/{model}"
+        ]
+        if unmanaged_legacy:
+            return None, (
+                "同名の設定ファイル由来または手動登録されたollama/モデルがあるため、"
+                "LiteLLM管理画面で確認してください"
+            )
 
-        payload = {
-            "model_name": model,
-            "litellm_params": {
-                "model": f"ollama/{model}",
-                "api_base": HPC_OLLAMA_API_BASE,
-            },
-            "model_info": {
-                "source": "hpc-portal-ollama",
-            },
-        }
-        try:
-            _hpc_litellm_request("/model/new", payload)
-        except RuntimeError as exc:
-            return None, _hpc_safe_litellm_error(exc)
+        created = False
+        if not correct:
+            payload = {
+                "model_name": model,
+                "litellm_params": {
+                    "model": target_backend,
+                    "api_base": HPC_OLLAMA_API_BASE,
+                },
+                "model_info": {
+                    "source": _HPC_LITELLM_OLLAMA_SOURCE,
+                    "supports_function_calling": supports_tools,
+                },
+            }
+            try:
+                _hpc_litellm_request("/model/new", payload)
+            except RuntimeError as exc:
+                return None, _hpc_safe_litellm_error(exc)
+            created = True
 
-        models, err = _hpc_litellm_list_models()
+        # 作成後の再取得で正しいDB deploymentを確認するまで旧設定は残す。
+        verified_response, err = _hpc_litellm_model_info()
         if err:
             return None, f"登録後の確認に失敗しました: {err}"
-        if not any(item.get("id") == model for item in models):
-            return None, "LiteLLMへ追加しましたが、モデル一覧で確認できませんでした"
+        verified = _hpc_litellm_ollama_deployments(verified_response, model)
+        verified_correct = [
+            item
+            for item in verified
+            if item["backend"] == target_backend
+        ]
+        if not verified_correct:
+            return None, "LiteLLMへ追加しましたが、正しい接続方式を確認できませんでした"
+
+        verified_legacy = [
+            item
+            for item in verified
+            if item["portal_managed"] and item["backend"] == f"ollama/{model}"
+        ]
+        delete_err = _hpc_litellm_delete_deployments(
+            [item["id"] for item in verified_legacy]
+        )
+        if delete_err:
+            return None, "旧LiteLLMモデルの削除に失敗しました: " + delete_err
+
+        migrated = len({item["id"] for item in legacy if item["id"]})
         HPC_LITELLM_LOG.info(
-            "action=model_register model=%s backend=%s result=ok",
+            "action=model_sync model=%s backend=%s supports_tools=%s migrated=%d result=ok",
             model,
-            f"ollama/{model}",
+            target_backend,
+            supports_tools,
+            migrated,
         )
         return {
-            "state": "registered",
+            "state": "registered" if created or migrated else "already_registered",
             "model": model,
-            "message": "LiteLLMへ自動登録しました",
+            "backend": target_backend,
+            "supports_tools": supports_tools,
+            "migrated": migrated,
+            "message": "LiteLLMへ同期しました"
+            if created or migrated
+            else "LiteLLM同期済み",
         }, None
+
+
+def _hpc_litellm_sync_ollama_models() -> tuple[dict | None, str | None]:
+    """Ollamaに存在する全モデルをLiteLLMへ同期する。
+
+    Returns:
+        ``(モデル別結果と件数, エラー)``。一覧取得失敗時のみ全体エラーを返す。
+    """
+    from ..ollama import _hpc_ollama_model_names
+
+    model_names, err = _hpc_ollama_model_names()
+    if err:
+        return None, err
+    results = []
+    for model in model_names:
+        state, model_err = _hpc_litellm_register_ollama_model(model)
+        if model_err:
+            results.append({"model": model, "state": "failed", "message": model_err})
+        else:
+            results.append(state or {"model": model, "state": "failed"})
+    failed = sum(item.get("state") == "failed" for item in results)
+    changed = sum(item.get("state") == "registered" for item in results)
+    HPC_LITELLM_LOG.info(
+        "action=models_sync total=%d changed=%d failed=%d result=%s",
+        len(results),
+        changed,
+        failed,
+        "partial" if failed else "ok",
+    )
+    return {
+        "total": len(results),
+        "changed": changed,
+        "failed": failed,
+        "results": results,
+    }, None
 
 def _hpc_litellm_delete_ollama_model(model: str) -> str | None:
     """Ollamaモデルに対応するLiteLLMのDBモデルを削除する。
@@ -182,31 +342,13 @@ def _hpc_litellm_delete_ollama_model(model: str) -> str | None:
             response = _hpc_litellm_request("/v1/model/info", method="GET")
         except RuntimeError as exc:
             return _hpc_safe_litellm_error(exc)
-        deployment_ids = []
-        config_model_found = False
-        for record in _hpc_litellm_model_records(response):
-            litellm_params = record.get("litellm_params") or {}
-            model_info = record.get("model_info") or {}
-            if not isinstance(litellm_params, dict) or not isinstance(model_info, dict):
-                continue
-            if str(record.get("model_name") or "") != model:
-                continue
-            if str(litellm_params.get("model") or "") != f"ollama/{model}":
-                continue
-            model_id = str(model_info.get("id") or "").strip()
-            if model_id and bool(model_info.get("db_model")):
-                deployment_ids.append(model_id)
-            else:
-                config_model_found = True
-
-        if config_model_found:
-            return "Ansible設定由来のLiteLLMモデルはポータルから削除できません"
-
-        for model_id in dict.fromkeys(deployment_ids):
-            try:
-                _hpc_litellm_request("/model/delete", {"id": model_id})
-            except RuntimeError as exc:
-                return _hpc_safe_litellm_error(exc)
+        deployments = _hpc_litellm_ollama_deployments(response, model)
+        deployment_ids = [
+            item["id"] for item in deployments if item["portal_managed"] and item["id"]
+        ]
+        delete_err = _hpc_litellm_delete_deployments(deployment_ids)
+        if delete_err:
+            return delete_err
         if deployment_ids:
             HPC_LITELLM_LOG.info(
                 "action=model_delete model=%s deployments=%d result=ok",

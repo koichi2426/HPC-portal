@@ -157,6 +157,15 @@ case "$cmd" in
   tags)
     exec curl -fsS "$OLLAMA_URL/api/tags"
     ;;
+  show)
+    if [ -z "$model" ]; then
+      echo "model required" >&2
+      exit 2
+    fi
+    exec curl -fsS "$OLLAMA_URL/api/show" \
+      -H 'Content-Type: application/json' \
+      -d "{\"model\":\"$model\"}"
+    ;;
   ps)
     exec curl -fsS "$OLLAMA_URL/api/ps"
     ;;
@@ -318,7 +327,7 @@ case "$cmd" in
     fi
     ;;
   *)
-    echo "usage: hpc-ollama start|stop|status|tags|ps|pull <model>|pull-cancel <model>|pull-status [model]|delete <model>" >&2
+    echo "usage: hpc-ollama start|stop|status|tags|show <model>|ps|pull <model>|pull-cancel <model>|pull-status [model]|delete <model>" >&2
     exit 2
     ;;
 esac

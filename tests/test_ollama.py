@@ -23,6 +23,25 @@ def test_ollama_detail_script_uses_handler_context_across_jinja_blocks():
     assert "d.shared_ollama" not in script_block
 
 
+def test_ollama_detail_skips_model_api_while_api_is_starting(monkeypatch):
+    """API待機中はモデル一覧を取得せず、接続拒否を警告にしないことを確認する。"""
+    actions = []
+
+    def fake_command(action):
+        actions.append(action)
+        return ({"running": True, "api": False, "job_ids": "42"}, None)
+
+    monkeypatch.setattr(ollama, "_hpc_ollama_cmd", fake_command)
+
+    detail = ollama._hpc_shared_ollama_detail_context()
+
+    assert actions == ["status"]
+    assert detail["active"] is True
+    assert detail["api"] is False
+    assert detail["models"] == []
+    assert detail["status_error"] == ""
+
+
 @pytest.mark.parametrize(
     ("cpus", "memory", "expected"),
     [(None, None, ("8", "32G", None)), ("8", "32g", ("8", "32G", None))],
@@ -122,3 +141,39 @@ def test_has_model_matches_exact_name(monkeypatch):
     found, error = ollama._hpc_ollama_has_model("qwen:8b")
     assert found is False
     assert "ありません" in error
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "expected"),
+    [(["completion", "tools"], True), (["completion"], False)],
+)
+def test_model_supports_tools_uses_show_capabilities(
+    monkeypatch, capabilities, expected
+):
+    monkeypatch.setattr(
+        ollama,
+        "_hpc_ollama_cmd",
+        lambda action, model: ({"capabilities": capabilities}, None),
+    )
+
+    assert ollama._hpc_ollama_model_supports_tools("qwen:4b") == (expected, None)
+
+
+def test_ollama_show_builds_model_command_and_parses_json(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        ollama,
+        "_hpc_run_cmd",
+        lambda command: commands.append(command)
+        or SimpleNamespace(
+            returncode=0,
+            stdout='{"capabilities":["tools"]}',
+            stderr="",
+        ),
+    )
+
+    data, error = ollama._hpc_ollama_cmd("show", "qwen:4b")
+
+    assert error is None
+    assert data == {"capabilities": ["tools"]}
+    assert commands == [["/usr/local/sbin/hpc-ollama", "show", "qwen:4b"]]

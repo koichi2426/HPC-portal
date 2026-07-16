@@ -8,6 +8,8 @@ set -euo pipefail
 
 export OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }}
 export OLLAMA_MODELS={{ ollama_models_dir }}
+export OLLAMA_CONTEXT_LENGTH={{ ollama_context_length }}
+export OLLAMA_FLASH_ATTENTION={{ '1' if ollama_flash_attention | bool else '0' }}
 export HOME={{ ollama_service_home }}
 
 exec apptainer exec --nv \
@@ -15,6 +17,8 @@ exec apptainer exec --nv \
   --bind {{ ollama_service_home }}:{{ ollama_service_home }} \
   --env OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }} \
   --env OLLAMA_MODELS={{ ollama_models_dir }} \
+  --env OLLAMA_CONTEXT_LENGTH={{ ollama_context_length }} \
+  --env OLLAMA_FLASH_ATTENTION={{ '1' if ollama_flash_attention | bool else '0' }} \
   --env HOME={{ ollama_service_home }} \
   {{ ollama_apptainer_image }} \
   ollama serve

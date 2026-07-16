@@ -14,6 +14,7 @@ HpcAdminAction = Literal[
     "api_enable",
     "api_disable",
     "ollama_register_model",
+    "ollama_sync_models",
     "ollama_delete",
     "ollama_start",
     "ollama_stop",

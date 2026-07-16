@@ -17,9 +17,9 @@ from .models import (
     _hpc_litellm_delete_ollama_model,
     _hpc_litellm_list_models,
     _hpc_litellm_register_ollama_model,
+    _hpc_litellm_sync_ollama_models,
 )
 from .openwebui import _hpc_litellm_get_openwebui_key
 from .users import _hpc_litellm_user_admin_disabled
 
 __all__ = [name for name in globals() if name.startswith("_hpc_")]
-

@@ -21,6 +21,7 @@ from ..litellm import (
     _hpc_litellm_enabled,
     _hpc_litellm_generate_key,
     _hpc_litellm_register_ollama_model,
+    _hpc_litellm_sync_ollama_models,
     _hpc_litellm_user_external_api_state,
     _hpc_log_litellm_action,
     _hpc_safe_litellm_error,
@@ -446,6 +447,13 @@ class HpcAdminUsersApiHandler(BaseHandler):
             if err:
                 return self._api_error(400, err)
             self.write({"ok": True, "data": registration})
+            return
+
+        if action == "ollama_sync_models":
+            result, err = await asyncio.to_thread(_hpc_litellm_sync_ollama_models)
+            if err:
+                return self._api_error(400, err)
+            self.write({"ok": True, "data": result})
             return
 
         if action == "ollama_delete":

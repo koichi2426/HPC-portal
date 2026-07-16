@@ -13,18 +13,22 @@ def test_web_search_settings_use_local_searxng_with_bounded_workload():
     assert settings.HPC_SEARXNG_QUERY_URL == (
         "http://127.0.0.1:8888/search?q=<query>"
     )
-    assert settings.OPENWEBUI_WEB_SEARCH_RESULT_COUNT == 3
+    assert settings.OPENWEBUI_WEB_SEARCH_RESULT_COUNT == 6
     assert settings.OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS == 1
     assert settings.OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS == 2
     assert settings.OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH == 12000
 
 
-def test_openwebui_exposes_search_without_enabling_builtin_search_by_default():
+def test_openwebui_enables_selected_builtin_tools_by_default():
     metadata = json.loads(batch.OPENWEBUI_DEFAULT_MODEL_METADATA_JSON)
     script = batch.c.HPCSlurmSpawner.batch_script
 
     assert metadata["capabilities"]["web_search"] is True
-    assert metadata["builtinTools"]["web_search"] is False
+    assert metadata["capabilities"]["builtin_tools"] is True
+    assert metadata["builtinTools"]["time"] is True
+    assert metadata["builtinTools"]["memory"] is True
+    assert metadata["builtinTools"]["notes"] is True
+    assert metadata["builtinTools"]["web_search"] is True
     assert '"ENABLE_WEB_SEARCH=True"' in script
     assert '"WEB_SEARCH_ENGINE=searxng"' in script
     assert '"SEARXNG_QUERY_URL=http://127.0.0.1:8888/search?q=<query>"' in script
