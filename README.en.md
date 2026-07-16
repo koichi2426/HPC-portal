@@ -143,7 +143,9 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 
 | Command | Description |
 |---------|-------------|
+| `make test` | Run pytest locally without connecting to the target host |
 | `make ping` | Connectivity check |
+| `make smoke` | Run read-only checks against services, APIs, and deployed assets |
 | `make check` | Dry run (`--check --diff`) |
 | `make deploy` | Safely apply changed components while preserving Slurm jobs |
 | `make deploy-restart` | Stop all jobs and restart related services, with `restart` confirmation |
@@ -161,23 +163,56 @@ Override inventory: `make deploy INV=inventory/staging.ini`
 
 #### 🚀 Deploy
 
+Normal update:
+
 ```bash
 make deploy
 ```
 
-The normal deploy never calls `scancel`. Static portal assets are copied without a service restart, while JupyterHub, LiteLLM, and cloudflared restart only when their runtime configuration changes. Running JupyterHub applications are preserved. App launch environment and resource changes take effect the next time an app starts.
+This applies changed components while preserving running Slurm jobs.
 
-When Slurm configuration differs and running or queued jobs exist, a normal deploy leaves the Slurm configuration files untouched, skips only that update, and completes the remaining roles. A final message tells you that `make deploy-restart` is required.
-
-To stop all jobs, apply every change including Slurm configuration, and restart related services, run the following command and enter `restart` at the prompt. Use this command for the initial migration to job-preserving Hub restarts as well. Package downloads, SIF builds, and validation of staged Slurm configuration finish before any jobs are stopped.
+Full update including Slurm configuration:
 
 ```bash
 make deploy-restart
 ```
 
-Stopped Slurm applications are not started automatically. After completion, start Ollama and any other required applications from the portal.
+Enter `restart` at the prompt to stop all jobs and apply the update. Stopped applications are not restarted automatically; start the required applications from the portal afterward.
 
-Slurm configuration is applied as a pair using fixed-name temporary backups. Backups are removed after success or successful rollback, so timestamped files do not accumulate. If an interrupted deploy leaves a backup behind, the next deploy stops instead of overwriting it.
+<details>
+<summary>Deployment behavior details</summary>
+
+If `make deploy` detects pending Slurm configuration changes while jobs are active, it defers only that configuration, applies the remaining changes, and reports that `make deploy-restart` is required. App launch configuration changes take effect on the next start. Slurm configuration uses fixed-name temporary backups that are removed after success or successful rollback.
+
+</details>
+
+#### 🧪 Development environment and tests
+
+After installing [uv](https://docs.astral.sh/uv/), run these commands in the repository root.
+
+##### Initial setup and dependency updates
+
+```bash
+uv sync --dev
+```
+
+This creates a Python 3.12 `.venv` and synchronizes development dependencies.
+
+##### pytest (before deployment)
+
+```bash
+make test
+```
+
+This runs locally without connecting to the target host and checks Python input validation, authorization, and control flow.
+
+##### Smoke test (after deployment)
+
+```bash
+make smoke
+```
+
+This connects to the target host in read-only mode and checks major functionality. It does not change users, jobs, models, or passwords. A stopped shared Ollama instance is skipped.
 
 #### 🧹 Cleanup
 

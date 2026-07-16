@@ -10,7 +10,7 @@ ANSIBLE      ?= ansible
 PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
+.PHONY: help setup test check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
 	common slurm postgres litellm ollama jupyterhub apptainer cloudflared \
 	status gpu cuda services processes
 
@@ -24,6 +24,9 @@ setup: ## インベントリ・secret の雛形をコピー（未作成時）
 	@test -f $(INV) || cp inventory/production.ini.example $(INV)
 	@test -f group_vars/all/secret.yml || cp group_vars/all/secret.yml.example group_vars/all/secret.yml
 	@echo "OK: $(INV) と group_vars/all/secret.yml を確認してください"
+
+test: ## ローカルでpytestを実行（実機接続なし）
+	uv run pytest
 
 check-inv:
 	@test -f $(INV) || { echo "エラー: $(INV) がありません。make setup を実行してください"; exit 1; }
