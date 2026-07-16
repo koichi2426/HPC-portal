@@ -159,6 +159,7 @@ sequenceDiagram
 | `make litellm` | PostgreSQL・LiteLLMだけを差分反映 |
 | `make ollama` | shared Ollamaの次回起動設定だけを差分反映 |
 | `make apptainer` | ApptainerとSIFを差分反映。実行中コンテナは維持 |
+| `make searxng` | SearXNGとOpen WebUIのWeb検索設定を差分反映 |
 | `make cloudflared` | cloudflaredだけを差分反映 |
 | `make status` | Slurm ジョブ・ディスク空き |
 | `make gpu` | GPU / VRAM |
@@ -192,6 +193,31 @@ make deploy-restart
 
 </details>
 
+#### 🔎 Web検索（SearXNG）
+
+SearXNGはApptainer上のsystemdサービスとして常時起動し、`127.0.0.1`だけで待ち受けます。Cloudflare Tunnelには公開しません。Open WebUIではWeb検索機能を利用できますが、検索はチャットごとに利用者が明示的に有効化した場合だけ実行されます。
+
+初回デプロイ前に、ランダムな秘密値を生成します。
+
+```bash
+openssl rand -hex 32
+```
+
+出力をGit管理外の`group_vars/all/secret.yml`へ設定します。
+
+```yaml
+searxng_secret_key: "生成した値"
+```
+
+SearXNG関連だけを反映する場合:
+
+```bash
+make searxng
+make smoke
+```
+
+実行中のOpen WebUIには起動時の環境変数が残るため、検索設定はOpen WebUIを停止して再起動した後に反映されます。また、Open WebUIの設定はDBへ保存されるため、既存DBで管理画面から変更済みの値は環境変数より優先される場合があります。既存DBは自動変更しません。
+
 #### 🧪 開発環境・テスト
 
 [uv](https://docs.astral.sh/uv/) をインストール後、リポジトリ直下で実行します。
@@ -218,7 +244,7 @@ make test
 make smoke
 ```
 
-実機へ読み取り専用で接続して主要機能を確認します。ユーザー、ジョブ、モデル、パスワードは変更しません。共有Ollamaは停止中ならスキップします。
+実機へ読み取り専用で接続して主要機能を確認します。ユーザー、ジョブ、モデル、パスワードは変更しません。SearXNGのJSON検索APIも確認し、共有Ollamaは停止中ならスキップします。
 
 #### 🧹 クリーンアップ
 

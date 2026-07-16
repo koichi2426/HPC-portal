@@ -144,6 +144,18 @@ def _validate_settings():
             raise ValueError
     except ValueError:
         errors.append("HPC_OLLAMA_PORT must be between 1 and 65535")
+    if not HPC_SEARXNG_QUERY_URL.startswith("http://127.0.0.1:"):
+        errors.append("HPC_SEARXNG_QUERY_URL must use the local 127.0.0.1 service")
+    if "<query>" not in HPC_SEARXNG_QUERY_URL:
+        errors.append("HPC_SEARXNG_QUERY_URL must contain <query>")
+    if not 1 <= OPENWEBUI_WEB_SEARCH_RESULT_COUNT <= 10:
+        errors.append("OPENWEBUI_WEB_SEARCH_RESULT_COUNT must be between 1 and 10")
+    if OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS < 1:
+        errors.append("OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS must be positive")
+    if OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS < 1:
+        errors.append("OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS must be positive")
+    if OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH < 1:
+        errors.append("OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH must be positive")
     if errors:
         raise ValueError("Invalid HPC portal configuration: " + "; ".join(errors))
 
@@ -171,5 +183,18 @@ HPC_BATCH_EXECHOST_EXP = _value("HPC_BATCH_EXECHOST_EXP", "127.0.0.1")
 HPC_OPENWEBUI_VERSION = _value("HPC_OPENWEBUI_VERSION", "unknown")
 HPC_OLLAMA_VERSION = _value("HPC_OLLAMA_VERSION", "unknown")
 HPC_JUPYTER_UBUNTU_VERSION = _value("HPC_JUPYTER_UBUNTU_VERSION", "unknown")
+HPC_SEARXNG_QUERY_URL = _value(
+    "HPC_SEARXNG_QUERY_URL", "http://127.0.0.1:8888/search?q=<query>"
+)
+OPENWEBUI_WEB_SEARCH_RESULT_COUNT = _int("OPENWEBUI_WEB_SEARCH_RESULT_COUNT", 3)
+OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS = _int(
+    "OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS", 1
+)
+OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS = _int(
+    "OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS", 2
+)
+OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH = _int(
+    "OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH", 12000
+)
 
 _validate_settings()

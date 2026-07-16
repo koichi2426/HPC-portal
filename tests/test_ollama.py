@@ -1,11 +1,26 @@
 """共有Ollama管理の検証、コマンド構築、進捗変換を検証する。"""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from hpc_portal import ollama
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_ollama_detail_script_uses_handler_context_across_jinja_blocks():
+    """scriptブロックがmainブロック内のローカル変数へ依存しないことを確認する。"""
+    template = (
+        REPOSITORY_ROOT / "roles/jupyterhub/templates/app_detail.html.j2"
+    ).read_text()
+    script_block = template.split("{% block script %}", 1)[1]
+
+    assert "{% if detail.shared_ollama %}" in script_block
+    assert "d.shared_ollama" not in script_block
 
 
 @pytest.mark.parametrize(
@@ -107,4 +122,3 @@ def test_has_model_matches_exact_name(monkeypatch):
     found, error = ollama._hpc_ollama_has_model("qwen:8b")
     assert found is False
     assert "ありません" in error
-

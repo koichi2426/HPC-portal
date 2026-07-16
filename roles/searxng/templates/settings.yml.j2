@@ -1,0 +1,33 @@
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - brave
+      - wikipedia
+
+general:
+  debug: false
+  instance_name: {{ searxng_instance_name | to_json }}
+  enable_metrics: false
+
+search:
+  safe_search: {{ searxng_safe_search }}
+  autocomplete: ""
+  default_lang: "all"
+  formats:
+    - html
+    - json
+
+server:
+  port: {{ searxng_port }}
+  bind_address: {{ searxng_host | to_json }}
+  secret_key: {{ searxng_secret_key | to_json }}
+  limiter: false
+  image_proxy: false
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+  pool_connections: 20
+  pool_maxsize: 10
+  enable_http2: true

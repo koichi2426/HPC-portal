@@ -94,3 +94,18 @@ jupyter_image_ubuntu_version: "24.04"
 openwebui_version: "0.10.2"
 openwebui_litellm_base_url: "{{ litellm_internal_base_url }}/v1"
 openwebui_litellm_key_dir: /etc/litellm/openwebui-keys
+
+# SearXNG / Open WebUI Web検索
+searxng_version: "2026.7.16-f2432e33d"
+searxng_service_user: searxng
+searxng_service_home: /var/lib/searxng
+searxng_host: "127.0.0.1"
+searxng_port: 8888
+searxng_apptainer_image: /opt/images/searxng.sif
+searxng_instance_name: "HPC Search"
+searxng_safe_search: 1
+searxng_query_url: "http://{{ searxng_host }}:{{ searxng_port }}/search?q=<query>"
+openwebui_web_search_result_count: 3
+openwebui_web_search_concurrent_requests: 1
+openwebui_web_loader_concurrent_requests: 2
+openwebui_web_fetch_max_content_length: 12000

@@ -1,0 +1,79 @@
+---
+- name: SearXNG secret_keyを検証
+  ansible.builtin.assert:
+    that:
+      - (searxng_secret_key | default('') | string | length) >= 32
+      - >-
+        (searxng_secret_key | default('')) !=
+        'REPLACE_WITH_RANDOM_SEARXNG_SECRET_KEY'
+    fail_msg: >-
+      group_vars/all/secret.ymlへ32文字以上のランダムなsearxng_secret_keyを設定してください。
+    quiet: true
+
+- name: SearXNG専用ユーザーを作成
+  ansible.builtin.user:
+    name: "{{ searxng_service_user }}"
+    system: true
+    create_home: false
+    home: "{{ searxng_service_home }}"
+    shell: /usr/sbin/nologin
+    state: present
+
+- name: SearXNGディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /etc/searxng
+      owner: root
+      group: "{{ searxng_service_user }}"
+      mode: "0750"
+    - path: "{{ searxng_service_home }}"
+      owner: "{{ searxng_service_user }}"
+      group: "{{ searxng_service_user }}"
+      mode: "0750"
+
+- name: SearXNG設定を配置
+  ansible.builtin.template:
+    src: settings.yml.j2
+    dest: /etc/searxng/settings.yml
+    owner: root
+    group: "{{ searxng_service_user }}"
+    mode: "0640"
+  no_log: true
+  notify: searxngを再起動
+
+- name: SearXNG systemdユニットを配置
+  ansible.builtin.template:
+    src: searxng.service.j2
+    dest: /etc/systemd/system/searxng.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: searxngを再起動
+
+- name: SearXNGを起動
+  ansible.builtin.systemd:
+    name: searxng
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: SearXNG設定変更を反映
+  ansible.builtin.meta: flush_handlers
+
+- name: SearXNG内部APIの起動を待機
+  ansible.builtin.uri:
+    url: "http://{{ searxng_host }}:{{ searxng_port }}/config"
+    method: GET
+    status_code: 200
+    return_content: false
+    timeout: 5
+  register: searxng_health
+  changed_when: false
+  retries: 20
+  delay: 2
+  until: searxng_health.status | default(0) == 200

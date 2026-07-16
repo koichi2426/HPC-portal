@@ -200,7 +200,7 @@
 <script src="/hub/hpc-js/resource-meter.js?v={{ hpc_static_versions['js/resource-meter.js'] }}"></script>
 <script src="/hub/hpc-js/app-status.js?v={{ hpc_static_versions['js/app-status.js'] }}"></script>
 <script src="/hub/hpc-js/app-detail.js?v={{ hpc_static_versions['js/app-detail.js'] }}"></script>
-{% if d.shared_ollama %}
+{% if detail.shared_ollama %}
 <script src="/hub/hpc-js/ollama-admin.js?v={{ hpc_static_versions['js/ollama-admin.js'] }}"></script>
 {% endif %}
 {% endblock %}

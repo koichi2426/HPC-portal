@@ -4,7 +4,12 @@ from .common import (
     HPC_BATCH_EXECHOST_EXP,
     HPC_JOB_DNS_DOMAIN,
     HPC_PUBLIC_SCHEME,
+    HPC_SEARXNG_QUERY_URL,
+    OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH,
+    OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS,
     OPENWEBUI_LITELLM_BASE_URL,
+    OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS,
+    OPENWEBUI_WEB_SEARCH_RESULT_COUNT,
     Proxy,
     c,
     url_escape_path,
@@ -81,7 +86,7 @@ async def _hpc_proxy_delete_user(self, user, server_name="", client=None):
 Proxy.delete_user = _hpc_proxy_delete_user
 
 OPENWEBUI_DEFAULT_MODEL_METADATA_JSON = (
-    '{"capabilities":{"file_context":true,"web_search":false,'
+    '{"capabilities":{"file_context":true,"web_search":true,'
     '"image_generation":false,"code_interpreter":false,"terminal":false,'
     '"builtin_tools":false},"builtinTools":{"time":true,"memory":true,'
     '"notes":true,"chats":false,"knowledge":false,"channels":false,'
@@ -238,7 +243,17 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
       "ENABLE_MEMORIES=True" \
       "ENABLE_MEMORY_SYSTEM_CONTEXT=False" \
       "ENABLE_NOTES=True" \
-      "ENABLE_WEB_SEARCH=False" \
+      "ENABLE_WEB_SEARCH=True" \
+      "WEB_SEARCH_ENGINE=searxng" \
+      "SEARXNG_QUERY_URL={HPC_SEARXNG_QUERY_URL}" \
+      "SEARXNG_LANGUAGE=all" \
+      "WEB_SEARCH_RESULT_COUNT={OPENWEBUI_WEB_SEARCH_RESULT_COUNT}" \
+      "WEB_SEARCH_CONCURRENT_REQUESTS={OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS}" \
+      "WEB_LOADER_CONCURRENT_REQUESTS={OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS}" \
+      "WEB_FETCH_MAX_CONTENT_LENGTH={OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH}" \
+      "BYPASS_WEB_SEARCH_WEB_LOADER=False" \
+      "ENABLE_RAG_LOCAL_WEB_FETCH=False" \
+      "ENABLE_WEB_SEARCH_CONFIRMATION=False" \
       "ENABLE_IMAGE_GENERATION=False" \
       "ENABLE_CODE_INTERPRETER=False" \
       "ENABLE_CHANNELS=False" \

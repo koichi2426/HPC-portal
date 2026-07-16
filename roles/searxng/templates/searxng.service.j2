@@ -1,0 +1,20 @@
+[Unit]
+Description=SearXNG private metasearch service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ searxng_service_user }}
+Group={{ searxng_service_user }}
+WorkingDirectory={{ searxng_service_home }}
+Environment=HOME={{ searxng_service_home }}
+ExecStart=/usr/bin/apptainer run --cleanenv --pwd /usr/local/searxng --env GRANIAN_HOST={{ searxng_host }} --env GRANIAN_PORT={{ searxng_port }} --env SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml --bind /etc/searxng:/etc/searxng:ro --bind {{ searxng_service_home }}:/var/cache/searxng {{ searxng_apptainer_image }}
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=mixed
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,8 @@
       tags: [postgres, litellm]
     - role: apptainer
       tags: [apptainer]
+    - role: searxng
+      tags: [searxng]
     - role: ollama
       tags: [ollama]
     - role: litellm

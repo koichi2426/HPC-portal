@@ -10,11 +10,13 @@
       - slurmd
       - cloudflared
       - litellm
+      - searxng
       - postgresql
     smoke_required_images:
       - /opt/images/jupyter-cpu.sif
       - /opt/images/openwebui.sif
       - /opt/images/ollama.sif
+      - /opt/images/searxng.sif
     smoke_portal_assets:
       - hpc-portal.css
       - hpc-js/core.js
@@ -149,6 +151,32 @@
         timeout: 10
       no_log: true
 
+    - name: SearXNG設定APIを確認
+      ansible.builtin.uri:
+        url: "http://{{ searxng_host }}:{{ searxng_port }}/config"
+        method: GET
+        status_code: 200
+        return_content: true
+        timeout: 5
+      register: smoke_searxng_config
+
+    - name: SearXNG検索APIのJSON応答を確認
+      ansible.builtin.uri:
+        url: "http://{{ searxng_host }}:{{ searxng_port }}/search?q=SearXNG&format=json"
+        method: GET
+        status_code: 200
+        return_content: true
+        timeout: 15
+      register: smoke_searxng_search
+
+    - name: SearXNG検索応答の形式を検証
+      ansible.builtin.assert:
+        that:
+          - smoke_searxng_search.json is mapping
+          - smoke_searxng_search.json.results is defined
+        fail_msg: SearXNG検索APIが期待するJSON形式を返しませんでした
+        quiet: true
+
     - name: 共有Ollamaの状態を取得
       ansible.builtin.command:
         argv:
@@ -179,4 +207,4 @@
       ansible.builtin.debug:
         msg: >-
           [OK] 必須サービス、Slurm、PostgreSQL、GPU、Pydantic、Apptainerイメージ、
-          JupyterHub、HPCポータル静的ファイル、LiteLLMを確認しました。
+          JupyterHub、HPCポータル静的ファイル、LiteLLM、SearXNGを確認しました。

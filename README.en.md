@@ -156,6 +156,7 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make slurm` | Apply Slurm changes; leave its config untouched when active jobs require a restart |
 | `make postgres` / `make litellm` | Apply PostgreSQL or LiteLLM changes only |
 | `make ollama` / `make apptainer` | Apply settings or images for the next app start |
+| `make searxng` | Apply SearXNG and Open WebUI web-search settings |
 | `make cloudflared` | Apply cloudflared changes only |
 | `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
 
@@ -186,6 +187,31 @@ If `make deploy` detects pending Slurm configuration changes while jobs are acti
 
 </details>
 
+#### 🔎 Web search (SearXNG)
+
+SearXNG runs continuously as a systemd service in Apptainer and listens only on `127.0.0.1`. It is not exposed through Cloudflare Tunnel. Web search is available in Open WebUI, but a search runs only when a user explicitly enables it for a chat.
+
+Before the first deployment, generate a random secret:
+
+```bash
+openssl rand -hex 32
+```
+
+Store the output in the Git-ignored `group_vars/all/secret.yml`:
+
+```yaml
+searxng_secret_key: "generated value"
+```
+
+To apply only SearXNG-related changes:
+
+```bash
+make searxng
+make smoke
+```
+
+Running Open WebUI processes retain their startup environment, so stop and restart Open WebUI before checking the new search settings. Open WebUI also persists configuration in its database; values already changed in the admin UI may override environment variables. Existing databases are not migrated automatically.
+
 #### 🧪 Development environment and tests
 
 After installing [uv](https://docs.astral.sh/uv/), run these commands in the repository root.
@@ -212,7 +238,7 @@ This runs locally without connecting to the target host and checks Python input 
 make smoke
 ```
 
-This connects to the target host in read-only mode and checks major functionality. It does not change users, jobs, models, or passwords. A stopped shared Ollama instance is skipped.
+This connects to the target host in read-only mode and checks major functionality, including the SearXNG JSON search API. It does not change users, jobs, models, or passwords. A stopped shared Ollama instance is skipped.
 
 #### 🧹 Cleanup
 
