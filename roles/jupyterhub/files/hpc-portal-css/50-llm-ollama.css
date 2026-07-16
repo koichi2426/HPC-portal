@@ -58,6 +58,11 @@
   white-space: nowrap;
 }
 
+.hpc-ollama-model-name {
+  color: var(--hpc-link);
+  font-weight: 600;
+}
+
 .hpc-progress {
   margin-top: 8px;
   height: 6px;

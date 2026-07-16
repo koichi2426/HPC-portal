@@ -157,20 +157,11 @@
   function updateOpenWebuiVersion(root, body) {
     var data = body.data || {};
     var running = data.running_version || "";
-    var target = data.target_version || "";
     var runningElement = root.querySelector("[data-hpc-running-version]");
-    var runningLabel = root.querySelector("[data-hpc-running-version-label]");
-    var targetElement = root.querySelector("[data-hpc-target-version]");
     var updateElement = root.querySelector("[data-hpc-version-update]");
 
     if (runningElement) {
       runningElement.textContent = running ? "v" + running : "不明";
-    }
-    if (runningLabel) {
-      runningLabel.textContent = data.verified ? "起動中" : "起動時";
-    }
-    if (targetElement) {
-      targetElement.textContent = target ? "v" + target : "不明";
     }
     if (updateElement) {
       updateElement.hidden = !data.update_available;

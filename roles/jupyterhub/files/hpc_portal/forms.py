@@ -29,6 +29,107 @@ from .resources import _hpc_resource_snapshot
 from .users import _hpc_is_portal_admin
 
 
+def _hpc_memory_display_label(memory: str) -> str:
+    """Slurm形式のメモリ値を画面表示用のGB表記へ変換する。
+
+    Args:
+        memory: ``32G``または``32GB``形式のメモリ値。
+
+    Returns:
+        ``32 GB``形式の表示値。
+    """
+    normalized = str(memory).strip().upper()
+    if normalized.endswith("GB"):
+        normalized = normalized[:-2]
+    elif normalized.endswith("G"):
+        normalized = normalized[:-1]
+    return f"{normalized} GB"
+
+
+def _hpc_app_resource_recommendations() -> dict[str, dict[str, str]]:
+    """アプリ選択時に適用する推奨リソースと案内文を返す。
+
+    Returns:
+        アプリ内部名をキーとする推奨リソース設定。
+    """
+    return {
+        "ubuntu-cli": {
+            "label": "JupyterLab",
+            "cpu": "2",
+            "memory": "4",
+            "memory_label": "4 GB",
+            "gpu": "0",
+            "hours": "2",
+            "hours_label": "2時間",
+            "summary": "コード編集や軽いPython処理向けです。",
+            "guidance": (
+                "データ分析は4 vCPU・8 GB、AI処理は"
+                "8 vCPU・32 GB・GPU 1が目安です。"
+            ),
+        },
+        "open-webui": {
+            "label": "Open WebUI",
+            "cpu": "2",
+            "memory": "4",
+            "memory_label": "4 GB",
+            "gpu": "0",
+            "hours": "2",
+            "hours_label": "2時間",
+            "summary": "通常のチャットやWeb検索に十分です。",
+            "guidance": "モデル推論は共有Ollamaが担当します。",
+        },
+        "shared-ollama": {
+            "label": "Ollama",
+            "cpu": HPC_OLLAMA_DEFAULT_CPUS,
+            "memory": HPC_OLLAMA_DEFAULT_MEMORY,
+            "memory_label": _hpc_memory_display_label(
+                HPC_OLLAMA_DEFAULT_MEMORY
+            ),
+            "gpu": "1",
+            "hours": "unlimited",
+            "hours_label": "無制限",
+            "summary": "共有モデルの推論向けです。",
+            "guidance": (
+                "大きなモデルや同時利用が増えた場合はRAMを調整してください。"
+            ),
+        },
+    }
+
+
+def _hpc_app_option_html(app_choice: str, recommendation: dict[str, str]) -> str:
+    """推奨リソースをdata属性に含むアプリ選択肢を生成する。
+
+    Args:
+        app_choice: フォーム内部で使うアプリ名。
+        recommendation: 表示名、推奨値、案内文を含む設定。
+
+    Returns:
+        HTMLエスケープ済みのoption要素。
+    """
+    attributes = {
+        "value": app_choice,
+        "data-label": recommendation["label"],
+        "data-cpu": recommendation["cpu"],
+        "data-memory": recommendation["memory"],
+        "data-memory-label": recommendation["memory_label"],
+        "data-gpu": recommendation["gpu"],
+        "data-hours": recommendation["hours"],
+        "data-hours-label": recommendation["hours_label"],
+        "data-summary": recommendation["summary"],
+        "data-guidance": recommendation["guidance"],
+    }
+    rendered_attributes = " ".join(
+        f'{name}="{html.escape(str(value), quote=True)}"'
+        for name, value in attributes.items()
+    )
+    label = html.escape(recommendation["label"])
+    if app_choice == "open-webui":
+        label += " (AI Chat)"
+    elif app_choice == "shared-ollama":
+        label += " (管理者専用)"
+    return f"<option {rendered_attributes}>{label}</option>"
+
+
 # 2. カスタムフォーム生成
 def make_options_form(spawner):
     """Spawnerの状態に合わせてアプリ起動フォームを生成する。
@@ -187,7 +288,19 @@ def make_options_form(spawner):
         active_sessions_html = '<div class="hpc-empty" style="font-style:italic;">No active sessions.</div>'
 
     is_portal_admin = _hpc_is_portal_admin(user)
-    shared_ollama_option = '<option value="shared-ollama">Ollama (管理者専用)</option>' if is_portal_admin else ''
+    recommendations = _hpc_app_resource_recommendations()
+    app_options = [
+        _hpc_app_option_html("ubuntu-cli", recommendations["ubuntu-cli"]),
+        _hpc_app_option_html("open-webui", recommendations["open-webui"]),
+    ]
+    if is_portal_admin:
+        app_options.append(
+            _hpc_app_option_html(
+                "shared-ollama", recommendations["shared-ollama"]
+            )
+        )
+    app_options_html = "".join(app_options)
+    initial_recommendation = recommendations["ubuntu-cli"]
     shared_cpu_options = "".join(
         f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_CPUS else ""}>{html.escape(v)} vCPU</option>'
         for v in HPC_OLLAMA_ALLOWED_CPUS
@@ -247,14 +360,12 @@ def make_options_form(spawner):
             <div class="form-group">
                 <label class="label">App Template</label>
                 <select class="form-control input-dark" name="app_choice">
-                    <option value="ubuntu-cli">JupyterLab</option>
-                    <option value="open-webui">Open WebUI (AI Chat)</option>
-                    {shared_ollama_option}
+                    {app_options_html}
                 </select>
                 <div id="app-version-help" class="hpc-app-version" style="margin-top:8px;"
                      data-ubuntu-label="Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION, quote=True)}"
                      data-openwebui-label="Open WebUI v{html.escape(HPC_OPENWEBUI_VERSION, quote=True)}"
-                     data-ollama-label="Ollama v{html.escape(HPC_OLLAMA_VERSION, quote=True)}">新規起動: Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</div>
+                     data-ollama-label="Ollama v{html.escape(HPC_OLLAMA_VERSION, quote=True)}">バージョン: Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</div>
                 <div id="shared-ollama-options" class="hpc-shared-options">
                     <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
                     <div class="hpc-form-grid-3">
@@ -273,9 +384,9 @@ def make_options_form(spawner):
                         <div><label class="label">最大実行時間</label>
                             <select class="form-control input-dark" name="hours">
                                 <option value="1">1 時間</option>
-                                <option value="2">2 時間</option>
+                                <option value="2" selected>2 時間</option>
                                 <option value="4">4 時間</option>
-                                <option value="8" selected>8 時間</option>
+                                <option value="8">8 時間</option>
                                 <option value="12">12 時間</option>
                                 <option value="24">24 時間</option>
                                 <option value="48">48 時間</option>
@@ -285,6 +396,20 @@ def make_options_form(spawner):
                     </div>
                 </div>
                 <div id="standard-resource-help" class="hpc-muted" style="font-size:0.74rem;margin-top:-5px;">無制限は Slurm パーティションで許可された上限まで実行できます。</div>
+                <section id="app-resource-recommendation" class="hpc-resource-recommendation" aria-labelledby="app-resource-recommendation-title" aria-live="polite">
+                    <div class="hpc-recommendation-heading">
+                        <span class="hpc-recommendation-badge">推奨リソース</span>
+                        <strong id="app-resource-recommendation-title" data-recommendation-label>{initial_recommendation["label"]}</strong>
+                    </div>
+                    <dl class="hpc-recommendation-values" aria-label="選択中アプリの推奨割り当て">
+                        <div><dt>CPU</dt><dd data-recommendation-cpu>{initial_recommendation["cpu"]} vCPU</dd></div>
+                        <div><dt>RAM</dt><dd data-recommendation-memory>{initial_recommendation["memory_label"]}</dd></div>
+                        <div><dt>GPU</dt><dd data-recommendation-gpu>{initial_recommendation["gpu"]}</dd></div>
+                        <div><dt>時間</dt><dd data-recommendation-hours>{initial_recommendation["hours_label"]}</dd></div>
+                    </dl>
+                    <p class="hpc-recommendation-summary" data-recommendation-summary>{initial_recommendation["summary"]}</p>
+                    <p class="hpc-recommendation-guidance" data-recommendation-guidance>{initial_recommendation["guidance"]}</p>
+                </section>
             </div>
         </div>
     </div>
@@ -315,18 +440,23 @@ def options_from_form(formdata):
     Returns:
         検証・正規化済みのuser_options。
     """
-    h = formdata.get("hours", ["8"])[0]
+    app_choice = str(formdata.get("app_choice", ["ubuntu-cli"])[0])
+    recommendations = _hpc_app_resource_recommendations()
+    recommendation = recommendations.get(app_choice, recommendations["ubuntu-cli"])
+    h = formdata.get("hours", [recommendation["hours"]])[0]
     runtime, runtime_line = _hpc_runtime_from_hours_choice(h)
     gpu_max = HPC_GPU_COUNT
     try:
-        g = int(formdata.get("gpu", ["0"])[0] or 0)
+        g = int(formdata.get("gpu", [recommendation["gpu"]])[0] or 0)
     except ValueError:
         g = 0
     g = max(0, min(gpu_max, g))
-    app_choice = str(formdata.get("app_choice", ["ubuntu-cli"])[0])
+    memory = str(formdata.get("mem", [recommendation["memory"]])[0]).strip()
+    if not memory.upper().endswith("G"):
+        memory = f"{memory}G"
     return {
-        "nprocs": str(formdata.get("cpu", ["2"])[0]),
-        "memory": f"{formdata.get('mem', ['4'])[0]}G",
+        "nprocs": str(formdata.get("cpu", [recommendation["cpu"]])[0]),
+        "memory": memory,
         "runtime": runtime,
         "runtime_line": runtime_line,
         "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
@@ -347,10 +477,10 @@ def apply_user_options(spawner, user_options):
     """
     spawner.req_nprocs = str(user_options.get("nprocs", "2"))
     spawner.req_memory = str(user_options.get("memory", "4G"))
-    spawner.req_runtime = str(user_options.get("runtime", "08:00:00"))
+    spawner.req_runtime = str(user_options.get("runtime", "02:00:00"))
     spawner.user_options["nprocs"] = str(user_options.get("nprocs", "2"))
     spawner.user_options["memory"] = str(user_options.get("memory", "4G"))
-    spawner.user_options["runtime"] = str(user_options.get("runtime", "08:00:00"))
+    spawner.user_options["runtime"] = str(user_options.get("runtime", "02:00:00"))
     spawner.user_options["gpu"] = str(user_options.get("gpu", "0"))
     app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
     spawner.user_options["app_choice"] = app_choice

@@ -16,4 +16,16 @@
   .hpc-user-list-actions {
     width: 100%;
   }
+
+  .hpc-recommendation-values {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hpc-recommendation-values > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .hpc-recommendation-values > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--hpc-border-muted);
+  }
 }

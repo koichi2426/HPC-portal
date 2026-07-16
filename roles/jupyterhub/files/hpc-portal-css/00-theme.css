@@ -18,6 +18,7 @@
   --hpc-warning-bg: rgba(154, 103, 0, 0.10);
   --hpc-danger-bg: rgba(207, 34, 46, 0.10);
   --hpc-info-bg: rgba(9, 105, 218, 0.08);
+  --hpc-info-border: rgba(9, 105, 218, 0.35);
   --hpc-hover: rgba(9, 105, 218, 0.08);
   --hpc-meter-fill: linear-gradient(90deg, #00c2d6, #2f81f7, #2da44e);
   --hpc-modal-backdrop: rgba(31, 35, 40, 0.45);
@@ -45,8 +46,8 @@ body[data-theme="dark"] {
   --hpc-warning-bg: rgba(227, 179, 65, 0.12);
   --hpc-danger-bg: rgba(248, 81, 73, 0.12);
   --hpc-info-bg: rgba(88, 166, 255, 0.10);
+  --hpc-info-border: rgba(88, 166, 255, 0.35);
   --hpc-hover: rgba(88, 166, 255, 0.08);
   --hpc-meter-fill: linear-gradient(90deg, #00f2fe, #4facfe, #9be7c7);
   --hpc-modal-backdrop: rgba(0, 0, 0, 0.55);
 }
-

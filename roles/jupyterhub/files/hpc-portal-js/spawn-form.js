@@ -43,10 +43,45 @@
     var standardBox = global.document.getElementById("standard-resource-options");
     var standardHelp = global.document.getElementById("standard-resource-help");
     var appVersionHelp = global.document.getElementById("app-version-help");
+    var recommendationCard = global.document.getElementById("app-resource-recommendation");
+
+    function setFormValue(name, value) {
+      var element = global.document.querySelector('[name="' + name + '"]');
+      if (element && value !== undefined) element.value = value;
+    }
+
+    function applyRecommendation(option, isSharedOllama) {
+      if (!option) return;
+      var recommendation = option.dataset;
+      if (isSharedOllama) {
+        setFormValue("ollama_cpus", recommendation.cpu);
+        setFormValue("ollama_memory", recommendation.memory);
+      } else {
+        setFormValue("cpu", recommendation.cpu);
+        setFormValue("mem", recommendation.memory);
+        setFormValue("gpu", recommendation.gpu);
+        setFormValue("hours", recommendation.hours);
+      }
+      if (!recommendationCard) return;
+      var values = {
+        "[data-recommendation-label]": recommendation.label,
+        "[data-recommendation-cpu]": recommendation.cpu + " vCPU",
+        "[data-recommendation-memory]": recommendation.memoryLabel,
+        "[data-recommendation-gpu]": recommendation.gpu,
+        "[data-recommendation-hours]": recommendation.hoursLabel,
+        "[data-recommendation-summary]": recommendation.summary,
+        "[data-recommendation-guidance]": recommendation.guidance,
+      };
+      Object.keys(values).forEach(function (selector) {
+        var target = recommendationCard.querySelector(selector);
+        if (target) target.textContent = values[selector] || "";
+      });
+    }
 
     function refreshAppChoice() {
       if (!appChoice) return;
       var isSharedOllama = appChoice.value === "shared-ollama";
+      var selectedOption = appChoice.options[appChoice.selectedIndex];
       if (sharedBox) sharedBox.style.display = isSharedOllama ? "block" : "none";
       if (standardBox) {
         standardBox.style.display = isSharedOllama ? "none" : "block";
@@ -59,8 +94,9 @@
         var labelKey = appChoice.value === "open-webui"
           ? "openwebuiLabel"
           : (isSharedOllama ? "ollamaLabel" : "ubuntuLabel");
-        appVersionHelp.textContent = "新規起動: " + appVersionHelp.dataset[labelKey];
+        appVersionHelp.textContent = "バージョン: " + appVersionHelp.dataset[labelKey];
       }
+      applyRecommendation(selectedOption, isSharedOllama);
     }
 
     if (appChoice) {

@@ -25,7 +25,7 @@ def test_ollama_detail_script_uses_handler_context_across_jinja_blocks():
 
 @pytest.mark.parametrize(
     ("cpus", "memory", "expected"),
-    [(None, None, ("4", "16G", None)), ("8", "32g", ("8", "32G", None))],
+    [(None, None, ("8", "32G", None)), ("8", "32g", ("8", "32G", None))],
 )
 def test_ollama_resources_accept_allowed_values(cpus, memory, expected):
     assert ollama._hpc_validate_ollama_resources(cpus, memory) == expected
