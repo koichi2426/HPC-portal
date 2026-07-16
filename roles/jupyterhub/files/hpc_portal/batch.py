@@ -94,7 +94,9 @@ OPENWEBUI_DEFAULT_MODEL_METADATA_JSON = (
     '"tasks":false,"automations":false,"calendar":false},'
     '"defaultFeatureIds":["web_search","code_interpreter"]}'
 )
-OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON = '{"think":false,"function_calling":"native"}'
+OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON = (
+    '{"think":false,"reasoning_effort":"none","function_calling":"native"}'
+)
 
 
 c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash

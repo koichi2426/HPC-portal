@@ -21,6 +21,7 @@ def test_web_search_settings_use_local_searxng_with_bounded_workload():
 
 def test_openwebui_enables_selected_builtin_tools_by_default():
     metadata = json.loads(batch.OPENWEBUI_DEFAULT_MODEL_METADATA_JSON)
+    params = json.loads(batch.OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON)
     script = batch.c.HPCSlurmSpawner.batch_script
 
     assert metadata["capabilities"]["web_search"] is True
@@ -32,6 +33,9 @@ def test_openwebui_enables_selected_builtin_tools_by_default():
     assert metadata["builtinTools"]["web_search"] is True
     assert metadata["builtinTools"]["code_interpreter"] is True
     assert metadata["defaultFeatureIds"] == ["web_search", "code_interpreter"]
+    assert params["think"] is False
+    assert params["reasoning_effort"] == "none"
+    assert params["function_calling"] == "native"
     assert '"ENABLE_WEB_SEARCH=True"' in script
     assert '"ENABLE_CODE_INTERPRETER=True"' in script
     assert '"WEB_SEARCH_ENGINE=searxng"' in script
