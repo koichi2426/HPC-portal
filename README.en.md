@@ -23,51 +23,45 @@ JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together 
 ```mermaid
 flowchart TB
     User[User] --> CF[Cloudflare Tunnel]
-
-    subgraph Host[Single node]
-        direction TB
-
-        subgraph Control[Public entry and job management]
-            direction LR
-            Proxy[configurable-http-proxy<br/>:8000]
-            JHub[JupyterHub<br/>Portal]
-            Slurm[Slurm]
-        end
-
-        subgraph Workloads[Slurm workloads]
-            direction LR
-            Apps[Per-user applications<br/>JupyterLab / Open WebUI]
-            Ollama[Shared Ollama]
-        end
-
-        subgraph Internal[AI and search services]
-            direction LR
-            LiteLLM[LiteLLM<br/>API Gateway]
-            SearXNG[SearXNG<br/>internal search API]
-        end
-
-        subgraph Data[Persistent data]
-            direction LR
-            DB[(PostgreSQL)]
-            Models[(Shared model storage)]
-        end
-    end
+    Proxy[configurable-http-proxy<br/>:8000]
+    JHub[JupyterHub<br/>Portal]
+    Slurm[Slurm]
+    Apps[Per-user applications<br/>JupyterLab / Open WebUI]
+    LiteLLM[LiteLLM<br/>API Gateway]
+    SearXNG[SearXNG<br/>internal search API]
+    Ollama[Shared Ollama]
+    DB[(PostgreSQL)]
+    Models[(Shared model storage)]
+    Search[External search services]
 
     CF -->|Hub and application URLs| Proxy
     CF -->|LLM API and admin UI| LiteLLM
     Proxy --> JHub
     Proxy --> Apps
-    JHub -.->|Register dynamic routes| Proxy
     JHub -->|Submit jobs| Slurm
-    Slurm --> Apps & Ollama
+    Slurm --> Apps
+    Slurm --> Ollama
     JHub -->|Manage users, keys, and models| LiteLLM
     Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
     Apps -->|Web search| SearXNG
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
-    SearXNG --> Search[External search services]
+    SearXNG --> Search
+
+    classDef external fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#111827
+    classDef workload fill:#dcfce7,stroke:#16a34a,color:#111827
+    classDef service fill:#ede9fe,stroke:#7c3aed,color:#111827
+    classDef data fill:#fef3c7,stroke:#d97706,color:#111827
+    class User,CF,Search external
+    class Proxy,JHub,Slurm control
+    class Apps,Ollama workload
+    class LiteLLM,SearXNG service
+    class DB,Models data
 ```
+
+Colors: gray=external, blue=portal and job management, green=Slurm workloads, purple=AI and search services, yellow=persistent data. Blue, green, purple, and yellow components run on the single node.
 
 #### Startup and inference flow
 

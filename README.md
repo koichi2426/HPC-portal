@@ -23,51 +23,45 @@
 ```mermaid
 flowchart TB
     User[利用者] --> CF[Cloudflare Tunnel]
-
-    subgraph Host[単一ノード]
-        direction TB
-
-        subgraph Control[公開入口・ジョブ管理]
-            direction LR
-            Proxy[configurable-http-proxy<br/>:8000]
-            JHub[JupyterHub<br/>ポータル]
-            Slurm[Slurm]
-        end
-
-        subgraph Workloads[Slurmワークロード]
-            direction LR
-            Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
-            Ollama[共有Ollama]
-        end
-
-        subgraph Internal[AI・検索基盤]
-            direction LR
-            LiteLLM[LiteLLM<br/>API Gateway]
-            SearXNG[SearXNG<br/>内部検索API]
-        end
-
-        subgraph Data[永続データ]
-            direction LR
-            DB[(PostgreSQL)]
-            Models[(共有モデル保存領域)]
-        end
-    end
+    Proxy[configurable-http-proxy<br/>:8000]
+    JHub[JupyterHub<br/>ポータル]
+    Slurm[Slurm]
+    Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
+    LiteLLM[LiteLLM<br/>API Gateway]
+    SearXNG[SearXNG<br/>内部検索API]
+    Ollama[共有Ollama]
+    DB[(PostgreSQL)]
+    Models[(共有モデル保存領域)]
+    Search[外部検索サービス]
 
     CF -->|Hub・アプリURL| Proxy
     CF -->|LLM API・管理UI| LiteLLM
     Proxy --> JHub
     Proxy --> Apps
-    JHub -.->|動的ルート登録| Proxy
     JHub -->|ジョブ投入| Slurm
-    Slurm --> Apps & Ollama
+    Slurm --> Apps
+    Slurm --> Ollama
     JHub -->|ユーザー・Key・モデル管理| LiteLLM
     Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
     Apps -->|Web検索| SearXNG
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
-    SearXNG --> Search[外部検索サービス]
+    SearXNG --> Search
+
+    classDef external fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#111827
+    classDef workload fill:#dcfce7,stroke:#16a34a,color:#111827
+    classDef service fill:#ede9fe,stroke:#7c3aed,color:#111827
+    classDef data fill:#fef3c7,stroke:#d97706,color:#111827
+    class User,CF,Search external
+    class Proxy,JHub,Slurm control
+    class Apps,Ollama workload
+    class LiteLLM,SearXNG service
+    class DB,Models data
 ```
+
+色分け: 灰=外部、青=ポータル・ジョブ管理、緑=Slurmワークロード、紫=AI・検索基盤、黄=永続データ。青・緑・紫・黄の各コンポーネントは単一ノード上で動作します。
 
 #### 起動・推論の流れ
 
