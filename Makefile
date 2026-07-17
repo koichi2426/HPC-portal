@@ -20,9 +20,10 @@ help: ## ターゲット一覧
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@printf '\n例: make deploy   make jupyterhub   make status\n\n'
 
-setup: ## インベントリ・secret の雛形をコピー（未作成時）
+setup: ## インベントリとsecretを初期化（設定済みの値は維持）
 	@test -f $(INV) || cp inventory/production.ini.example $(INV)
 	@test -f group_vars/all/secret.yml || cp group_vars/all/secret.yml.example group_vars/all/secret.yml
+	@python3 scripts/setup_secrets.py group_vars/all/secret.yml
 	@echo "OK: $(INV) と group_vars/all/secret.yml を確認してください"
 
 test: ## ローカルでpytestを実行（実機接続なし）

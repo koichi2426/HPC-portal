@@ -145,36 +145,60 @@ Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and
    ```bash
    ssh <ansible_user>@<target-ip>
    ```
-4. **Copy inventory and secrets templates**:
+4. **Set up the inventory and secrets**:
    ```bash
    make setup
-   # Edit inventory/production.ini and group_vars/all/secret.yml
+   # Set external values such as cloudflared_token in group_vars/all/secret.yml
    ```
+
+   `make setup` generates only missing LiteLLM, PostgreSQL, and SearXNG secrets. It never replaces values that are already configured.
 
 #### 📋 Common make targets
 
 See [Makefile](./Makefile). Run `make help` for the full list.
 
+##### Core operations
+
 | Command | Description |
 |---------|-------------|
-| `make test` | Run pytest locally without connecting to the target host |
-| `make ping` | Connectivity check |
-| `make smoke` | Run read-only checks against services, APIs, and deployed assets |
-| `make check` | Dry run (`--check --diff`) |
 | `make deploy` | Safely apply changed components while preserving Slurm jobs |
 | `make deploy-restart` | Stop all jobs and restart related services, with `restart` confirmation |
-| `make cleanup` | Cleanup services and config while keeping model/DB data |
-| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
-| `make common` | Apply common OS settings without rebooting the host |
-| `make jupyterhub` | Apply JupyterHub changes while preserving running jobs |
-| `make slurm` | Apply Slurm changes; leave its config untouched when active jobs require a restart |
-| `make postgres` / `make litellm` | Apply PostgreSQL or LiteLLM changes only |
-| `make ollama` / `make apptainer` | Apply settings or images for the next app start |
-| `make searxng` | Apply SearXNG and Open WebUI web-search settings |
-| `make cloudflared` | Apply cloudflared changes only |
-| `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
+| `make ping` | Connectivity check |
+| `make check` | Dry run (`--check --diff`) |
+| `make test` | Run pytest locally without connecting to the target host |
+| `make smoke` | Run read-only checks against services, APIs, and deployed assets |
 
 Override inventory: `make deploy INV=inventory/staging.ini`
+
+##### Component updates
+
+| Command | Description |
+|---------|-------------|
+| `make jupyterhub` | Apply JupyterHub changes while preserving running jobs |
+| `make ollama` | Apply shared Ollama settings for the next start |
+| `make apptainer` | Apply Apptainer and image changes while preserving running containers |
+| `make litellm` | Apply PostgreSQL and LiteLLM changes only |
+| `make searxng` | Apply SearXNG and Open WebUI web-search settings |
+| `make common` | Apply common OS settings without rebooting the host |
+| `make slurm` | Apply Slurm changes; leave its config untouched when active jobs require a restart |
+| `make postgres` | Apply PostgreSQL changes only |
+| `make cloudflared` | Apply cloudflared changes only |
+
+##### Diagnostics
+
+| Command | Description |
+|---------|-------------|
+| `make status` | Show Slurm jobs and disk space |
+| `make services` | Show service, shared Ollama, and major log status |
+| `make gpu` | Show GPU and VRAM status |
+| `make processes` | Check remaining user and hpc-ollama processes |
+
+##### Cleanup
+
+| Command | Description |
+|---------|-------------|
+| `make cleanup` | Cleanup services and config while keeping model/DB data |
+| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
 
 #### 🚀 Deploy
 
@@ -200,31 +224,6 @@ Enter `restart` at the prompt to stop all jobs and apply the update. Stopped app
 If `make deploy` detects pending Slurm configuration changes while jobs are active, it defers only that configuration, applies the remaining changes, and reports that `make deploy-restart` is required. App launch configuration changes take effect on the next start. Slurm configuration uses fixed-name temporary backups that are removed after success or successful rollback.
 
 </details>
-
-#### 🔎 Web search (SearXNG)
-
-SearXNG runs continuously as a systemd service in Apptainer and listens only on `127.0.0.1`. It is not exposed through Cloudflare Tunnel. Web search starts enabled for new Open WebUI databases and new model settings, and users can disable it per chat.
-
-Before the first deployment, generate a random secret:
-
-```bash
-openssl rand -hex 32
-```
-
-Store the output in the Git-ignored `group_vars/all/secret.yml`:
-
-```yaml
-searxng_secret_key: "generated value"
-```
-
-To apply only SearXNG-related changes:
-
-```bash
-make searxng
-make smoke
-```
-
-Running Open WebUI processes retain their startup environment, so stop and restart Open WebUI before checking the new search settings. Open WebUI also persists configuration in its database; values already changed in the admin UI may override environment variables. Existing databases are not migrated automatically.
 
 #### 🧪 Development environment and tests
 

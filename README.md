@@ -145,42 +145,61 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
    ```bash
    ssh <ansible_user>@<target-ip>
    ```
-4. **インベントリと秘密情報の設定**（雛形コピー）:
+4. **インベントリと秘密情報の設定**:
    ```bash
    make setup
    # inventory/production.ini … IP / ansible_user / ドメイン変数
-   # group_vars/all/secret.yml … cloudflared_token など
+   # group_vars/all/secret.yml … cloudflared_tokenなど外部発行の値を設定
    ```
+
+   `make setup`はLiteLLM・PostgreSQL・SearXNGの未設定の秘密値だけを自動生成します。設定済みの値は変更しません。
 
 #### 📋 よく使う make コマンド
 
 プロジェクト直下の [Makefile](./Makefile) に、Ansible の定番操作をまとめています。一覧は `make help` で確認できます。
 
+##### 基本操作
+
 | コマンド | 内容 |
 |----------|------|
-| `make test` | ローカルでpytestを実行（実機接続なし） |
-| `make ping` | 接続確認 |
-| `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
-| `make check` | ドライラン（`--check --diff`） |
 | `make deploy` | ジョブを維持し、変更されたコンポーネントだけを安全に反映 |
 | `make deploy-restart` | 全ジョブ停止・関連サービス再起動を伴う全体反映（`restart`確認あり） |
-| `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
-| `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
-| `make common` | OS共通設定を差分反映。OSは自動再起動しない |
-| `make jupyterhub` | JupyterHubだけを差分反映。Hub再起動時もジョブを維持 |
-| `make slurm` | Slurmだけを差分反映。ジョブ実行中に設定差分があれば未変更のままスキップ |
-| `make postgres` | PostgreSQLだけを差分反映 |
-| `make litellm` | PostgreSQL・LiteLLMだけを差分反映 |
-| `make ollama` | shared Ollamaの次回起動設定だけを差分反映 |
-| `make apptainer` | ApptainerとSIFを差分反映。実行中コンテナは維持 |
-| `make searxng` | SearXNGとOpen WebUIのWeb検索設定を差分反映 |
-| `make cloudflared` | cloudflaredだけを差分反映 |
-| `make status` | Slurm ジョブ・ディスク空き |
-| `make gpu` | GPU / VRAM |
-| `make services` | サービス・shared Ollama 状態・主要ログ |
-| `make processes` | 実行ユーザー / hpc-ollama の残存プロセス確認 |
+| `make ping` | 接続確認 |
+| `make check` | ドライラン（`--check --diff`） |
+| `make test` | ローカルでpytestを実行（実機接続なし） |
+| `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
 
 別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
+
+##### コンポーネント別の反映
+
+| コマンド | 内容 |
+|----------|------|
+| `make jupyterhub` | JupyterHubだけを差分反映。Hub再起動時もジョブを維持 |
+| `make ollama` | shared Ollamaの次回起動設定だけを差分反映 |
+| `make apptainer` | ApptainerとSIFを差分反映。実行中コンテナは維持 |
+| `make litellm` | PostgreSQL・LiteLLMだけを差分反映 |
+| `make searxng` | SearXNGとOpen WebUIのWeb検索設定を差分反映 |
+| `make common` | OS共通設定を差分反映。OSは自動再起動しない |
+| `make slurm` | Slurmだけを差分反映。ジョブ実行中に設定差分があれば未変更のままスキップ |
+| `make postgres` | PostgreSQLだけを差分反映 |
+| `make cloudflared` | cloudflaredだけを差分反映 |
+
+##### 状態確認
+
+| コマンド | 内容 |
+|----------|------|
+| `make status` | Slurm ジョブ・ディスク空き |
+| `make services` | サービス・shared Ollama 状態・主要ログ |
+| `make gpu` | GPU / VRAM |
+| `make processes` | 実行ユーザー / hpc-ollama の残存プロセス確認 |
+
+##### クリーンアップ
+
+| コマンド | 内容 |
+|----------|------|
+| `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
+| `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
 
 #### 🚀 デプロイ実行
 
@@ -206,31 +225,6 @@ make deploy-restart
 `make deploy`はジョブ実行中にSlurm設定差分を検出すると、その設定だけを保留して残りを反映し、最後に`make deploy-restart`が必要だと表示します。アプリ起動設定の変更は次回起動から反映されます。Slurm設定は固定名の一時バックアップを使い、成功時または復元成功時に削除します。
 
 </details>
-
-#### 🔎 Web検索（SearXNG）
-
-SearXNGはApptainer上のsystemdサービスとして常時起動し、`127.0.0.1`だけで待ち受けます。Cloudflare Tunnelには公開しません。新規Open WebUI DB・新規モデルではWeb検索を初期ONにし、利用者はチャットごとにOFFへ切り替えられます。
-
-初回デプロイ前に、ランダムな秘密値を生成します。
-
-```bash
-openssl rand -hex 32
-```
-
-出力をGit管理外の`group_vars/all/secret.yml`へ設定します。
-
-```yaml
-searxng_secret_key: "生成した値"
-```
-
-SearXNG関連だけを反映する場合:
-
-```bash
-make searxng
-make smoke
-```
-
-実行中のOpen WebUIには起動時の環境変数が残るため、検索設定はOpen WebUIを停止して再起動した後に反映されます。また、Open WebUIの設定はDBへ保存されるため、既存DBで管理画面から変更済みの値は環境変数より優先される場合があります。既存DBは自動変更しません。
 
 #### 🧪 開発環境・テスト
 

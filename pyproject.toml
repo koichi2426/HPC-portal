@@ -25,4 +25,4 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
-pythonpath = ["roles/jupyterhub/files"]
+pythonpath = [".", "roles/jupyterhub/files"]
