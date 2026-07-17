@@ -91,7 +91,7 @@ ollama_allowed_parallel: [1, 2, 4]
 ollama_default_max_loaded_models: 2
 ollama_allowed_max_loaded_models: [1, 2, 3]
 # Web検索やツール利用に必要な長さを確保する。
-ollama_default_context_length: 65536
+ollama_default_context_length: 131072
 ollama_allowed_context_lengths: [32768, 65536, 131072, 262144]
 # q8_0はKVキャッシュをf16の約半分に抑えつつ、精度低下を小さくする。
 ollama_default_kv_cache_type: q8_0

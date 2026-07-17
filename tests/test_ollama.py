@@ -83,7 +83,7 @@ def test_ollama_start_builds_fixed_command_arguments(monkeypatch):
         "--max-loaded-models",
         "2",
         "--context-length",
-        "65536",
+        "131072",
         "--kv-cache-type",
         "q8_0",
         "--keep-alive",

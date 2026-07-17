@@ -129,7 +129,7 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
     assert '<option value="64G" selected>64G RAM</option>' in rendered
     assert 'name="ollama_parallel"' in rendered
     assert 'name="ollama_context_length"' in rendered
-    assert '<option value="65536" selected>64K</option>' in rendered
+    assert '<option value="131072" selected>128K</option>' in rendered
     assert '<option value="q8_0" selected>q8_0</option>' in rendered
 
 
