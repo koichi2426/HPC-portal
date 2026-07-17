@@ -11,6 +11,7 @@
     - postgres
     - apptainer
     - searxng
+    - search_mcp
     - ollama
     - litellm
     - jupyterhub
@@ -55,8 +56,9 @@
         - munge
         - slurmctld
         - slurmd
-        - litellm
         - searxng
+        - hpc-search-mcp
+        - litellm
         - jupyterhub
         - cloudflared
 

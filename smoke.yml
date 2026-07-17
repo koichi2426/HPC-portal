@@ -11,6 +11,7 @@
       - cloudflared
       - litellm
       - searxng
+      - hpc-search-mcp
       - postgresql
     smoke_required_images:
       - /opt/images/jupyter-cpu.sif
@@ -177,6 +178,34 @@
         fail_msg: SearXNG検索APIが期待するJSON形式を返しませんでした
         quiet: true
 
+    - name: Web検索MCPのヘルスエンドポイントを確認
+      ansible.builtin.uri:
+        url: "http://{{ search_mcp_host }}:{{ search_mcp_port }}/health"
+        method: GET
+        status_code: 200
+        return_content: false
+        timeout: 5
+
+    - name: LiteLLM経由でWeb検索MCPツール一覧を確認
+      ansible.builtin.uri:
+        url: >-
+          {{ litellm_internal_base_url }}/mcp-rest/tools/list?server_id=hpc_web_search
+        method: GET
+        headers:
+          Authorization: "Bearer {{ litellm_master_key }}"
+        status_code: 200
+        return_content: true
+        timeout: 10
+      register: smoke_search_mcp_tools
+      no_log: true
+
+    - name: Web検索MCPにsearch_webが登録されていることを確認
+      ansible.builtin.assert:
+        that:
+          - "'search_web' in smoke_search_mcp_tools.content"
+        fail_msg: LiteLLMからWeb検索MCPのsearch_webを確認できませんでした
+        quiet: true
+
     - name: 共有Ollamaの状態を取得
       ansible.builtin.command:
         argv:
@@ -207,4 +236,4 @@
       ansible.builtin.debug:
         msg: >-
           [OK] 必須サービス、Slurm、PostgreSQL、GPU、Pydantic、Apptainerイメージ、
-          JupyterHub、HPCポータル静的ファイル、LiteLLM、SearXNGを確認しました。
+          JupyterHub、HPCポータル静的ファイル、LiteLLM、SearXNG、Web検索MCPを確認しました。

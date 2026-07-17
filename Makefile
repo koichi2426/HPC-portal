@@ -12,7 +12,7 @@ ANSIBLE_ARGS := -i $(INV)
 
 .PHONY: help setup test check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
 	common slurm postgres litellm ollama jupyterhub apptainer searxng cloudflared \
-	status gpu cuda services processes
+	search-mcp status gpu cuda services processes
 
 help: ## ターゲット一覧
 	@printf '\nHPC-portal Makefile\n\n'
@@ -88,7 +88,10 @@ apptainer: check-inv ## apptainer ロールのみ
 	$(PB) site.yml --tags apptainer
 
 searxng: check-inv ## SearXNGとOpen WebUI検索設定を差分反映
-	$(PB) site.yml --tags apptainer,searxng,jupyterhub
+	$(PB) site.yml --tags apptainer,searxng,search_mcp,litellm,jupyterhub
+
+search-mcp: check-inv ## LLM APIのWeb検索MCPを差分反映
+	$(PB) site.yml --tags search_mcp,litellm
 
 cloudflared: check-inv ## cloudflared ロールのみ
 	$(PB) site.yml --tags cloudflared
@@ -103,7 +106,7 @@ cuda: check-inv ## CUDA Toolkit / nvcc 確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "set -e; echo '=== nvcc (PATH) ==='; (command -v nvcc && nvcc --version) || echo 'nvcc: not in PATH'; echo '=== cuda install roots ==='; ls -d /usr/local/cuda* 2>/dev/null || true; for d in /usr/local/cuda /usr/local/cuda-*; do [ -x \"$$d/bin/nvcc\" ] && echo \"found: $$d/bin/nvcc\" && $$d/bin/nvcc --version; done; echo '=== nvidia-smi ==='; nvidia-smi -L"
 
 services: check-inv ## JupyterHub / Slurm / LiteLLM / SearXNG / shared Ollama 状態
-	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "echo '--- systemd'; systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm searxng postgresql || true; echo '--- squeue'; squeue || true; echo '--- hpc-ollama'; if [ -x /usr/local/sbin/hpc-ollama ]; then /usr/local/sbin/hpc-ollama status || true; else echo 'hpc-ollama: not installed'; fi; echo '--- jupyterhub log'; journalctl -u jupyterhub -n 30 --no-pager; echo '--- litellm log'; journalctl -u litellm -n 20 --no-pager; echo '--- searxng log'; journalctl -u searxng -n 20 --no-pager"
+	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -b -m shell -a "echo '--- systemd'; systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm searxng hpc-search-mcp postgresql || true; echo '--- squeue'; squeue || true; echo '--- hpc-ollama'; if [ -x /usr/local/sbin/hpc-ollama ]; then /usr/local/sbin/hpc-ollama status || true; else echo 'hpc-ollama: not installed'; fi; echo '--- jupyterhub log'; journalctl -u jupyterhub -n 30 --no-pager; echo '--- litellm log'; journalctl -u litellm -n 20 --no-pager; echo '--- searxng log'; journalctl -u searxng -n 20 --no-pager; echo '--- search mcp log'; journalctl -u hpc-search-mcp -n 20 --no-pager"
 
 processes: check-inv ## 実行ユーザー / hpc-ollama の残存プロセス確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "echo '--- ansible user'; pgrep -au \$$(whoami) -f 'open_webui|ollama|apptainer|jupyter' || true; echo '--- hpc-ollama'; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"

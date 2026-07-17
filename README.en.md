@@ -16,7 +16,7 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 
 ### 2. System Architecture
 
-JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, and SearXNG remain internal to the host.
+JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, the web-search MCP service, and SearXNG remain internal to the host.
 
 #### Overview
 
@@ -28,6 +28,7 @@ flowchart TB
     Slurm[Slurm]
     Apps[Per-user applications<br/>JupyterLab / Open WebUI]
     LiteLLM[LiteLLM<br/>API Gateway]
+    SearchMCP[Web-search MCP<br/>internal tool]
     SearXNG[SearXNG<br/>internal search API]
     Ollama[Shared Ollama]
     DB[(PostgreSQL)]
@@ -44,6 +45,8 @@ flowchart TB
     JHub -->|Manage users, keys, and models| LiteLLM
     Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
     Apps -->|Web search| SearXNG
+    LiteLLM -->|MCP tool call| SearchMCP
+    SearchMCP -->|JSON search| SearXNG
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
@@ -57,7 +60,7 @@ flowchart TB
     class User,CF,Search external
     class Proxy,JHub,Slurm control
     class Apps,Ollama workload
-    class LiteLLM,SearXNG service
+    class LiteLLM,SearchMCP,SearXNG service
     class DB,Models data
 ```
 
@@ -78,6 +81,7 @@ sequenceDiagram
         participant App as Per-user Slurm job<br/>JupyterLab / Open WebUI
         participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
         participant Ollama as Shared Ollama Slurm job<br/>127.0.0.1:11434
+        participant SearchMCP as Web-search MCP<br/>127.0.0.1:8890
         participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
@@ -118,9 +122,15 @@ sequenceDiagram
     Note over User,LiteLLM: External API use
     User->>CF: Access the LLM API or admin UI
     CF->>LiteLLM: Forward API or admin UI traffic
+    opt Request the web-search MCP tool
+        LiteLLM->>SearchMCP: Call search_web
+        SearchMCP->>SearXNG: Send a query to the internal JSON API
+        SearXNG-->>SearchMCP: Return search results
+        SearchMCP-->>LiteLLM: Return titles, URLs, and snippets
+    end
 ```
 
-Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Web search uses the internal SearXNG service.
+Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Open WebUI calls SearXNG directly, while external LLM API requests use the same SearXNG service through LiteLLM's web-search MCP tool.
 
 ---
 
@@ -185,7 +195,8 @@ Override inventory: `make deploy INV=inventory/staging.ini`
 | `make ollama` | Apply shared Ollama settings for the next start |
 | `make apptainer` | Apply Apptainer and image changes while preserving running containers |
 | `make litellm` | Apply PostgreSQL and LiteLLM changes only |
-| `make searxng` | Apply SearXNG and Open WebUI web-search settings |
+| `make searxng` | Apply SearXNG, web-search MCP, LiteLLM, and Open WebUI search settings |
+| `make search-mcp` | Apply only the web-search MCP and LiteLLM settings |
 | `make common` | Apply common OS settings without rebooting the host |
 | `make slurm` | Apply Slurm changes; leave its config untouched when active jobs require a restart |
 | `make postgres` | Apply PostgreSQL changes only |
@@ -258,7 +269,7 @@ This runs locally without connecting to the target host and checks Python input 
 make smoke
 ```
 
-This connects to the target host in read-only mode and checks major functionality, including the SearXNG JSON search API. It does not change users, jobs, models, or passwords. A stopped shared Ollama instance is skipped.
+This connects to the target host in read-only mode and checks major functionality, including the SearXNG JSON search API and the web-search MCP visible through LiteLLM. It does not change users, jobs, models, or passwords. A stopped shared Ollama instance is skipped.
 
 #### 🧹 Cleanup
 

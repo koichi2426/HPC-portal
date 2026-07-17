@@ -123,5 +123,16 @@ searxng_safe_search: 1
 searxng_query_url: "http://{{ searxng_host }}:{{ searxng_port }}/search?q=<query>"
 openwebui_web_search_result_count: 6
 openwebui_web_search_concurrent_requests: 1
+search_mcp_version: "3.4.4"
+search_mcp_user: hpc-search-mcp
+search_mcp_home: /var/lib/hpc-search-mcp
+search_mcp_install_dir: /opt/hpc-search-mcp
+search_mcp_host: "127.0.0.1"
+search_mcp_port: 8890
+search_mcp_default_result_count: 6
+search_mcp_max_result_count: 10
+search_mcp_query_max_length: 256
+search_mcp_timeout: 5
+search_mcp_max_response_bytes: 2097152
 openwebui_web_loader_concurrent_requests: 2
 openwebui_web_fetch_max_content_length: 12000

@@ -16,7 +16,7 @@
 
 ### 2. システムアーキテクチャ
 
-単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、SearXNGはホスト内部からのみ利用します。
+単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、Web検索MCP、SearXNGはホスト内部からのみ利用します。
 
 #### 全体構成
 
@@ -28,6 +28,7 @@ flowchart TB
     Slurm[Slurm]
     Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
     LiteLLM[LiteLLM<br/>API Gateway]
+    SearchMCP[Web検索MCP<br/>内部ツール]
     SearXNG[SearXNG<br/>内部検索API]
     Ollama[共有Ollama]
     DB[(PostgreSQL)]
@@ -44,6 +45,8 @@ flowchart TB
     JHub -->|ユーザー・Key・モデル管理| LiteLLM
     Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
     Apps -->|Web検索| SearXNG
+    LiteLLM -->|MCPツール呼び出し| SearchMCP
+    SearchMCP -->|JSON検索| SearXNG
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
@@ -57,7 +60,7 @@ flowchart TB
     class User,CF,Search external
     class Proxy,JHub,Slurm control
     class Apps,Ollama workload
-    class LiteLLM,SearXNG service
+    class LiteLLM,SearchMCP,SearXNG service
     class DB,Models data
 ```
 
@@ -78,6 +81,7 @@ sequenceDiagram
         participant App as 利用者ごとの Slurm ジョブ<br/>JupyterLab / Open WebUI
         participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
         participant Ollama as 共有 Ollama Slurm ジョブ<br/>127.0.0.1:11434
+        participant SearchMCP as Web検索MCP<br/>127.0.0.1:8890
         participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
@@ -118,9 +122,15 @@ sequenceDiagram
     Note over User,LiteLLM: 外部API利用時
     User->>CF: LLM API / 管理UIへアクセス
     CF->>LiteLLM: API / 管理UIを転送
+    opt APIリクエストでWeb検索MCPを指定
+        LiteLLM->>SearchMCP: search_webを呼び出す
+        SearchMCP->>SearXNG: 検索語を内部JSON APIへ送信
+        SearXNG-->>SearchMCP: 検索結果を返す
+        SearchMCP-->>LiteLLM: タイトル・URL・概要を返す
+    end
 ```
 
-Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Web検索には内部SearXNGを使用します。
+Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Open WebUIはSearXNGを直接使用し、外部LLM APIはLiteLLMに登録したWeb検索MCP経由で同じSearXNGを使用します。
 
 ---
 
@@ -186,7 +196,8 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 | `make ollama` | shared Ollamaの次回起動設定だけを差分反映 |
 | `make apptainer` | ApptainerとSIFを差分反映。実行中コンテナは維持 |
 | `make litellm` | PostgreSQL・LiteLLMだけを差分反映 |
-| `make searxng` | SearXNGとOpen WebUIのWeb検索設定を差分反映 |
+| `make searxng` | SearXNG・Web検索MCP・LiteLLM・Open WebUI検索設定を差分反映 |
+| `make search-mcp` | Web検索MCPとLiteLLM設定だけを差分反映 |
 | `make common` | OS共通設定を差分反映。OSは自動再起動しない |
 | `make slurm` | Slurmだけを差分反映。ジョブ実行中に設定差分があれば未変更のままスキップ |
 | `make postgres` | PostgreSQLだけを差分反映 |
@@ -259,7 +270,7 @@ make test
 make smoke
 ```
 
-実機へ読み取り専用で接続して主要機能を確認します。ユーザー、ジョブ、モデル、パスワードは変更しません。SearXNGのJSON検索APIも確認し、共有Ollamaは停止中ならスキップします。
+実機へ読み取り専用で接続して主要機能を確認します。ユーザー、ジョブ、モデル、パスワードは変更しません。SearXNGのJSON検索APIとLiteLLMから見えるWeb検索MCPも確認し、共有Ollamaは停止中ならスキップします。
 
 #### 🧹 クリーンアップ
 

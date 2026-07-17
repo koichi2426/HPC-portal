@@ -13,6 +13,7 @@
         - jupyterhub
         - litellm
         - searxng
+        - hpc-search-mcp
         - slurmctld
         - slurmd
         - munge
@@ -88,6 +89,9 @@
         - /opt/hpc-portal/ollama
         - /etc/searxng
         - /var/lib/searxng
+        - /etc/hpc-search-mcp
+        - /opt/hpc-search-mcp
+        - /var/lib/hpc-search-mcp
         - /var/log/hpc-ollama
         - /usr/local/sbin/hpc-ollama
         - /opt/images/ollama.sif
@@ -100,6 +104,7 @@
         - /etc/systemd/system/jupyterhub.service
         - /etc/systemd/system/litellm.service
         - /etc/systemd/system/searxng.service
+        - /etc/systemd/system/hpc-search-mcp.service
         - /etc/systemd/system/cloudflared.service
 
     - name: Cloudflare Tunnel関連の削除
@@ -122,6 +127,13 @@
     - name: SearXNGユーザーを削除
       ansible.builtin.user:
         name: "{{ searxng_service_user | default('searxng') }}"
+        state: absent
+        remove: true
+      failed_when: false
+
+    - name: Web検索MCPユーザーを削除
+      ansible.builtin.user:
+        name: "{{ search_mcp_user | default('hpc-search-mcp') }}"
         state: absent
         remove: true
       failed_when: false

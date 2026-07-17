@@ -13,6 +13,8 @@
       tags: [apptainer]
     - role: searxng
       tags: [searxng]
+    - role: search_mcp
+      tags: [search_mcp, searxng, litellm]
     - role: ollama
       tags: [ollama]
     - role: litellm

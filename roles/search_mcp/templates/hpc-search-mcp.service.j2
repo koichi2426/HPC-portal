@@ -1,0 +1,23 @@
+[Unit]
+Description=HPC Portal SearXNG MCP service
+After=network-online.target searxng.service
+Wants=network-online.target searxng.service
+
+[Service]
+User={{ search_mcp_user }}
+Group={{ search_mcp_user }}
+WorkingDirectory={{ search_mcp_install_dir }}
+EnvironmentFile=/etc/hpc-search-mcp/hpc-search-mcp.env
+Environment=HOME={{ search_mcp_home }}
+Environment=PATH={{ search_mcp_install_dir }}/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart={{ search_mcp_install_dir }}/venv/bin/python {{ search_mcp_install_dir }}/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ search_mcp_home }}
+
+[Install]
+WantedBy=multi-user.target

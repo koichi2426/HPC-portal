@@ -22,3 +22,11 @@ general_settings:
 litellm_settings:
   set_verbose: false
   drop_params: true
+
+mcp_servers:
+  hpc_web_search:
+    url: "http://{{ search_mcp_host }}:{{ search_mcp_port }}/mcp"
+    transport: "http"
+    description: "SearXNGを使用するHPCポータル内部Web検索"
+    auth_type: "none"
+    allow_all_keys: true
