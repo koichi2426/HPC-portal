@@ -21,39 +21,52 @@
 #### 全体構成
 
 ```mermaid
-flowchart LR
-    User[利用者]
-    CF[Cloudflare Tunnel]
-    Search[外部検索サービス]
+flowchart TB
+    User[利用者] --> CF[Cloudflare Tunnel]
 
     subgraph Host[単一ノード]
-        Proxy[configurable-http-proxy<br/>公開入口 :8000]
-        JHub[JupyterHub<br/>ポータル]
-        Slurm[Slurm]
-        Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
-        LiteLLM[LiteLLM<br/>API Gateway]
-        Ollama[共有 Ollama<br/>Slurmジョブ]
-        SearXNG[SearXNG<br/>内部検索API]
-        DB[(PostgreSQL)]
-        Models[(共有モデル保存領域)]
+        direction TB
+
+        subgraph Control[公開入口・ジョブ管理]
+            direction LR
+            Proxy[configurable-http-proxy<br/>:8000]
+            JHub[JupyterHub<br/>ポータル]
+            Slurm[Slurm]
+        end
+
+        subgraph Workloads[Slurmワークロード]
+            direction LR
+            Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
+            Ollama[共有Ollama]
+        end
+
+        subgraph Internal[AI・検索基盤]
+            direction LR
+            LiteLLM[LiteLLM<br/>API Gateway]
+            SearXNG[SearXNG<br/>内部検索API]
+        end
+
+        subgraph Data[永続データ]
+            direction LR
+            DB[(PostgreSQL)]
+            Models[(共有モデル保存領域)]
+        end
     end
 
-    User --> CF
     CF -->|Hub・アプリURL| Proxy
+    CF -->|LLM API・管理UI| LiteLLM
     Proxy --> JHub
     Proxy --> Apps
-    JHub -->|動的ルートを登録| Proxy
-    JHub -->|アプリ・共有Ollamaのジョブ投入| Slurm
-    Slurm --> Apps
-    Slurm --> Ollama
+    JHub -.->|動的ルート登録| Proxy
+    JHub -->|ジョブ投入| Slurm
+    Slurm --> Apps & Ollama
     JHub -->|ユーザー・Key・モデル管理| LiteLLM
     Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
     Apps -->|Web検索| SearXNG
-    SearXNG --> Search
-    CF -->|LLM API・管理UI| LiteLLM
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
+    SearXNG --> Search[外部検索サービス]
 ```
 
 #### 起動・推論の流れ

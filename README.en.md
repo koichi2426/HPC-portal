@@ -21,39 +21,52 @@ JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together 
 #### Overview
 
 ```mermaid
-flowchart LR
-    User[User]
-    CF[Cloudflare Tunnel]
-    Search[External search services]
+flowchart TB
+    User[User] --> CF[Cloudflare Tunnel]
 
     subgraph Host[Single node]
-        Proxy[configurable-http-proxy<br/>public entry :8000]
-        JHub[JupyterHub<br/>Portal]
-        Slurm[Slurm]
-        Apps[Per-user applications<br/>JupyterLab / Open WebUI]
-        LiteLLM[LiteLLM<br/>API Gateway]
-        Ollama[Shared Ollama<br/>Slurm job]
-        SearXNG[SearXNG<br/>internal search API]
-        DB[(PostgreSQL)]
-        Models[(Shared model storage)]
+        direction TB
+
+        subgraph Control[Public entry and job management]
+            direction LR
+            Proxy[configurable-http-proxy<br/>:8000]
+            JHub[JupyterHub<br/>Portal]
+            Slurm[Slurm]
+        end
+
+        subgraph Workloads[Slurm workloads]
+            direction LR
+            Apps[Per-user applications<br/>JupyterLab / Open WebUI]
+            Ollama[Shared Ollama]
+        end
+
+        subgraph Internal[AI and search services]
+            direction LR
+            LiteLLM[LiteLLM<br/>API Gateway]
+            SearXNG[SearXNG<br/>internal search API]
+        end
+
+        subgraph Data[Persistent data]
+            direction LR
+            DB[(PostgreSQL)]
+            Models[(Shared model storage)]
+        end
     end
 
-    User --> CF
     CF -->|Hub and application URLs| Proxy
+    CF -->|LLM API and admin UI| LiteLLM
     Proxy --> JHub
     Proxy --> Apps
-    JHub -->|Register dynamic routes| Proxy
-    JHub -->|Submit app and shared Ollama jobs| Slurm
-    Slurm --> Apps
-    Slurm --> Ollama
+    JHub -.->|Register dynamic routes| Proxy
+    JHub -->|Submit jobs| Slurm
+    Slurm --> Apps & Ollama
     JHub -->|Manage users, keys, and models| LiteLLM
     Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
     Apps -->|Web search| SearXNG
-    SearXNG --> Search
-    CF -->|LLM API and admin UI| LiteLLM
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
+    SearXNG --> Search[External search services]
 ```
 
 #### Startup and inference flow
