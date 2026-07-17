@@ -246,6 +246,7 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
       "ENABLE_MEMORIES=True" \
       "ENABLE_MEMORY_SYSTEM_CONTEXT=False" \
       "ENABLE_NOTES=True" \
+      "ENABLE_FOLLOW_UP_GENERATION=False" \
       "ENABLE_WEB_SEARCH=True" \
       "WEB_SEARCH_ENGINE=searxng" \
       "SEARXNG_QUERY_URL={HPC_SEARXNG_QUERY_URL}" \

@@ -36,6 +36,7 @@ def test_openwebui_enables_selected_builtin_tools_by_default():
     assert params["think"] is False
     assert params["reasoning_effort"] == "none"
     assert params["function_calling"] == "native"
+    assert '"ENABLE_FOLLOW_UP_GENERATION=False"' in script
     assert '"ENABLE_WEB_SEARCH=True"' in script
     assert '"ENABLE_CODE_INTERPRETER=True"' in script
     assert '"WEB_SEARCH_ENGINE=searxng"' in script
