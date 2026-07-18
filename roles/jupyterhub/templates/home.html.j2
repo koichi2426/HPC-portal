@@ -20,7 +20,11 @@
         <div class="hpc-help" style="margin-top:3px;">Node: gx10-ac12</div>
       </div>
       <div style="text-align:right;">
-        <div class="hpc-muted" data-resource-updated-at style="font-size:11px; margin-bottom:4px;">5秒ごとに自動更新</div>
+        <span class="hpc-refresh-status" data-resource-refresh-status aria-live="polite">
+          <span class="hpc-refresh-spinner" aria-hidden="true"></span>
+          <span data-resource-updated-at>最終更新 --:--:--</span>
+          <span class="visually-hidden" data-resource-refresh-live>取得中</span>
+        </span>
         <a class="hpc-page-link" href="/hub/new">新規起動へ →</a>
       </div>
     </div>
@@ -33,14 +37,22 @@
           <span data-resource-text="cpu_total">最大 {{ res.cpu_total }} vCPU</span>
         </div>
       </div>
-      <div class="gx10-resource-meter">
-        <div class="gx10-meter-head"><span>RAM 空き</span><span class="gx10-meter-status" data-resource-text="mem_status">{{ res.mem_status }}</span></div>
-        <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="mem_available" style="width:{{ "%.0f"|format(res.mem_available) }}%;"></div></div>
-        <div class="gx10-meter-numbers">
-          <span data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</span>
-          <span data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</span>
+      <details class="gx10-resource-meter hpc-unified-memory hpc-resource-menu">
+        <summary class="hpc-unified-memory-summary" aria-label="統合メモリの説明を開く">
+          <div class="gx10-meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="gx10-meter-status" data-resource-text="mem_status">{{ res.mem_status }}</span></div>
+          <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="mem_available" style="width:{{ "%.0f"|format(res.mem_available) }}%;"></div></div>
+          <div class="gx10-meter-numbers">
+            <span data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</span>
+            <span data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</span>
+          </div>
+        </summary>
+        <div class="hpc-unified-memory-panel">
+          <strong>統合メモリについて</strong>
+          <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
+          <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</dd></div></dl>
+          <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
         </div>
-      </div>
+      </details>
       <div class="gx10-resource-meter">
         <div class="gx10-meter-head"><span>Storage 空き</span><span class="gx10-meter-status" data-resource-text="disk_status">{{ res.disk_status }}</span></div>
         <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="disk_available" style="width:{{ "%.0f"|format(res.disk_available) }}%;"></div></div>
@@ -49,50 +61,88 @@
           <span data-resource-text="disk_total_gb">最大 {{ "%.1f"|format(res.disk_total_gb) }} GB</span>
         </div>
       </div>
-      <div class="gx10-resource-meter">
-        <div class="gx10-meter-head"><span>GPU 空き</span><span class="gx10-meter-status" data-resource-text="gpu_status">{{ res.gpu_status }}</span></div>
-        <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="gpu_available" style="width:{{ "%.0f"|format(res.gpu_available) }}%;"></div></div>
-        <div class="gx10-meter-numbers">
-          <span data-resource-text="gpu_available_count">空き {{ res.gpu_available_count }}/{{ res.gpu_max }} GPU</span>
-          <span data-resource-text="gpu_vram_available_gb">VRAM {{ "%.1f"|format(res.gpu_vram_available_gb) }}/{{ "%.1f"|format(res.gpu_vram_total_gb) }} GB</span>
-        </div>
-      </div>
+      <details class="gx10-resource-meter hpc-gpu-processes">
+        <summary><span>GPU</span><span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{% if res.gpu_processes_available %}利用中 {{ res.gpu_process_count }}件{% else %}取得できません{% endif %}</span></summary>
+        <ul class="hpc-gpu-process-list" data-gpu-process-list>
+          {% if not res.gpu_processes_available %}
+          <li class="hpc-gpu-process-empty">GPUプロセス情報を取得できません</li>
+          {% elif res.gpu_processes %}
+            {% for process in res.gpu_processes %}
+            <li class="hpc-gpu-process-item"><span class="hpc-gpu-process-name">{{ process.name }}</span><span class="hpc-gpu-process-meta">{{ process.username }} · PID {{ process.pid }}</span></li>
+            {% endfor %}
+          {% else %}
+          <li class="hpc-gpu-process-empty">GPUを使用中のプロセスはありません</li>
+          {% endif %}
+        </ul>
+      </details>
     </div>
   </div>
 
-  <div class="hpc-muted" style="margin-bottom:10px;">起動中のアプリケーション</div>
+  {% if user and user.name in hpc_portal_admin_users %}
+    <section class="gx10-admin-card hpc-admin-apps-card hpc-home-admin-apps" id="running-applications" data-hpc-admin-apps>
+      <div class="hpc-row-between" style="margin-bottom:12px;">
+        <div>
+          <div class="hpc-section-title">全ユーザーの起動中アプリケーション</div>
+          <div class="hpc-muted" style="font-size:12px; margin-top:4px;">Slurmの割当と使用量を5秒ごとに更新します。</div>
+        </div>
+        <div class="hpc-user-list-actions">
+          <span class="hpc-refresh-status" data-hpc-admin-apps-refresh aria-live="polite">
+            <span class="hpc-refresh-spinner" aria-hidden="true"></span>
+            <span data-hpc-admin-apps-updated>最終更新 --:--:--</span>
+            <span class="visually-hidden" data-hpc-admin-apps-live>更新中</span>
+          </span>
+          <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-hpc-admin-apps-reload>再読み込み</button>
+        </div>
+      </div>
+      <div class="hpc-admin-apps-table-wrap">
+        <table class="gx10-admin-table hpc-admin-apps-table" aria-label="全ユーザーの起動中アプリケーション一覧">
+          <thead><tr><th>ユーザー</th><th>アプリ</th><th>状態</th><th>CPU割当</th><th>メモリ上限</th><th>GPU</th><th>実行時間</th><th>詳細</th></tr></thead>
+          <tbody data-hpc-admin-apps-body>
+            <tr class="hpc-admin-apps-empty"><td colspan="8">取得中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="hpc-muted" style="font-size:12px; margin-top:10px;">メモリ上限はSlurmの割当値です。最大実使用メモリは30秒間隔で収集されます。</div>
+      <div data-hpc-admin-apps-message class="gx10-admin-msg"></div>
+    </section>
+  {% endif %}
+
+  <div class="hpc-muted" style="margin-bottom:10px;">自分の起動中アプリケーション</div>
 
   {% if user and user.name in hpc_portal_admin_users %}
-    {% set shared = hpc_shared_ollama_detail %}
-    {% if shared.active %}
     <div class="gx10-app-card"
          data-hpc-shared-ollama-status
-         data-hpc-app-state="{% if shared.api %}running{% else %}pending{% endif %}">
+         data-hpc-shared-ollama-home-card
+         data-hpc-reload-on-change="false"
+         data-hpc-ollama-target-version="{{ hpc_ollama_version }}"
+         data-hpc-app-state="pending"
+         hidden>
       <a class="gx10-app-card-link" href="/hub/apps/shared-ollama">
         <div>
-          <div class="hpc-section-title">Ollama{% if shared.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ shared.job_id }})</span>{% endif %}</div>
-          <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ shared.allocation.cpu }} vCPU · {{ shared.allocation.memory }} RAM · 1 GPU · {{ shared.allocation.hours }}</div>
-          <div data-hpc-app-status-text class="{% if shared.api %}hpc-status-ok{% else %}hpc-status-warn{% endif %}" style="font-size:12px; margin-top:4px;">{% if shared.api %}実行中 / API OK{% else %}起動中 / API応答待ち{% endif %}</div>
-          <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" {% if shared.api %}hidden{% endif %} role="progressbar" aria-label="Ollamaを起動しています"><div class="hpc-progress-fill"></div></div>
+          <div class="hpc-section-title">Ollama <span class="hpc-muted" data-hpc-ollama-job-id style="font-size:11px;"></span></div>
+          <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: <span data-hpc-ollama-allocation>確認中</span></div>
+          <div class="hpc-app-version">
+            バージョン: <strong data-hpc-ollama-running-version>確認中</strong>
+            <span class="hpc-version-update" data-hpc-ollama-version-update hidden>再起動で更新</span>
+          </div>
+          <div data-hpc-app-status-text class="hpc-status-warn" style="font-size:12px; margin-top:4px;">状態を確認中</div>
+          <div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" role="progressbar" aria-label="Ollamaの状態を確認しています"><div class="hpc-progress-fill"></div></div>
           <div class="gx10-detail-hint">詳細を見る →</div>
         </div>
       </a>
     </div>
-    {% endif %}
   {% endif %}
 
   {% if user and user.spawners %}
-    {% set has_any = false %}
     {% for name, spawner in user.spawners.items() %}
       {% set spawn_error = spawner.hpc_failure_message|default('') %}
       {% if spawner.active or spawner.pending or spawn_error %}
-        {% set has_any = true %}
         {% set sp_public_url = spawner.public_url if spawner.public_url is defined else '' %}
         {% set _uo = spawner.user_options if spawner.user_options is defined else {} %}
         {% set is_openwebui = _uo.get('app_choice') == 'open-webui' if _uo else false %}
         {% if is_openwebui %}
           {% set app_label = 'Open WebUI' %}
-        {% elif _uo.get('app_choice') in ['jupyterlab', 'jupyter'] %}
+        {% elif _uo.get('app_choice') in ['ubuntu-cli', 'jupyterlab', 'jupyter'] %}
           {% set app_label = 'JupyterLab' %}
         {% elif name %}
           {% set app_label = name %}
@@ -156,6 +206,20 @@
             <div>
               <div class="hpc-section-title">{{ app_label }}{% if spawner.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
               <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ alloc_line }}</div>
+              {% if is_openwebui and not spawn_error %}
+              <div class="hpc-app-version" data-hpc-openwebui-version-url="/hub/apps/{{ sn_path }}/version">
+                バージョン:
+                <strong data-hpc-running-version>{% if _uo.get('openwebui_version') %}v{{ _uo.get('openwebui_version') }}{% else %}確認中{% endif %}</strong>
+                <span class="hpc-version-update" data-hpc-version-update hidden>再起動で更新</span>
+              </div>
+              {% elif not spawn_error %}
+              {# 旧構成のイメージもUbuntu 24.04固定だったため、保存値がない既存jobは現行値で補完する。 #}
+              {% set running_ubuntu_version = _uo.get('ubuntu_version') or hpc_jupyter_ubuntu_version %}
+              <div class="hpc-app-version">
+                環境: <strong>{% if running_ubuntu_version %}Ubuntu {{ running_ubuntu_version }}{% else %}不明{% endif %}</strong>
+                {% if running_ubuntu_version and running_ubuntu_version != hpc_jupyter_ubuntu_version %}<span class="hpc-version-update">再起動で更新</span>{% endif %}
+              </div>
+              {% endif %}
               {% if spawn_error %}
                 <div class="hpc-status-danger" style="font-size:12px; margin-top:4px;">起動に失敗しました</div>
                 <div class="hpc-muted gx10-app-error-detail">{{ spawn_error }}</div>
@@ -174,22 +238,24 @@
           </div>
           {% elif spawner.active %}
           <div class="gx10-app-card-actions">
-            <a class="hpc-page-link" href="{{ job_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">
-              JUMP ↗
+            <a class="hpc-page-link hpc-external-link" href="{{ job_url }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();" aria-label="JUMPを新しいタブで開く">
+              <span>JUMP</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg>
             </a>
           </div>
           {% endif %}
         </div>
       {% endif %}
     {% endfor %}
-
-  {% else %}
   {% endif %}
 </div>
 {% endblock %}
 
 {% block script %}
-<script src="/hub/hpc-resource-meter.js?v=2"></script>
-<script src="/hub/hpc-app-status.js?v=1"></script>
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/resource-meter.js?v={{ hpc_static_versions['js/resource-meter.js'] }}"></script>
+<script src="/hub/hpc-js/app-status.js?v={{ hpc_static_versions['js/app-status.js'] }}"></script>
+{% if user and user.name in hpc_portal_admin_users %}
+<script src="/hub/hpc-js/admin-apps.js?v={{ hpc_static_versions['js/admin-apps.js'] }}"></script>
+{% endif %}
 {% endblock %}
 {% endraw %}

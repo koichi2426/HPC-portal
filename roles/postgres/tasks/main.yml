@@ -20,7 +20,6 @@
     state: started
   when:
     - not ansible_check_mode
-    - not (hpc_skip_service_restarts | default(false) | bool)
 
 - name: LiteLLM 用 database user を作成・更新
   ansible.builtin.shell: |

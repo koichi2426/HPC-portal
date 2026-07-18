@@ -16,39 +16,55 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 
 ### 2. System Architecture
 
-JupyterHub, Slurm, shared Ollama, and LiteLLM run together on one node. External access goes through Cloudflare Tunnel only; Ollama and PostgreSQL remain internal to the host.
+JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, the web-search MCP service, and SearXNG remain internal to the host.
 
 #### Overview
 
 ```mermaid
-flowchart LR
-    User[User]
-    CF[Cloudflare Tunnel]
+flowchart TB
+    User[User] --> CF[Cloudflare Tunnel]
+    Proxy[configurable-http-proxy<br/>:8000]
+    JHub[JupyterHub<br/>Portal]
+    Slurm[Slurm]
+    Apps[Per-user applications<br/>JupyterLab / Open WebUI]
+    LiteLLM[LiteLLM<br/>API Gateway]
+    SearchMCP[Web-search MCP<br/>internal tool]
+    SearXNG[SearXNG<br/>internal search API]
+    Ollama[Shared Ollama]
+    DB[(PostgreSQL)]
+    Models[(Shared model storage)]
+    Search[External search services]
 
-    subgraph Host[Single node]
-        Proxy[configurable-http-proxy<br/>public entry :8000]
-        JHub[JupyterHub<br/>Portal]
-        Slurm[Slurm]
-        Apps[Per-user applications<br/>JupyterLab / Open WebUI]
-        LiteLLM[LiteLLM<br/>API Gateway]
-        Ollama[Shared Ollama]
-        DB[(PostgreSQL)]
-        Models[(Shared model storage)]
-    end
-
-    User --> CF
     CF -->|Hub and application URLs| Proxy
+    CF -->|LLM API and admin UI| LiteLLM
     Proxy --> JHub
     Proxy --> Apps
-    JHub -->|Register dynamic routes| Proxy
     JHub -->|Submit jobs| Slurm
     Slurm --> Apps
-    Apps -->|Per-user Virtual Key| LiteLLM
-    CF -->|LLM API and admin UI| LiteLLM
+    Slurm --> Ollama
+    JHub -->|Manage users, keys, and models| LiteLLM
+    Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
+    Apps -->|Web search| SearXNG
+    LiteLLM -->|MCP tool call| SearchMCP
+    SearchMCP -->|JSON search| SearXNG
     LiteLLM <--> DB
-    LiteLLM --> Ollama
+    LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
+    SearXNG --> Search
+
+    classDef external fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#111827
+    classDef workload fill:#dcfce7,stroke:#16a34a,color:#111827
+    classDef service fill:#ede9fe,stroke:#7c3aed,color:#111827
+    classDef data fill:#fef3c7,stroke:#d97706,color:#111827
+    class User,CF,Search external
+    class Proxy,JHub,Slurm control
+    class Apps,Ollama workload
+    class LiteLLM,SearchMCP,SearXNG service
+    class DB,Models data
 ```
+
+Colors: gray=external, blue=portal and job management, green=Slurm workloads, purple=AI and search services, yellow=persistent data. Blue, green, purple, and yellow components run on the single node.
 
 #### Startup and inference flow
 
@@ -65,6 +81,8 @@ sequenceDiagram
         participant App as Per-user Slurm job<br/>JupyterLab / Open WebUI
         participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
         participant Ollama as Shared Ollama Slurm job<br/>127.0.0.1:11434
+        participant SearchMCP as Web-search MCP<br/>127.0.0.1:8890
+        participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
 
@@ -96,10 +114,23 @@ sequenceDiagram
     LiteLLM-->>App: OpenAI-compatible response
     App-->>User: Display the response
 
+    opt Use web search
+        App->>SearXNG: Send the query to the internal JSON API
+        SearXNG-->>App: Return aggregated search results
+    end
+
     Note over User,LiteLLM: External API use
     User->>CF: Access the LLM API or admin UI
     CF->>LiteLLM: Forward API or admin UI traffic
+    opt Request the web-search MCP tool
+        LiteLLM->>SearchMCP: Call search_web
+        SearchMCP->>SearXNG: Send a query to the internal JSON API
+        SearXNG-->>SearchMCP: Return search results
+        SearchMCP-->>LiteLLM: Return titles, URLs, and snippets
+    end
 ```
+
+Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Open WebUI calls SearXNG directly, while external LLM API requests use the same SearXNG service through LiteLLM's web-search MCP tool.
 
 ---
 
@@ -131,34 +162,114 @@ sequenceDiagram
    ```bash
    ssh <ansible_user>@<target-ip>
    ```
-4. **Copy inventory and secrets templates**:
+4. **Set up the inventory and secrets**:
    ```bash
    make setup
-   # Edit inventory/production.ini and group_vars/all/secret.yml
+   # Set external values such as cloudflared_token in group_vars/all/secret.yml
    ```
+
+   `make setup` generates only missing LiteLLM, PostgreSQL, and SearXNG secrets. It never replaces values that are already configured.
 
 #### 📋 Common make targets
 
 See [Makefile](./Makefile). Run `make help` for the full list.
 
+##### Core operations
+
 | Command | Description |
 |---------|-------------|
+| `make deploy` | Safely apply changed components while preserving Slurm jobs |
+| `make deploy-restart` | Stop all jobs and restart related services, with `restart` confirmation |
 | `make ping` | Connectivity check |
 | `make check` | Dry run (`--check --diff`) |
-| `make deploy` | Full deploy (`site.yml`) |
-| `make deploy-safe` | Deploy without service restarts (`site_safe.yml`) |
-| `make cleanup` | Cleanup services and config while keeping model/DB data |
-| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
-| `make jupyterhub` / `make slurm` / `make ollama` | Single role or tag |
-| `make status` / `make gpu` / `make services` / `make processes` | Remote diagnostics |
+| `make test` | Run pytest locally without connecting to the target host |
+| `make smoke` | Run read-only checks against services, APIs, and deployed assets |
 
 Override inventory: `make deploy INV=inventory/staging.ini`
 
+##### Component updates
+
+| Command | Description |
+|---------|-------------|
+| `make jupyterhub` | Apply JupyterHub changes while preserving running jobs |
+| `make ollama` | Apply shared Ollama settings for the next start |
+| `make apptainer` | Apply Apptainer and image changes while preserving running containers |
+| `make litellm` | Apply PostgreSQL and LiteLLM changes only |
+| `make searxng` | Apply SearXNG, web-search MCP, LiteLLM, and Open WebUI search settings |
+| `make search-mcp` | Apply only the web-search MCP and LiteLLM settings |
+| `make common` | Apply common OS settings without rebooting the host |
+| `make slurm` | Apply Slurm changes; leave its config untouched when active jobs require a restart |
+| `make postgres` | Apply PostgreSQL changes only |
+| `make cloudflared` | Apply cloudflared changes only |
+
+##### Diagnostics
+
+| Command | Description |
+|---------|-------------|
+| `make status` | Show Slurm jobs and disk space |
+| `make services` | Show service, shared Ollama, and major log status |
+| `make gpu` | Show GPU and VRAM status |
+| `make processes` | Check remaining user and hpc-ollama processes |
+
+##### Cleanup
+
+| Command | Description |
+|---------|-------------|
+| `make cleanup` | Cleanup services and config while keeping model/DB data |
+| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
+
 #### 🚀 Deploy
+
+Normal update:
 
 ```bash
 make deploy
 ```
+
+This applies changed components while preserving running Slurm jobs.
+
+Full update including Slurm configuration:
+
+```bash
+make deploy-restart
+```
+
+Enter `restart` at the prompt to stop all jobs and apply the update. Stopped applications are not restarted automatically; start the required applications from the portal afterward.
+
+<details>
+<summary>Deployment behavior details</summary>
+
+If `make deploy` detects pending Slurm configuration changes while jobs are active, it defers only that configuration, applies the remaining changes, and reports that `make deploy-restart` is required. App launch configuration changes take effect on the next start. Slurm configuration uses fixed-name temporary backups that are removed after success or successful rollback.
+
+</details>
+
+#### 🧪 Development environment and tests
+
+After installing [uv](https://docs.astral.sh/uv/), run these commands in the repository root.
+
+##### Initial setup and dependency updates
+
+```bash
+uv sync --dev
+```
+
+This creates a Python 3.12 `.venv` and synchronizes development dependencies.
+
+##### pytest (before deployment)
+
+```bash
+make test
+```
+
+This runs locally without connecting to the target host and checks Python input validation, authorization, and control flow.
+
+##### Smoke test (after deployment)
+
+```bash
+make smoke
+```
+
+This connects to the target host in read-only mode and checks major functionality, including the SearXNG JSON search API and the web-search MCP visible through LiteLLM. It does not change users, jobs, models, or passwords. A stopped shared Ollama instance is skipped.
 
 #### 🧹 Cleanup
 

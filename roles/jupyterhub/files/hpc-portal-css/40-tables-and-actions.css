@@ -1,0 +1,231 @@
+.gx10-detail-table,
+.gx10-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.gx10-detail-table th,
+.gx10-admin-table th {
+  text-align: left;
+  color: var(--hpc-muted);
+  font-weight: 600;
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--hpc-border);
+  vertical-align: top;
+}
+
+.gx10-detail-table th {
+  width: 38%;
+  border-bottom: 0;
+}
+
+.gx10-detail-table td,
+.gx10-admin-table td {
+  color: var(--hpc-text);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hpc-border-muted);
+  vertical-align: middle;
+  word-break: break-word;
+}
+
+.gx10-detail-table td {
+  border-bottom: 0;
+  word-break: break-all;
+}
+
+.gx10-admin-table th,
+.gx10-admin-table td {
+  padding: 10px 12px 10px 0;
+}
+
+.gx10-admin-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.gx10-admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.gx10-admin-label,
+.label {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.label {
+  font-size: 0.75rem;
+  letter-spacing: 1.5px;
+  margin-bottom: 8px;
+}
+
+.gx10-admin-badge,
+.hpc-status-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hpc-surface-subtle);
+  color: var(--hpc-muted);
+}
+
+.hpc-status-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border: 1px solid var(--hpc-border);
+}
+
+.hpc-status-badge.running {
+  color: var(--hpc-success);
+  background: var(--hpc-success-bg);
+  border-color: color-mix(in srgb, var(--hpc-success) 35%, transparent);
+}
+
+.hpc-status-badge.pending {
+  color: var(--hpc-warning);
+  background: var(--hpc-warning-bg);
+  border-color: color-mix(in srgb, var(--hpc-warning) 35%, transparent);
+}
+
+.hpc-status-danger {
+  color: var(--hpc-danger);
+}
+
+.hpc-empty {
+  color: var(--hpc-muted);
+  font-size: 13px;
+}
+
+.gx10-admin-keybox,
+.gx10-key-box {
+  display: none;
+  margin-top: 12px;
+  background: var(--hpc-surface);
+  border: 1px solid var(--hpc-border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.gx10-key-box {
+  margin-top: 14px;
+}
+
+.gx10-admin-keybox.visible,
+.gx10-key-box.visible {
+  display: block;
+}
+
+.gx10-admin-btn,
+.gx10-key-btn,
+.gx10-primary-btn,
+.gx10-delete-btn,
+.gx10-stop-btn,
+.hpc-primary-btn {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.gx10-primary-btn,
+.hpc-primary-btn,
+.gx10-admin-btn-primary,
+.gx10-key-btn-primary {
+  display: inline-block;
+  background: var(--hpc-primary);
+  color: #fff;
+  border-color: var(--hpc-primary);
+  text-decoration: none;
+}
+
+.gx10-primary-btn:hover,
+.hpc-primary-btn:hover,
+.gx10-admin-btn-primary:hover:not(:disabled),
+.gx10-key-btn-primary:hover:not(:disabled) {
+  background: var(--hpc-primary-hover);
+  color: #fff;
+}
+
+/* ページ固有の一般リンク色より優先し、主ボタンの文字コントラストを維持する。 */
+.gx10-admin-users a.gx10-primary-btn,
+.gx10-admin-users a.hpc-primary-btn,
+.gx10-app-detail-page a.gx10-primary-btn,
+.gx10-app-detail-page a.hpc-primary-btn,
+.gx10-key-page a.gx10-primary-btn,
+.gx10-key-page a.hpc-primary-btn,
+#resource-dashboard a.gx10-primary-btn,
+#resource-dashboard a.hpc-primary-btn,
+.gx10-admin-users a.gx10-primary-btn:hover,
+.gx10-admin-users a.hpc-primary-btn:hover,
+.gx10-app-detail-page a.gx10-primary-btn:hover,
+.gx10-app-detail-page a.hpc-primary-btn:hover,
+.gx10-key-page a.gx10-primary-btn:hover,
+.gx10-key-page a.hpc-primary-btn:hover,
+#resource-dashboard a.gx10-primary-btn:hover,
+#resource-dashboard a.hpc-primary-btn:hover {
+  color: #fff;
+}
+
+.gx10-admin-btn-muted,
+.gx10-key-btn-muted {
+  background: transparent;
+  color: var(--hpc-link);
+  border-color: var(--hpc-border);
+}
+
+.gx10-admin-btn-warn {
+  background: transparent;
+  color: var(--hpc-warning);
+  border-color: var(--hpc-warning);
+}
+
+.gx10-admin-btn-enable {
+  background: transparent;
+  color: var(--hpc-success);
+  border-color: var(--hpc-success);
+}
+
+.gx10-admin-btn-enable:hover:not(:disabled) {
+  background: var(--hpc-success-bg);
+}
+
+.gx10-delete-btn,
+.gx10-admin-btn-danger,
+.gx10-stop-btn {
+  background: transparent;
+  color: var(--hpc-danger);
+  border-color: var(--hpc-danger);
+}
+
+.gx10-delete-btn {
+  padding: 10px 18px;
+  font-size: 14px;
+}
+
+.gx10-delete-btn:hover:not(:disabled),
+.gx10-admin-btn-danger:hover:not(:disabled),
+.gx10-stop-btn:hover:not(:disabled) {
+  background: var(--hpc-danger-bg);
+}
+
+.gx10-admin-btn:disabled,
+.gx10-key-btn:disabled,
+.gx10-delete-btn:disabled,
+.gx10-stop-btn:disabled,
+.hpc-primary-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.gx10-admin-table td .gx10-admin-btn + .gx10-admin-btn {
+  margin-left: 6px;
+}

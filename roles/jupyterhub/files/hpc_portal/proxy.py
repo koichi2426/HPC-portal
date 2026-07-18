@@ -1,11 +1,13 @@
 """configurable-http-proxyのルート検査と補修を提供する。"""
 
+import asyncio
+import time
+
+from .apps import _spawner_job_id
 from .common import (
     CHECK_ROUTES_DURATION_SECONDS,
     ConfigurableHTTPProxy,
     _one_at_a_time,
-    asyncio,
-    time,
 )
 from .routing import (
     _hpc_chp_target_ready,
@@ -14,6 +16,32 @@ from .routing import (
     _hpc_spawner_target_host,
     _sync_job_proxy_and_public,
 )
+
+
+async def _hpc_running_job_route_target(spawner) -> str:
+    """Hub未readyでもSlurmで実行中のSpawner転送先を取得する。
+
+    JupyterHub再起動直後は、Slurmジョブと保存済みポートが残っていても
+    ``spawner.ready`` が一時的にFalseになる場合がある。JOB IDを持つ対象だけ
+    ``poll`` して、実行中と確認できた場合に限りルート復元を許可する。
+
+    Args:
+        spawner: 確認対象のSpawner。
+
+    Returns:
+        復元可能な転送先URL。実行中と確認できない場合は空文字列。
+    """
+    if not _spawner_job_id(spawner):
+        return ""
+    target = _hpc_spawner_target_host(spawner)
+    if not _hpc_chp_target_ready(target):
+        return ""
+    try:
+        stopped = await spawner.poll()
+        running = bool(spawner.state_isrunning())
+    except Exception:
+        return ""
+    return target if stopped is None and running else ""
 
 
 class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
@@ -43,6 +71,9 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
             user_dict: JupyterHubユーザー辞書。
             service_dict: JupyterHubサービス辞書。
             routes: 取得済みルート。
+
+        Returns:
+            処理完了時はNone。
         """
         start = time.perf_counter()
         if not routes:
@@ -224,6 +255,46 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
                                 h,
                             )
                             routes = await self.get_all_routes()
+                else:
+                    # Hub再起動後にserver.readyの復元が遅れても、Slurmで実行中の
+                    # ジョブ用ホストルートを失わないよう直接補修する。
+                    h = await _hpc_running_job_route_target(spawner)
+                    spec = str(getattr(spawner, "proxy_spec", "") or "")
+                    alias = getattr(spawner, "_hpc_public_alias_routespec", None)
+                    if not h or not spec:
+                        continue
+                    good_routes.add(spec)
+                    if alias:
+                        good_routes.add(alias)
+                    sk = _raw_routespec_key(_hpc_norm_routespec(spec))
+                    primary_route = routes.get(sk) if sk else None
+                    if not primary_route or primary_route.get("target") != h:
+                        await self.add_route(
+                            spec,
+                            h,
+                            {"user": user.name, "server_name": name},
+                        )
+                        self.log.info(
+                            "HPC: restored running job route %s → %s",
+                            spec,
+                            h,
+                        )
+                        routes = await self.get_all_routes()
+                    if alias:
+                        ak = _raw_routespec_key(_hpc_norm_routespec(alias))
+                        alias_route = routes.get(ak) if ak else None
+                        if not alias_route or alias_route.get("target") != h:
+                            await self.add_route(
+                                alias,
+                                h,
+                                {"user": user.name, "server_name": name},
+                            )
+                            self.log.info(
+                                "HPC: restored running job alias %s → %s",
+                                alias,
+                                h,
+                            )
+                            routes = await self.get_all_routes()
 
         service_routes = {}
         for r in routes.values():
@@ -269,4 +340,3 @@ class HpcConfigurableHTTPProxy(ConfigurableHTTPProxy):
             CHECK_ROUTES_DURATION_SECONDS.observe(stop - start)
         except Exception:
             pass
-

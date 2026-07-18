@@ -1,19 +1,32 @@
-"""Linuxユーザーの検証、作成、削除、パスワード変更を提供する。"""
+"""Linuxユーザーの検証、作成、削除、権限・表示名・パスワード変更を提供する。"""
+
+import grp
+import os
+import pwd
+import re
+import secrets
+import subprocess
 
 from .common import (
     HPC_PORTAL_ADMIN_USERS,
-    HPC_PORTAL_GRANT_SUDO,
     HPC_PORTAL_PROTECTED_USERS,
     HPC_PORTAL_SUDO_GROUP,
     HPC_PORTAL_USER_MIN_UID,
-    os,
-    pwd,
-    re,
-    subprocess,
 )
 
 _HPC_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,31}$")
 _HPC_NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/bin/false", "/sbin/nologin"}
+_HPC_DISPLAY_NAME_MAX_LENGTH = 80
+_HPC_RANDOM_PASSWORD_LENGTH = 12
+_HPC_RANDOM_PASSWORD_UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_HPC_RANDOM_PASSWORD_LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
+_HPC_RANDOM_PASSWORD_DIGITS = "0123456789"
+_HPC_RANDOM_PASSWORD_ALPHABET = (
+    _HPC_RANDOM_PASSWORD_UPPERCASE
+    + _HPC_RANDOM_PASSWORD_LOWERCASE
+    + _HPC_RANDOM_PASSWORD_DIGITS
+)
+
 
 def _hpc_is_portal_admin(user) -> bool:
     """ログインユーザーがポータル管理者か判定する。
@@ -55,14 +68,54 @@ def _hpc_validate_password(password: str) -> str | None:
     """
     if not password or len(password) < 8:
         return "パスワードは8文字以上にしてください"
+    if any(char in password for char in (":", "\n", "\r")):
+        return "パスワードにコロンや改行は使用できません"
     return None
+
+
+def _hpc_validate_display_name(display_name: str) -> str | None:
+    """Linux GECOS欄へ保存する表示名を検証する。
+
+    Args:
+        display_name: 設定する表示名。
+
+    Returns:
+        正常ならNone、不正ならエラーメッセージ。
+    """
+    value = (display_name or "").strip()
+    if len(value) > _HPC_DISPLAY_NAME_MAX_LENGTH:
+        return f"表示名は{_HPC_DISPLAY_NAME_MAX_LENGTH}文字以内にしてください"
+    if any(separator in value for separator in (":", ",")) or any(
+        not char.isprintable() for char in value
+    ):
+        return "表示名にコロン、カンマ、制御文字は使用できません"
+    return None
+
+
+def _hpc_generate_password() -> str:
+    """英大文字・英小文字・数字を各1文字以上含む12文字のパスワードを生成する。
+
+    Returns:
+        生成した12文字のランダムパスワード。
+    """
+    while True:
+        password = "".join(
+            secrets.choice(_HPC_RANDOM_PASSWORD_ALPHABET)
+            for _ in range(_HPC_RANDOM_PASSWORD_LENGTH)
+        )
+        if (
+            any(char in _HPC_RANDOM_PASSWORD_UPPERCASE for char in password)
+            and any(char in _HPC_RANDOM_PASSWORD_LOWERCASE for char in password)
+            and any(char in _HPC_RANDOM_PASSWORD_DIGITS for char in password)
+        ):
+            return password
 
 
 def _hpc_linux_users_snapshot() -> list[dict]:
     """ポータル管理対象のLinuxユーザー一覧を取得する。
 
     Returns:
-        ユーザー名、UID、ホーム、シェル、保護状態を含む辞書の一覧。
+        ユーザー名、表示名、UID、ホーム、シェル、保護状態、sudo状態を含む辞書の一覧。
     """
     rows = []
     for entry in pwd.getpwall():
@@ -74,13 +127,64 @@ def _hpc_linux_users_snapshot() -> list[dict]:
             {
                 "username": entry.pw_name,
                 "uid": entry.pw_uid,
+                "display_name": entry.pw_gecos.split(",", 1)[0].strip(),
                 "home": entry.pw_dir,
                 "shell": entry.pw_shell,
                 "protected": entry.pw_name in HPC_PORTAL_PROTECTED_USERS,
+                "sudo_enabled": _hpc_user_has_sudo(entry.pw_name),
             }
         )
     rows.sort(key=lambda r: r["username"])
     return rows
+
+
+def _hpc_user_has_sudo(username: str) -> bool:
+    """ユーザーが設定されたsudoグループに所属するか判定する。
+
+    Args:
+        username: 確認対象のLinuxユーザー名。
+
+    Returns:
+        プライマリまたは補助グループとしてsudoグループに所属すればTrue。
+    """
+    try:
+        entry = pwd.getpwnam(username)
+        sudo_group = grp.getgrnam(HPC_PORTAL_SUDO_GROUP)
+        return sudo_group.gr_gid in os.getgrouplist(username, entry.pw_gid)
+    except (KeyError, OSError):
+        return False
+
+
+def _hpc_home_storage_usage(home: str) -> tuple[int | None, str | None]:
+    """ホームディレクトリが実際に使用しているストレージ量を取得する。
+
+    Args:
+        home: 集計対象のホームディレクトリ。
+
+    Returns:
+        ``(使用バイト数, エラー)``。集計は同一ファイルシステム内に限定する。
+    """
+    if not home or not os.path.isdir(home):
+        return None, "ホームディレクトリが見つかりません"
+    try:
+        result = subprocess.run(
+            ["du", "-s", "-x", "-B1", "--", home],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+            env=_HPC_CMD_ENV,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "ストレージ使用量の取得がタイムアウトしました"
+    except OSError:
+        return None, "ストレージ使用量を取得できません"
+    if result.returncode != 0:
+        return None, "ストレージ使用量を取得できません"
+    try:
+        return int(result.stdout.split(None, 1)[0]), None
+    except (IndexError, ValueError):
+        return None, "ストレージ使用量を取得できません"
 
 
 _HPC_CMD_ENV = {
@@ -89,12 +193,18 @@ _HPC_CMD_ENV = {
 }
 
 
-def _hpc_run_cmd(cmd: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
+def _hpc_run_cmd(
+    cmd: list[str],
+    *,
+    input_text: str | None = None,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess:
     """固定PATHで管理コマンドを実行する。
 
     Args:
         cmd: シェルを介さず実行する引数配列。
         input_text: 標準入力へ渡す文字列。
+        timeout: コマンドを待つ最大秒数。Noneの場合は制限しない。
 
     Returns:
         標準出力と標準エラーを保持する実行結果。
@@ -105,12 +215,13 @@ def _hpc_run_cmd(cmd: list[str], *, input_text: str | None = None) -> subprocess
         text=True,
         capture_output=True,
         check=False,
+        timeout=timeout,
         env=_HPC_CMD_ENV,
     )
 
 
 def _hpc_ensure_user_home(username: str) -> str | None:
-    """ユーザーのホームディレクトリを必要に応じて作成する。
+    """ユーザーのホームディレクトリを0700で準備する。
 
     Args:
         username: 対象のLinuxユーザー名。
@@ -123,35 +234,53 @@ def _hpc_ensure_user_home(username: str) -> str | None:
     except KeyError:
         return "ユーザーが見つかりません"
     home = ent.pw_dir
-    if os.path.isdir(home):
-        return None
-    result = _hpc_run_cmd(
-        ["install", "-d", "-m", "755", "-o", username, "-g", str(ent.pw_gid), home]
-    )
-    if result.returncode != 0:
-        return (result.stderr or result.stdout or "ホームディレクトリの作成に失敗しました").strip()
+    if not os.path.isdir(home):
+        result = _hpc_run_cmd(
+            ["install", "-d", "-m", "0700", "-o", username, "-g", str(ent.pw_gid), home]
+        )
+        if result.returncode != 0:
+            return (
+                result.stderr or result.stdout or "ホームディレクトリの作成に失敗しました"
+            ).strip()
+    try:
+        os.chmod(home, 0o700)
+    except OSError:
+        return "ホームディレクトリの権限を設定できません"
     return None
 
 
-def _hpc_create_linux_user(username: str, password: str, grant_sudo: bool) -> str | None:
+def _hpc_create_linux_user(
+    username: str,
+    password: str,
+    grant_sudo: bool,
+    display_name: str = "",
+) -> str | None:
     """Linuxユーザーを作成して初期パスワードを設定する。
 
     Args:
         username: 作成するLinuxユーザー名。
         password: 設定する初期パスワード。
         grant_sudo: sudoグループへ追加するか。
+        display_name: 管理画面へ表示する任意の名前。
 
     Returns:
         正常ならNone、失敗時はエラーメッセージ。
     """
+    display_name = (display_name or "").strip()
+    display_name_err = _hpc_validate_display_name(display_name)
+    if display_name_err:
+        return display_name_err
     try:
         pwd.getpwnam(username)
         return "ユーザーは既に存在します"
     except KeyError:
         pass
-    cmd = ["useradd", "-m", "-s", "/bin/bash", username]
-    if grant_sudo and HPC_PORTAL_GRANT_SUDO:
-        cmd[1:1] = ["-G", HPC_PORTAL_SUDO_GROUP]
+    cmd = ["useradd", "-m", "-K", "HOME_MODE=0700", "-s", "/bin/bash"]
+    if display_name:
+        cmd.extend(["-c", display_name])
+    if grant_sudo:
+        cmd.extend(["-G", HPC_PORTAL_SUDO_GROUP])
+    cmd.append(username)
     result = _hpc_run_cmd(cmd)
     if result.returncode != 0:
         return (result.stderr or result.stdout or "useradd failed").strip()
@@ -161,7 +290,71 @@ def _hpc_create_linux_user(username: str, password: str, grant_sudo: bool) -> st
         return (chpw.stderr or chpw.stdout or "chpasswd failed").strip()
     err = _hpc_ensure_user_home(username)
     if err:
+        _hpc_run_cmd(["userdel", "-r", username])
         return err
+    return None
+
+
+def _hpc_set_linux_sudo(username: str, enabled: bool) -> str | None:
+    """Linuxユーザーのsudoグループ所属を変更する。
+
+    Args:
+        username: 変更対象のLinuxユーザー名。
+        enabled: Trueならsudoを付与し、Falseなら解除する。
+
+    Returns:
+        正常ならNone、失敗時はエラーメッセージ。
+    """
+    try:
+        entry = pwd.getpwnam(username)
+        grp.getgrnam(HPC_PORTAL_SUDO_GROUP)
+    except KeyError:
+        return "ユーザーまたはsudoグループが見つかりません"
+    if entry.pw_uid < HPC_PORTAL_USER_MIN_UID or entry.pw_shell in _HPC_NOLOGIN_SHELLS:
+        return "このユーザーはポータルの管理対象ではありません"
+    current = _hpc_user_has_sudo(username)
+    if current == enabled:
+        return None
+    if enabled:
+        result = _hpc_run_cmd(
+            ["usermod", "-a", "-G", HPC_PORTAL_SUDO_GROUP, username]
+        )
+    else:
+        result = _hpc_run_cmd(["gpasswd", "-d", username, HPC_PORTAL_SUDO_GROUP])
+    if result.returncode != 0:
+        return (
+            result.stderr
+            or result.stdout
+            or ("sudo権限の付与に失敗しました" if enabled else "sudo権限の解除に失敗しました")
+        ).strip()
+    if _hpc_user_has_sudo(username) != enabled:
+        return "sudoグループの変更結果を確認できませんでした"
+    return None
+
+
+def _hpc_set_linux_display_name(username: str, display_name: str) -> str | None:
+    """Linux GECOS欄の表示名を設定または削除する。
+
+    Args:
+        username: 対象のLinuxユーザー名。
+        display_name: 設定する表示名。
+
+    Returns:
+        正常ならNone、失敗時はエラーメッセージ。
+    """
+    display_name = (display_name or "").strip()
+    err = _hpc_validate_display_name(display_name)
+    if err:
+        return err
+    try:
+        entry = pwd.getpwnam(username)
+    except KeyError:
+        return "ユーザーが見つかりません"
+    if entry.pw_uid < HPC_PORTAL_USER_MIN_UID or entry.pw_shell in _HPC_NOLOGIN_SHELLS:
+        return "このユーザーはポータルの管理対象ではありません"
+    result = _hpc_run_cmd(["usermod", "-c", display_name, username])
+    if result.returncode != 0:
+        return (result.stderr or result.stdout or "表示名の変更に失敗しました").strip()
     return None
 
 
@@ -201,6 +394,9 @@ def _hpc_set_linux_password(username: str, password: str) -> str | None:
     Returns:
         正常ならNone、失敗時はエラーメッセージ。
     """
+    password_err = _hpc_validate_password(password)
+    if password_err:
+        return password_err
     try:
         pwd.getpwnam(username)
     except KeyError:
@@ -208,6 +404,28 @@ def _hpc_set_linux_password(username: str, password: str) -> str | None:
     result = _hpc_run_cmd(["chpasswd"], input_text=f"{username}:{password}")
     if result.returncode != 0:
         return (result.stderr or result.stdout or "chpasswd failed").strip()
-    return _hpc_ensure_user_home(username)
+    return None
 
 
+def _hpc_verify_linux_password(
+    username: str, password: str, service: str = "login"
+) -> str | None:
+    """PAMでログイン中ユーザーの現在のパスワードを確認する。
+
+    Args:
+        username: 対象のLinuxユーザー名。
+        password: 確認する平文パスワード。
+        service: PAM認証で使用するサービス名。
+
+    Returns:
+        認証成功ならTrueとNone、失敗時はFalseとエラーの組。
+    """
+    if not password:
+        return "現在のパスワードを入力してください"
+    try:
+        import pamela
+
+        pamela.authenticate(username, password, service=service)
+    except Exception:
+        return "現在のパスワードが正しくありません"
+    return None

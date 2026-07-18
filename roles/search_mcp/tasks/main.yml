@@ -1,0 +1,91 @@
+---
+- name: Web検索MCP用OSユーザーを作成
+  ansible.builtin.user:
+    name: "{{ search_mcp_user }}"
+    system: true
+    home: "{{ search_mcp_home }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+
+- name: Web検索MCP用ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ search_mcp_install_dir }}"
+      owner: root
+      group: root
+      mode: "0755"
+    - path: /etc/hpc-search-mcp
+      owner: root
+      group: "{{ search_mcp_user }}"
+      mode: "0750"
+    - path: "{{ search_mcp_home }}"
+      owner: "{{ search_mcp_user }}"
+      group: "{{ search_mcp_user }}"
+      mode: "0750"
+
+- name: Web検索MCP用venvとFastMCPを用意
+  ansible.builtin.pip:
+    name: "fastmcp=={{ search_mcp_version }}"
+    virtualenv: "{{ search_mcp_install_dir }}/venv"
+    virtualenv_command: python3 -m venv
+    state: present
+  notify: Web検索MCPを再起動
+  when: not ansible_check_mode
+
+- name: Web検索MCPプログラムを配置
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ search_mcp_install_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - search_service.py
+    - server.py
+  notify: Web検索MCPを再起動
+
+- name: Web検索MCP環境ファイルを配置
+  ansible.builtin.template:
+    src: hpc-search-mcp.env.j2
+    dest: /etc/hpc-search-mcp/hpc-search-mcp.env
+    owner: root
+    group: "{{ search_mcp_user }}"
+    mode: "0640"
+  notify: Web検索MCPを再起動
+
+- name: Web検索MCP systemdユニットを配置
+  ansible.builtin.template:
+    src: hpc-search-mcp.service.j2
+    dest: /etc/systemd/system/hpc-search-mcp.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Web検索MCPを再起動
+
+- name: systemdをリロード
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Web検索MCPを有効化して起動
+  ansible.builtin.systemd:
+    name: hpc-search-mcp
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Web検索MCPの変更を起動確認前に反映
+  ansible.builtin.meta: flush_handlers
+  when: not ansible_check_mode
+
+- name: Web検索MCPの待受開始を確認
+  ansible.builtin.wait_for:
+    host: "{{ search_mcp_host }}"
+    port: "{{ search_mcp_port }}"
+    timeout: 30
+  when: not ansible_check_mode

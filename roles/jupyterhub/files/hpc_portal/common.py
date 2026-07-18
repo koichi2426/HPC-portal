@@ -1,12 +1,9 @@
 """HPCポータル拡張で共有する依存関係と実行時定数を提供する。"""
 
 import asyncio
-import html
-import json
+import hashlib
 import logging
-import secrets
 import threading
-import time
 
 from batchspawner import SlurmSpawner
 from jupyterhub.handlers.base import BaseHandler
@@ -27,15 +24,36 @@ except ImportError:
     from jupyterhub.handlers.base import _set_xsrf_cookie
 
     def _get_xsrf_token_cookie(handler):
-        """互換対象のJupyterHubでXSRF Cookie未取得を表す。"""
+        """互換対象のJupyterHubでXSRF Cookie未取得を表す。
+
+        Args:
+            handler: 対象のJupyterHub Handler。
+
+        Returns:
+            Cookie内のXSRF token情報。
+        """
         return (None, None)
 
     def _needs_check_xsrf(handler):
-        """互換対象のJupyterHubでは常にXSRF検証を要求する。"""
+        """互換対象のJupyterHubでは常にXSRF検証を要求する。
+
+        Args:
+            handler: 対象のJupyterHub Handler。
+
+        Returns:
+            XSRF検証が必要ならTrue。
+        """
         return True
 
     def _jh_check_xsrf_cookie(handler):
-        """Handler自身の実装を使ってXSRF Cookieを検証する。"""
+        """Handler自身の実装を使ってXSRF Cookieを検証する。
+
+        Args:
+            handler: 対象のJupyterHub Handler。
+
+        Returns:
+            XSRF検証結果。
+        """
         return handler.check_xsrf_cookie()
 
 try:
@@ -46,7 +64,11 @@ except Exception:  # noqa: S110
         """メトリクスAPIがないJupyterHub向けの代替実装。"""
 
         def observe(self, _t):
-            """計測値を受け取り、互換性維持のため何もしない。"""
+            """計測値を受け取り、互換性維持のため何もしない。
+
+            Args:
+                _t: 観測対象の経過時間。
+            """
             pass
 
     CHECK_ROUTES_DURATION_SECONDS = _DummyMetric()
@@ -57,7 +79,14 @@ try:
 except Exception:  # noqa: S110
 
     def _one_at_a_time(method):
-        """排他デコレーターがない場合に元のメソッドを返す。"""
+        """排他デコレーターがない場合に元のメソッドを返す。
+
+        Args:
+            method: デコレートするメソッド。
+
+        Returns:
+            排他制御を適用したメソッド。
+        """
         return method
 
 try:
@@ -67,14 +96,6 @@ except ImportError:
 import contextvars
 import nest_asyncio
 import os
-import pwd
-import psutil
-import re
-import subprocess
-import urllib.error
-import urllib.parse
-import urllib.request
-from urllib.parse import urlparse
 
 from .runtime import c
 from .settings import (
@@ -82,12 +103,28 @@ from .settings import (
     HPC_GPU_COUNT,
     HPC_JOB_DNS_DOMAIN,
     HPC_OLLAMA_ALLOWED_CPUS,
+    HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+    HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+    HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+    HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+    HPC_OLLAMA_ALLOWED_MAX_QUEUE,
     HPC_OLLAMA_ALLOWED_MEMORY,
+    HPC_OLLAMA_ALLOWED_PARALLEL,
     HPC_OLLAMA_DEFAULT_CPUS,
+    HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+    HPC_OLLAMA_DEFAULT_FLASH_ATTENTION,
+    HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+    HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+    HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+    HPC_OLLAMA_DEFAULT_MAX_QUEUE,
     HPC_OLLAMA_DEFAULT_MEMORY,
+    HPC_OLLAMA_DEFAULT_PARALLEL,
     HPC_OLLAMA_MODELS_DIR,
     HPC_OLLAMA_PORT,
     HPC_OLLAMA_RUNTIME,
+    HPC_OLLAMA_VERSION,
+    HPC_JUPYTER_UBUNTU_VERSION,
+    HPC_OPENWEBUI_VERSION,
     HPC_PORTAL_ADMIN_USERS,
     HPC_PORTAL_GRANT_SUDO,
     HPC_PORTAL_PROTECTED_USERS,
@@ -95,8 +132,13 @@ from .settings import (
     HPC_PORTAL_USER_MIN_UID,
     HPC_PUBLIC_DOMAIN,
     HPC_PUBLIC_SCHEME,
+    HPC_SEARXNG_QUERY_URL,
     JUPYTERHUB_HUB_PORT,
     JUPYTERHUB_PORT,
+    OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH,
+    OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS,
+    OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS,
+    OPENWEBUI_WEB_SEARCH_RESULT_COUNT,
     SLURM_NODE_NAME,
 )
 
@@ -105,15 +147,85 @@ nest_asyncio.apply()
 # Spawn中だけJOBID由来のホスト名をOAuth URL計算へ渡す。
 _oauth_job_host_ctx = contextvars.ContextVar("hpc_oauth_job_host", default=None)
 
-HPC_RESOURCE_METER_JS = "/etc/jupyterhub/static/hpc-resource-meter.js"
-HPC_APP_STATUS_JS = "/etc/jupyterhub/static/hpc-app-status.js"
+HPC_PORTAL_JS_DIR = "/etc/jupyterhub/static/hpc-portal-js"
+HPC_PORTAL_JS_FILES = (
+    "core.js",
+    "resource-meter.js",
+    "app-status.js",
+    "app-detail.js",
+    "admin-apps.js",
+    "admin-users.js",
+    "ollama-admin.js",
+    "llm-api.js",
+    "password.js",
+    "spawn-form.js",
+)
 HPC_PORTAL_CSS = "/etc/jupyterhub/static/hpc-portal.css"
+
+
+def _hpc_static_file_version(path):
+    """静的ファイルの内容からキャッシュ更新用バージョンを生成する。
+
+    Args:
+        path: ハッシュ値を計算する静的ファイルのパス。
+
+    Returns:
+        SHA-256の先頭12桁。ファイルを読めない場合は ``missing``。
+    """
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as static_file:
+            for chunk in iter(lambda: static_file.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        logging.getLogger("jupyterhub.hpc-static").warning(
+            "静的ファイルのハッシュを計算できません: %s", path
+        )
+        return "missing"
+    return digest.hexdigest()[:12]
+
+
+class _HpcStaticVersions:
+    """参照時点の静的ファイルからバージョン値を返す。"""
+
+    def __init__(self, paths):
+        """静的ファイル名と配置先パスの対応を保持する。
+
+        Args:
+            paths: 静的ファイル名をキー、配置先パスを値とする辞書。
+        """
+        self._paths = dict(paths)
+
+    def __getitem__(self, name):
+        """指定された静的ファイルの現在のバージョン値を返す。
+
+        Args:
+            name: バージョン値を取得する静的ファイル名。
+
+        Returns:
+            対象ファイルの内容から生成した短縮SHA-256。
+        """
+        return _hpc_static_file_version(self._paths[name])
+
+
+HPC_STATIC_VERSIONS = _HpcStaticVersions(
+    {
+        "portal_css": HPC_PORTAL_CSS,
+        **{
+            f"js/{filename}": os.path.join(HPC_PORTAL_JS_DIR, filename)
+            for filename in HPC_PORTAL_JS_FILES
+        },
+    }
+)
 HPC_LITELLM_INTERNAL_BASE_URL = os.environ.get(
     "HPC_LITELLM_INTERNAL_BASE_URL", "http://127.0.0.1:4000"
 ).rstrip("/")
 HPC_LITELLM_PUBLIC_BASE_URL = os.environ.get("HPC_LITELLM_PUBLIC_BASE_URL", "")
 HPC_LITELLM_ADMIN_URL = os.environ.get("HPC_LITELLM_ADMIN_URL", "")
 HPC_LITELLM_MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "")
+HPC_OLLAMA_API_BASE = os.environ.get(
+    "HPC_OLLAMA_API_BASE", f"http://127.0.0.1:{HPC_OLLAMA_PORT}"
+).rstrip("/")
 OPENWEBUI_LITELLM_BASE_URL = os.environ.get("OPENWEBUI_LITELLM_BASE_URL", "")
 OPENWEBUI_LITELLM_KEY_DIR = os.environ.get(
     "OPENWEBUI_LITELLM_KEY_DIR", "/etc/litellm/openwebui-keys"

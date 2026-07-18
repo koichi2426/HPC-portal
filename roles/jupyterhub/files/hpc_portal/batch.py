@@ -4,7 +4,12 @@ from .common import (
     HPC_BATCH_EXECHOST_EXP,
     HPC_JOB_DNS_DOMAIN,
     HPC_PUBLIC_SCHEME,
+    HPC_SEARXNG_QUERY_URL,
+    OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH,
+    OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS,
     OPENWEBUI_LITELLM_BASE_URL,
+    OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS,
+    OPENWEBUI_WEB_SEARCH_RESULT_COUNT,
     Proxy,
     c,
     url_escape_path,
@@ -29,7 +34,7 @@ c.HPCSlurmSpawner.state_exechost_exp = HPC_BATCH_EXECHOST_EXP
 c.HPCSlurmSpawner.ip = "127.0.0.1"
 c.HPCSlurmSpawner.req_nprocs = "2"
 c.HPCSlurmSpawner.req_memory = "4G"
-c.HPCSlurmSpawner.req_runtime = "08:00:00"
+c.HPCSlurmSpawner.req_runtime = "02:00:00"
 c.HPCSlurmSpawner.req_partition = "debug"
 c.Spawner.start_timeout = 300
 c.Spawner.cmd = ["jupyterhub-singleuser"]
@@ -79,6 +84,19 @@ async def _hpc_proxy_delete_user(self, user, server_name="", client=None):
 
 
 Proxy.delete_user = _hpc_proxy_delete_user
+
+OPENWEBUI_DEFAULT_MODEL_METADATA_JSON = (
+    '{"capabilities":{"file_context":true,"web_search":true,'
+    '"image_generation":false,"code_interpreter":true,"terminal":false,'
+    '"builtin_tools":true},"builtinTools":{"time":true,"memory":true,'
+    '"notes":true,"chats":false,"knowledge":false,"channels":false,'
+    '"web_search":true,"image_generation":false,"code_interpreter":true,'
+    '"tasks":false,"automations":false,"calendar":false},'
+    '"defaultFeatureIds":["web_search","code_interpreter"]}'
+)
+OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON = (
+    '{"think":false,"reasoning_effort":"none","function_calling":"native"}'
+)
 
 
 c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
@@ -203,6 +221,8 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
     TRANSFORMERS_CACHE_DIR="$HF_HOME_DIR/transformers"
     LITELLM_BASE_URL="$(printenv OPENWEBUI_LITELLM_BASE_URL || true)"
     LITELLM_API_KEY="$(printenv OPENWEBUI_LITELLM_API_KEY || true)"
+    OPENWEBUI_DEFAULT_MODEL_METADATA='{OPENWEBUI_DEFAULT_MODEL_METADATA_JSON}'
+    OPENWEBUI_DEFAULT_MODEL_PARAMS='{OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON}'
     mkdir -p "$OPENWEBUI_DATA_DIR/static" "$HOME/.ollama" "$HF_HUB_CACHE_DIR" "$SENTENCE_TRANSFORMERS_HOME_DIR" "$TRANSFORMERS_CACHE_DIR"
     # 同じSQLite DBを複数プロセスで開かないよう、ユーザー単位のデータ領域を排他する。
     OPENWEBUI_LOCK_FILE="$OPENWEBUI_DATA_DIR/.instance.lock"
@@ -212,7 +232,48 @@ if [ "$APP_CHOICE" = "open-webui" ]; then
     fi
     JOB_HOST="job$(printenv SLURM_JOB_ID || echo 0).{HPC_JOB_DNS_DOMAIN}"
     WEBUI_EXTERNAL_URL="{HPC_PUBLIC_SCHEME}://$JOB_HOST/"
-    exec flock -n "$OPENWEBUI_LOCK_FILE" apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" sh -lc "HOST=0.0.0.0 PORT=$PORT DATA_DIR=$OPENWEBUI_DATA_DIR STATIC_DIR=$OPENWEBUI_DATA_DIR/static WEBUI_AUTH=False ENABLE_OPENAI_API=True OPENAI_API_BASE_URL=$LITELLM_BASE_URL OPENAI_API_KEY=$LITELLM_API_KEY ENABLE_OLLAMA_API=False WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key WEBUI_URL=$WEBUI_EXTERNAL_URL HF_HOME=$HF_HOME_DIR HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR /app/backend/start.sh"
+    exec flock -n "$OPENWEBUI_LOCK_FILE" apptainer exec --nv $HPC_APPTAINER_BIND "$OPENWEBUI_IMAGE" env \
+      "HOST=0.0.0.0" \
+      "PORT=$PORT" \
+      "DATA_DIR=$OPENWEBUI_DATA_DIR" \
+      "STATIC_DIR=$OPENWEBUI_DATA_DIR/static" \
+      "WEBUI_AUTH=False" \
+      "ENABLE_OPENAI_API=True" \
+      "OPENAI_API_BASE_URL=$LITELLM_BASE_URL" \
+      "OPENAI_API_KEY=$LITELLM_API_KEY" \
+      "ENABLE_OLLAMA_API=False" \
+      "ENABLE_DIRECT_CONNECTIONS=False" \
+      "ENABLE_MEMORIES=True" \
+      "ENABLE_MEMORY_SYSTEM_CONTEXT=False" \
+      "ENABLE_NOTES=True" \
+      "ENABLE_FOLLOW_UP_GENERATION=False" \
+      "ENABLE_WEB_SEARCH=True" \
+      "WEB_SEARCH_ENGINE=searxng" \
+      "SEARXNG_QUERY_URL={HPC_SEARXNG_QUERY_URL}" \
+      "SEARXNG_LANGUAGE=all" \
+      "WEB_SEARCH_RESULT_COUNT={OPENWEBUI_WEB_SEARCH_RESULT_COUNT}" \
+      "WEB_SEARCH_CONCURRENT_REQUESTS={OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS}" \
+      "WEB_LOADER_CONCURRENT_REQUESTS={OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS}" \
+      "WEB_FETCH_MAX_CONTENT_LENGTH={OPENWEBUI_WEB_FETCH_MAX_CONTENT_LENGTH}" \
+      "BYPASS_WEB_SEARCH_WEB_LOADER=False" \
+      "ENABLE_RAG_LOCAL_WEB_FETCH=False" \
+      "ENABLE_WEB_SEARCH_CONFIRMATION=False" \
+      "ENABLE_IMAGE_GENERATION=False" \
+      "ENABLE_CODE_INTERPRETER=True" \
+      "ENABLE_CHANNELS=False" \
+      "ENABLE_CALENDAR=False" \
+      "ENABLE_AUTOMATIONS=False" \
+      "ENABLE_FOLDERS=True" \
+      "DEFAULT_LOCALE=ja-JP" \
+      "DEFAULT_MODEL_METADATA=$OPENWEBUI_DEFAULT_MODEL_METADATA" \
+      "DEFAULT_MODEL_PARAMS=$OPENWEBUI_DEFAULT_MODEL_PARAMS" \
+      "WEBUI_SECRET_KEY_FILE=$OPENWEBUI_DATA_DIR/.webui_secret_key" \
+      "WEBUI_URL=$WEBUI_EXTERNAL_URL" \
+      "HF_HOME=$HF_HOME_DIR" \
+      "HUGGINGFACE_HUB_CACHE=$HF_HUB_CACHE_DIR" \
+      "SENTENCE_TRANSFORMERS_HOME=$SENTENCE_TRANSFORMERS_HOME_DIR" \
+      "TRANSFORMERS_CACHE=$TRANSFORMERS_CACHE_DIR" \
+      /app/backend/start.sh
 else
     IMAGE_PATH="/opt/images/jupyter-cpu.sif"
     exec apptainer exec --nv $HPC_APPTAINER_BIND "$IMAGE_PATH" {js} cmd {je} --ip=0.0.0.0

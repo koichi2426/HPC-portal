@@ -1,0 +1,132 @@
+---
+- name: Slurm設定バックアップの残留を確認
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/slurm/slurm.conf.hpc-deploy.bak
+    - /etc/slurm/gres.conf.hpc-deploy.bak
+  register: slurm_config_backup_stats
+
+- name: 未復旧のSlurm設定バックアップがある場合は中断
+  ansible.builtin.fail:
+    msg: >-
+      前回のSlurm設定反映で使用したバックアップが残っています。
+      /etc/slurm/*.hpc-deploy.bakを確認・復旧してから再実行してください。
+  when: slurm_config_backup_stats.results | selectattr('stat.exists') | list | length > 0
+
+- name: 現行Slurm設定の有無を確認
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/slurm/slurm.conf
+    - /etc/slurm/gres.conf
+  register: slurm_live_config_stats
+
+- name: 現行slurm.confを固定名でバックアップ
+  ansible.builtin.copy:
+    src: /etc/slurm/slurm.conf
+    dest: /etc/slurm/slurm.conf.hpc-deploy.bak
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when: slurm_live_config_stats.results[0].stat.exists
+
+- name: 現行gres.confを固定名でバックアップ
+  ansible.builtin.copy:
+    src: /etc/slurm/gres.conf
+    dest: /etc/slurm/gres.conf.hpc-deploy.bak
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when: slurm_live_config_stats.results[1].stat.exists
+
+- name: 検証済みSlurm設定を一組として反映
+  block:
+    - name: 検証済みGPU GRES設定を配置
+      ansible.builtin.copy:
+        src: /etc/slurm/.hpc-deploy/gres.conf
+        dest: /etc/slurm/gres.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: slurm_effective_gpu_count | int > 0
+      notify: Slurm再起動を要求
+
+    - name: GPU未検出時は現行GRES設定を削除
+      ansible.builtin.file:
+        path: /etc/slurm/gres.conf
+        state: absent
+      when: slurm_effective_gpu_count | int == 0
+      notify: Slurm再起動を要求
+
+    - name: 検証済みslurm.confを配置
+      ansible.builtin.copy:
+        src: /etc/slurm/.hpc-deploy/slurm.conf
+        dest: /etc/slurm/slurm.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Slurm再起動を要求
+
+    - name: 配置後のSlurmとGRES設定を再検証
+      ansible.builtin.command: slurmd -G -f /etc/slurm/slurm.conf
+      changed_when: false
+
+  rescue:
+    - name: 旧slurm.confを復元
+      ansible.builtin.copy:
+        src: /etc/slurm/slurm.conf.hpc-deploy.bak
+        dest: /etc/slurm/slurm.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: slurm_live_config_stats.results[0].stat.exists
+
+    - name: 旧slurm.confが存在しなかった場合は削除
+      ansible.builtin.file:
+        path: /etc/slurm/slurm.conf
+        state: absent
+      when: not slurm_live_config_stats.results[0].stat.exists
+
+    - name: 旧gres.confを復元
+      ansible.builtin.copy:
+        src: /etc/slurm/gres.conf.hpc-deploy.bak
+        dest: /etc/slurm/gres.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: slurm_live_config_stats.results[1].stat.exists
+
+    - name: 旧gres.confが存在しなかった場合は削除
+      ansible.builtin.file:
+        path: /etc/slurm/gres.conf
+        state: absent
+      when: not slurm_live_config_stats.results[1].stat.exists
+
+    - name: 復元成功後にSlurm設定バックアップを削除
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/slurm/slurm.conf.hpc-deploy.bak
+        - /etc/slurm/gres.conf.hpc-deploy.bak
+
+    - name: Slurm設定を復元してデプロイを中断
+      ansible.builtin.fail:
+        msg: >-
+          新しいSlurm設定の反映または配置後検証に失敗したため、旧設定へ復元しました。
+          Slurmサービスは再起動せず、デプロイを中断します。
+
+- name: 反映成功後にSlurm設定バックアップを削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/slurm/slurm.conf.hpc-deploy.bak
+    - /etc/slurm/gres.conf.hpc-deploy.bak

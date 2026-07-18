@@ -64,8 +64,12 @@ c.JupyterHub.trusted_downstream_ips = ["127.0.0.1", "::1"]
 c.JupyterHub.default_url = "/hub/home"
 c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
 c.JupyterHub.allow_named_servers = True
+# Hubの再起動時もBatchSpawnerが投入したSlurmジョブは停止しない。
+c.JupyterHub.cleanup_servers = False
 
 c.Authenticator.allow_all = True
+# Linuxユーザーを正とし、OS側で削除済みのユーザーをHub DBへ残さない。
+c.Authenticator.delete_invalid_users = True
 
 c.Authenticator.admin_users = set(HPC_PORTAL_ADMIN_USERS)
 
@@ -103,4 +107,6 @@ from hpc_portal import spawner as _spawner  # noqa: E402,F401
 from hpc_portal import proxy as _proxy  # noqa: E402,F401
 from hpc_portal import forms as _forms  # noqa: E402,F401
 from hpc_portal import batch as _batch  # noqa: E402,F401
-from hpc_portal import handlers as _handlers  # noqa: E402,F401
+from hpc_portal.handlers import register_handlers  # noqa: E402
+
+register_handlers()

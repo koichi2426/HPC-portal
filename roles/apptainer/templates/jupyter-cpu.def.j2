@@ -1,6 +1,6 @@
 Bootstrap: docker
 # Ubuntu 24.04 (glibc 2.39): --nv で注入されるホスト GPU ライブラリ (GLIBC 2.38+) と整合させる
-From: ubuntu:24.04
+From: ubuntu:{{ jupyter_image_ubuntu_version }}
 
 %environment
     export LC_ALL=C

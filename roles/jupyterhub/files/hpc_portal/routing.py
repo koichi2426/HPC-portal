@@ -1,11 +1,22 @@
 """アプリ用サブドメインとCHPルートの同期処理を提供する。"""
 
+import asyncio
+import time
+from urllib.parse import urlparse
+
 from .apps import _is_openwebui_spawner, _job_host, _job_user_path, _spawner_job_id
-from .common import HPC_PUBLIC_DOMAIN, HPC_PUBLIC_SCHEME, asyncio, time, urlparse
+from .common import HPC_PUBLIC_DOMAIN, HPC_PUBLIC_SCHEME
 
 
 def _hpc_public_alias_routespec_for(spawner) -> str:
-    """User.url が gx10 のときでも CHP が転送できるよう、Hub 公開ホスト + 同一パスの routespec"""
+    """User.url が gx10 のときでも CHP が転送できるよう、Hub 公開ホスト + 同一パスの routespec
+
+    Args:
+        spawner: 対象のSpawner。
+
+    Returns:
+        Hub公開ホスト用のroutespec。
+    """
     if getattr(spawner, "server", None) and getattr(spawner.server, "base_url", None):
         path = str(spawner.server.base_url)
         if not path.endswith("/"):
@@ -16,7 +27,14 @@ def _hpc_public_alias_routespec_for(spawner) -> str:
 
 
 def _hpc_norm_routespec(rs: str) -> str:
-    """CHP の routes キーと spawner.proxy_spec の表記ゆれ（先頭 /・末尾 /）を吸収して比較用に正規化"""
+    """CHP の routes キーと spawner.proxy_spec の表記ゆれ（先頭 /・末尾 /）を吸収して比較用に正規化
+
+    Args:
+        rs: 正規化するroutespec。
+
+    Returns:
+        比較用に正規化したroutespec。
+    """
     s = (rs or "").strip()
     if s.startswith("/"):
         s = s[1:]
@@ -26,7 +44,14 @@ def _hpc_norm_routespec(rs: str) -> str:
 
 
 def _hpc_chp_target_ready(host_url):
-    """batchspawner が一瞬 http://nodename:0 を載せる間に CHP へ登録しない（503 防止）"""
+    """batchspawner が一瞬 http://nodename:0 を載せる間に CHP へ登録しない（503 防止）
+
+    Args:
+        host_url: 疎通確認する転送先URL。
+
+    Returns:
+        有効な転送先ならTrue。
+    """
     if not host_url or not isinstance(host_url, str):
         return False
     u = host_url if "://" in host_url else f"http://{host_url}"
@@ -42,7 +67,14 @@ def _hpc_chp_target_ready(host_url):
 
 
 def _hpc_spawner_target_host(spawner) -> str:
-    """CHP 転送先 URL を取得（server.host 優先、なければ port/JOBID から補完）"""
+    """CHP 転送先 URL を取得（server.host 優先、なければ port/JOBID から補完）
+
+    Args:
+        spawner: 対象のSpawner。
+
+    Returns:
+        Spawnerの転送先ホスト。
+    """
     srv = getattr(spawner, "server", None)
     h = getattr(srv, "host", None) if srv else None
     if _hpc_chp_target_ready(h):
@@ -87,7 +119,16 @@ async def _wait_for_tcp_port(host: str, port: int, timeout: float = 120.0) -> bo
 
 
 async def _hpc_wait_chp_target(spawner, timeout: float = 30.0, step: float = 0.2):
-    """起動直後の一時的な :0 を避け、CHP へ登録可能な host:port を待つ"""
+    """起動直後の一時的な :0 を避け、CHP へ登録可能な host:port を待つ
+
+    Args:
+        spawner: 対象のSpawner。
+        timeout: 待機する最大秒数。
+        step: 疎通確認の間隔秒数。
+
+    Returns:
+        疎通可能になった転送先URL。
+    """
     deadline = time.perf_counter() + timeout
     last = None
     while time.perf_counter() < deadline:
@@ -101,7 +142,11 @@ async def _hpc_wait_chp_target(spawner, timeout: float = 30.0, step: float = 0.2
 
 
 def _sync_job_proxy_and_public(spawner) -> None:
-    """JOBID 確定後: CHP の routespec を job<id>.domain/user/... にし、単一ユーザー公開 URL も同期"""
+    """JOBID 確定後: CHP の routespec を job<id>.domain/user/... にし、単一ユーザー公開 URL も同期
+
+    Args:
+        spawner: 対象のSpawner。
+    """
     jid = _spawner_job_id(spawner)
     if not jid:
         return
@@ -120,4 +165,3 @@ def _sync_job_proxy_and_public(spawner) -> None:
     # ホストルーティング時の routespec は「host/path/」（先頭に / を付けない）
     spawner.proxy_spec = f"{host}{path}"
     spawner.public_url = f"{HPC_PUBLIC_SCHEME}://{host}{path}"
-

@@ -4,26 +4,13 @@
 (function (global) {
   "use strict";
 
+  var portal = global.HpcPortal;
   var INTERVAL_MS = 2500;
   var USER_API_URL = "/hub/api/user";
   var ADMIN_API_URL = "/hub/admin/users/api";
   var timer = null;
   var inFlight = false;
   var reloadPending = false;
-
-  function readXsrfCookie() {
-    var match = global.document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
-    return match ? decodeURIComponent(match[1]) : "";
-  }
-
-  function requestJson(url, options) {
-    return global.fetch(url, options).then(function (response) {
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
-      return response.json();
-    });
-  }
 
   function userState(server) {
     if (!server) {
@@ -127,13 +114,98 @@
     global.document
       .querySelectorAll("[data-hpc-shared-ollama-status]")
       .forEach(function (root) {
+        var configuredTargetVersion =
+          root.getAttribute("data-hpc-ollama-target-version") || "";
+        if (root.hasAttribute("data-hpc-shared-ollama-home-card")) {
+          root.hidden = !data.running;
+        }
         setState(root, next);
+        root.querySelectorAll("[data-hpc-ollama-job-id]").forEach(function (job) {
+          var jobIds = data.job_ids;
+          var jobLabel = Array.isArray(jobIds) ? jobIds.join(", ") : String(jobIds || "");
+          job.textContent = jobLabel ? "(job " + jobLabel + ")" : "";
+        });
+        root.querySelectorAll("[data-hpc-ollama-allocation]").forEach(function (allocation) {
+          allocation.textContent =
+            String(data.cpus || "—") + " vCPU · " +
+            String(data.memory || "—") + " RAM · 1 GPU · 無制限";
+        });
+        root.querySelectorAll("[data-hpc-ollama-setting]").forEach(function (setting) {
+          var key = setting.getAttribute("data-hpc-ollama-setting");
+          var value = data[key];
+          if (value === undefined || value === null || value === "") return;
+          if (key === "context_length") {
+            var numericContext = Number(value);
+            setting.textContent = numericContext ? String(numericContext / 1024) + "K" : String(value);
+          } else if (key === "keep_alive") {
+            setting.textContent = { "5m": "5分", "30m": "30分", "1h": "1時間", "-1": "常時" }[value] || String(value);
+          } else if (key === "flash_attention") {
+            setting.textContent = value === "1" ? "ON" : (value === "0" ? "OFF" : "不明");
+          } else {
+            setting.textContent = String(value);
+          }
+        });
         root.querySelectorAll("[data-hpc-ollama-api-status]").forEach(function (status) {
           status.textContent = data.api ? "OK" : "起動待ち / 未応答";
           status.classList.toggle("hpc-status-ok", Boolean(data.api));
           status.classList.toggle("hpc-status-warn", !data.api);
         });
+        root.querySelectorAll("[data-hpc-ollama-running-version]").forEach(function (version) {
+          version.textContent = data.version ? "v" + data.version.replace(/^v/, "") : "確認中";
+        });
+        root.querySelectorAll("[data-hpc-ollama-target-version]").forEach(function (version) {
+          var targetVersion = data.target_version || configuredTargetVersion;
+          if (targetVersion) {
+            version.textContent = "v" + targetVersion.replace(/^v/, "");
+          }
+        });
+        root.querySelectorAll("[data-hpc-ollama-version-update]").forEach(function (badge) {
+          var runningVersion = (data.version || "").replace(/^v/, "");
+          var targetVersion = (
+            data.target_version || configuredTargetVersion || ""
+          ).replace(/^v/, "");
+          badge.hidden = !(runningVersion && targetVersion && runningVersion !== targetVersion);
+        });
       });
+  }
+
+  function updateOpenWebuiVersion(root, body) {
+    var data = body.data || {};
+    var running = data.running_version || "";
+    var runningElement = root.querySelector("[data-hpc-running-version]");
+    var updateElement = root.querySelector("[data-hpc-version-update]");
+
+    if (runningElement) {
+      runningElement.textContent = running ? "v" + running : "不明";
+    }
+    if (updateElement) {
+      updateElement.hidden = !data.update_available;
+    }
+  }
+
+  function refreshOpenWebuiVersions() {
+    var roots = Array.prototype.slice.call(
+      global.document.querySelectorAll("[data-hpc-openwebui-version-url]")
+    );
+    return Promise.all(
+      roots.map(function (root) {
+        var url = root.getAttribute("data-hpc-openwebui-version-url") || "";
+        if (!url) return Promise.resolve();
+        return portal.requestJson(url, {
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+          .then(function (body) {
+            updateOpenWebuiVersion(root, body);
+          })
+          .catch(function () {
+            var runningElement = root.querySelector("[data-hpc-running-version]");
+            if (runningElement && runningElement.textContent === "確認中") {
+              runningElement.textContent = "不明";
+            }
+          });
+      })
+    );
   }
 
   function refreshNamedServers() {
@@ -144,8 +216,8 @@
     ) {
       return Promise.resolve();
     }
-    var xsrf = readXsrfCookie();
-    return requestJson(USER_API_URL, {
+    var xsrf = portal.readXsrfCookie();
+    return portal.requestJson(USER_API_URL, {
       credentials: "same-origin",
       cache: "no-store",
       headers: xsrf ? { "X-XSRFToken": xsrf } : {},
@@ -156,8 +228,8 @@
     if (!global.document.querySelector("[data-hpc-shared-ollama-status]")) {
       return Promise.resolve();
     }
-    var xsrf = readXsrfCookie();
-    return requestJson(ADMIN_API_URL, {
+    var xsrf = portal.readXsrfCookie();
+    return portal.requestJson(ADMIN_API_URL, {
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",
@@ -193,12 +265,13 @@
   function start() {
     if (
       !global.document.querySelector(
-        "[data-hpc-app-status], [data-hpc-shared-ollama-status], [data-hpc-app-list]"
+        "[data-hpc-app-status], [data-hpc-shared-ollama-status], [data-hpc-app-list], [data-hpc-openwebui-version-url]"
       )
     ) {
       return;
     }
     refresh();
+    refreshOpenWebuiVersions();
     global.document.addEventListener("visibilitychange", function () {
       if (!global.document.hidden) {
         refresh();
@@ -206,7 +279,11 @@
     });
   }
 
-  global.HpcAppStatus = { refresh: refresh, start: start };
+  global.HpcAppStatus = {
+    refresh: refresh,
+    refreshOpenWebuiVersions: refreshOpenWebuiVersions,
+    start: start,
+  };
   if (global.document.readyState === "loading") {
     global.document.addEventListener("DOMContentLoaded", start);
   } else {

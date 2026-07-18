@@ -7,4 +7,10 @@ inventory/*
 .ansible/
 *.retry
 
-__pycache__
+# Local Python development environment
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.coverage
+htmlcov/

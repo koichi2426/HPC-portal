@@ -1,0 +1,60 @@
+.gx10-admin-msg,
+.gx10-key-msg {
+  display: none;
+  font-size: 13px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.gx10-key-msg {
+  margin-top: 12px;
+}
+
+.gx10-admin-msg.ok,
+.gx10-key-msg.ok {
+  display: block;
+  background: var(--hpc-success-bg);
+  border: 1px solid var(--hpc-success);
+  color: var(--hpc-success);
+}
+
+.gx10-admin-msg.err,
+.gx10-key-msg.err {
+  display: block;
+  background: var(--hpc-danger-bg);
+  border: 1px solid var(--hpc-danger);
+  color: var(--hpc-danger);
+}
+
+.gx10-admin-msg.warn,
+.gx10-key-msg.warn {
+  display: block;
+  background: var(--hpc-warning-bg);
+  border: 1px solid var(--hpc-warning);
+  color: var(--hpc-warning);
+}
+
+.gx10-admin-modal {
+  position: fixed;
+  inset: 0;
+  background: var(--hpc-modal-backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.gx10-admin-modal[hidden] {
+  display: none !important;
+}
+
+.gx10-admin-modal-inner {
+  background: var(--hpc-surface-muted);
+  border: 1px solid var(--hpc-border);
+  border-radius: 12px;
+  padding: 20px;
+  width: min(360px, 92vw);
+  color: var(--hpc-text);
+}
+

@@ -11,6 +11,10 @@
       tags: [postgres, litellm]
     - role: apptainer
       tags: [apptainer]
+    - role: searxng
+      tags: [searxng]
+    - role: search_mcp
+      tags: [search_mcp, searxng, litellm]
     - role: ollama
       tags: [ollama]
     - role: litellm
@@ -19,3 +23,11 @@
       tags: [jupyterhub]
     - role: cloudflared
       tags: [cloudflared]
+  post_tasks:
+    - name: Slurm設定の未反映を通知
+      ansible.builtin.debug:
+        msg: >-
+          デプロイは完了しました。ただしSlurmジョブが存在するか、状態確認に失敗したため、
+          Slurm設定の更新は行っていません。状態を確認し、反映するにはmake deploy-restartを実行してください。
+      when: hpc_slurm_deploy_skipped | default(false) | bool
+      tags: [always]

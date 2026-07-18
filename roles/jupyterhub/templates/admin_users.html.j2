@@ -8,19 +8,19 @@
     <div class="hpc-row-between" style="margin-top:10px;">
       <h2 class="hpc-page-title">Linux ユーザー管理</h2>
       {% if hpc_litellm_admin_url %}
-      <a class="hpc-page-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer">LiteLLM 管理画面 ↗</a>
+      <a class="hpc-page-link hpc-external-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" aria-label="LiteLLM 管理画面を新しいタブで開く"><span>LiteLLM 管理画面</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>
       {% endif %}
     </div>
-    <div class="hpc-help">ポータルへのログインに使う OS アカウントの作成・削除・パスワード変更</div>
+    <div class="hpc-help">ポータルへのログインに使う OS アカウントとシステム権限の管理</div>
   </div>
 
   <div class="hpc-note">
     <strong>ログインは Linux ユーザーです</strong><br>
-    ここで作成・変更したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
+    ここで作成・再発行したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
   </div>
 
   <div class="hpc-note">
-    API利用の有効化・無効化・ユーザー削除は、このHPCポータルから行ってください。LiteLLMでVirtual Keyを直接変更すると、管理状態が一致しなくなる場合があります。
+    LLM API利用の有効化・無効化・ユーザー削除は、このHPCポータルから行ってください。LiteLLMでVirtual Keyを直接変更すると、管理状態が一致しなくなる場合があります。
   </div>
 
   <div class="gx10-admin-card">
@@ -31,8 +31,8 @@
         <input class="gx10-admin-input" id="new-username" name="username" pattern="[a-z0-9][a-z0-9_-]{2,31}" required placeholder="例: 22rd092" autocomplete="off">
       </div>
       <div>
-        <label class="gx10-admin-label" for="new-password">初期パスワード</label>
-        <input class="gx10-admin-input" id="new-password" name="password" type="password" minlength="8" required autocomplete="new-password">
+        <label class="gx10-admin-label" for="new-display-name">表示名（任意）</label>
+        <input class="gx10-admin-input" id="new-display-name" name="display_name" maxlength="80" placeholder="例: 山田 太郎" autocomplete="off">
       </div>
       <div>
         <label class="gx10-admin-label" style="margin-bottom:10px;">権限</label>
@@ -47,14 +47,18 @@
     </form>
     <div id="create-msg" class="gx10-admin-msg"></div>
     <div id="create-keybox" class="gx10-admin-keybox" aria-live="polite">
-      <div class="hpc-section-title">API key（一度だけ表示）</div>
-      <div class="hpc-status-warn" style="font-size:12px; margin-top:4px;">この key は保存されません。画面を閉じる前にユーザーへ安全な経路で共有してください。</div>
-      <div class="gx10-admin-keyline">
-        <div id="create-keyvalue" class="gx10-admin-keyvalue"></div>
-        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="copy-key-btn">コピー</button>
+      <div class="hpc-section-title"><span id="credential-username"></span> の認証情報（一度だけ表示）</div>
+      <div class="hpc-status-warn" id="credential-warning" style="font-size:12px; margin-top:4px;">初期パスワードは保存されません。画面を移動する前にユーザーへ安全な経路で共有してください。</div>
+      <div class="gx10-admin-keyline" id="password-key-line">
+        <div><div class="hpc-help">初期パスワード</div><div id="initial-password-value" class="gx10-admin-keyvalue"></div></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="initial-password-value">コピー</button>
+      </div>
+      <div class="gx10-admin-keyline" id="api-key-line" hidden>
+        <div><div class="hpc-help">API key</div><div id="create-keyvalue" class="gx10-admin-keyvalue"></div></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="create-keyvalue">コピー</button>
       </div>
       {% if hpc_litellm_public_base_url %}
-      <div class="hpc-help" style="margin-top:8px;">API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
+      <div class="hpc-help" id="api-base-help" style="margin-top:8px;" hidden>API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
       {% endif %}
     </div>
   </div>
@@ -62,36 +66,102 @@
   <div class="gx10-admin-card">
     <div class="hpc-row-between" style="margin-bottom:12px;">
       <div class="hpc-section-title">登録ユーザー（UID ≥ 1000）</div>
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
+      <div class="hpc-user-list-actions">
+        <details class="hpc-sort-dropdown" id="user-sort-dropdown">
+          <summary class="hpc-sort-trigger" aria-label="ユーザーの並べ替えメニューを開く">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M6 3v14M3.5 5.5 6 3l2.5 2.5M14 17V3m-2.5 11.5L14 17l2.5-2.5"></path>
+            </svg>
+            <span>並べ替え</span>
+            <span class="hpc-sort-caret" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="hpc-sort-panel">
+            <div aria-label="並べ替え項目">
+              <button type="button" class="hpc-sort-option selected" data-sort-key="username" aria-pressed="true">ユーザー名順</button>
+              <button type="button" class="hpc-sort-option" data-sort-key="created" aria-pressed="false">作成順</button>
+            </div>
+            <div class="hpc-sort-divider"></div>
+            <div aria-label="並べ替え方向">
+              <button type="button" class="hpc-sort-option selected" data-sort-direction="asc" aria-pressed="true">昇順</button>
+              <button type="button" class="hpc-sort-option" data-sort-direction="desc" aria-pressed="false">降順</button>
+            </div>
+          </div>
+        </details>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
+      </div>
+    </div>
+    <div class="hpc-muted" style="margin:-4px 0 12px; font-size:13px;">
+      パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。<br>
+      ストレージ使用量はホームディレクトリ内の実使用量で、容量の上限ではありません。sudo可のユーザーはサーバー全体を管理できるため、必要なユーザーだけに付与してください。sudoグループの変更は次回ログインから確実に反映され、ログイン済みセッションや実行中アプリは終了しません。
     </div>
     <div style="overflow-x:auto;">
       <table class="gx10-admin-table" aria-label="Linux ユーザー一覧">
         <thead>
           <tr>
             <th>ユーザー名</th>
+            <th>表示名</th>
             <th>UID</th>
             <th>ホーム</th>
-            <th>操作</th>
+            <th>ストレージ使用量</th>
+            <th title="設定されたsudoグループへの所属状態">システム権限</th>
+            <th>LLM API</th>
+            <th class="hpc-user-actions-heading">操作</th>
           </tr>
         </thead>
         <tbody id="users-tbody">
           {% for u in users %}
-          <tr data-username="{{ u.username }}">
+          <tr data-username="{{ u.username }}" data-uid="{{ u.uid }}">
             <td>
               <strong>{{ u.username }}</strong>
               {% if u.protected %}<span class="gx10-admin-badge" style="margin-left:6px;">保護</span>{% endif %}
             </td>
+            <td>
+              <span class="hpc-display-name-value">{{ u.display_name or '—' }}</span>
+            </td>
             <td>{{ u.uid }}</td>
             <td><code>{{ u.home }}</code></td>
             <td>
-	              {% if not u.protected %}
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="{{ u.username }}">パスワード変更</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="{{ u.username }}">API無効化</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="{{ u.username }}">API有効化</button>
-	              <button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="{{ u.username }}">削除</button>
+              <span class="hpc-storage-usage{% if u.storage_used_bytes is none %} is-unknown{% endif %}"{% if u.storage_message %} title="{{ u.storage_message }}"{% endif %}>{{ u.storage_used_label }}</span>
+            </td>
+            <td>
+              <span class="hpc-sudo-status-badge {% if u.sudo_enabled %}is-enabled{% else %}is-disabled{% endif %}" title="設定されたsudoグループに{% if u.sudo_enabled %}所属しています{% else %}所属していません{% endif %}">{% if u.sudo_enabled %}sudo可{% else %}一般{% endif %}</span>
+            </td>
+            <td>
+              {% if u.api_access == 'enabled' %}
+              <span class="hpc-api-status-badge is-enabled">有効</span>
+              {% elif u.api_access == 'disabled' %}
+              <span class="hpc-api-status-badge is-disabled">無効</span>
+              {% elif u.api_access == 'unissued' %}
+              <span class="hpc-api-status-badge is-unissued">未発行</span>
               {% else %}
-              <span class="hpc-muted" style="font-size:12px;">—</span>
+              <span class="hpc-api-status-badge is-unknown"{% if u.api_access_message %} title="{{ u.api_access_message }}"{% endif %}>確認不可</span>
               {% endif %}
+            </td>
+            <td class="hpc-user-actions-cell">
+              <button type="button" class="hpc-user-actions-trigger" aria-label="{{ u.username }} の操作メニューを開く" aria-haspopup="menu" aria-expanded="false">…</button>
+              <div class="hpc-user-actions-menu" role="menu" hidden>
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-display-name-btn" data-username="{{ u.username }}" data-display-name="{{ u.display_name }}">表示名を変更</button>
+                {% if not u.protected %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
+                {% if u.api_access == 'enabled' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_disable">LLM API無効化</button>
+                {% elif u.api_access == 'disabled' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="disabled">LLM API有効化</button>
+                {% elif u.api_access == 'unissued' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="unissued">LLM API有効化</button>
+                {% endif %}
+                {% endif %}
+                <div class="hpc-user-action-divider" role="separator"></div>
+                {% if u.sudo_enabled %}
+                <button type="button" role="menuitem" class="hpc-user-action-item is-warning hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_disable"{% if u.protected %} disabled title="保護ユーザーのsudo権限は解除できません"{% endif %}>sudo無効化</button>
+                {% else %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_enable">sudo有効化</button>
+                {% endif %}
+                {% if not u.protected %}
+                <div class="hpc-user-action-divider" role="separator"></div>
+                <button type="button" role="menuitem" class="hpc-user-action-item is-danger hpc-del-btn" data-username="{{ u.username }}">ユーザー削除</button>
+                {% endif %}
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -102,249 +172,26 @@
   </div>
 </div>
 
-<div id="hpc-pw-modal" class="gx10-admin-modal" hidden>
+<div id="hpc-display-name-modal" class="gx10-admin-modal" role="dialog" aria-modal="true" aria-labelledby="hpc-display-name-modal-title" hidden>
   <div class="gx10-admin-modal-inner">
-    <div class="hpc-section-title" style="margin-bottom:12px;" id="hpc-pw-modal-title">パスワード変更</div>
-    <label class="gx10-admin-label" for="hpc-pw-modal-input">新しいパスワード（8文字以上）</label>
-    <input class="gx10-admin-input" id="hpc-pw-modal-input" type="password" minlength="8" autocomplete="new-password">
-    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="hpc-pw-modal-cancel">キャンセル</button>
-      <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" id="hpc-pw-modal-submit">変更</button>
-    </div>
-    <div id="hpc-pw-modal-err" class="gx10-admin-msg" style="margin-top:10px;"></div>
+    <div class="hpc-section-title" id="hpc-display-name-modal-title" style="margin-bottom:12px;"></div>
+    <form id="hpc-display-name-form">
+      <label class="gx10-admin-label" for="hpc-display-name-input">表示名</label>
+      <input class="gx10-admin-input" id="hpc-display-name-input" maxlength="80" autocomplete="off" placeholder="例: 山田 太郎">
+      <div class="hpc-help" style="margin-top:6px;">空欄で保存すると表示名を削除します。</div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="hpc-display-name-cancel">キャンセル</button>
+        <button type="submit" class="gx10-admin-btn gx10-admin-btn-primary" id="hpc-display-name-save">保存</button>
+      </div>
+    </form>
+    <div id="hpc-display-name-error" class="gx10-admin-msg" aria-live="polite"></div>
   </div>
 </div>
+
 {% endblock %}
 
 {% block script %}
-<script>
-window.HPC_XSRF = {{ xsrf_token|tojson }};
-(function () {
-  var pwModal = document.getElementById("hpc-pw-modal");
-  var pwModalInput = document.getElementById("hpc-pw-modal-input");
-  var pwModalTitle = document.getElementById("hpc-pw-modal-title");
-  var pwModalErr = document.getElementById("hpc-pw-modal-err");
-  var pwModalUser = null;
-
-  function readXsrfCookie() {
-    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
-    return m ? decodeURIComponent(m[1]) : "";
-  }
-  function xsrfToken() {
-    return window.HPC_XSRF || readXsrfCookie() || "";
-  }
-  function apiUrl() {
-    var xsrf = xsrfToken();
-    return xsrf
-      ? "/hub/admin/users/api?_xsrf=" + encodeURIComponent(xsrf)
-      : "/hub/admin/users/api";
-  }
-  function apiHeaders() {
-    var xsrf = xsrfToken();
-    var h = { "Content-Type": "application/json", "Accept": "application/json" };
-    if (xsrf) h["X-XSRFToken"] = xsrf;
-    return h;
-  }
-  function showMsg(el, text, ok) {
-    el.textContent = text;
-    el.className = "gx10-admin-msg " + (ok ? "ok" : "err");
-  }
-  function showWarn(el, text) {
-    el.textContent = text;
-    el.className = "gx10-admin-msg warn";
-  }
-  function failOp(message) {
-    alert(message);
-  }
-  function openPwModal(username) {
-    pwModalUser = username;
-    pwModalTitle.textContent = username + " のパスワード変更";
-    pwModalInput.value = "";
-    pwModalErr.className = "gx10-admin-msg";
-    pwModalErr.textContent = "";
-    pwModal.hidden = false;
-    pwModalInput.focus();
-  }
-  function closePwModal() {
-    pwModal.hidden = true;
-    pwModalUser = null;
-  }
-  document.getElementById("hpc-pw-modal-cancel").onclick = closePwModal;
-  document.getElementById("hpc-pw-modal-submit").onclick = function () {
-    if (!pwModalUser) return;
-    var pw = pwModalInput.value;
-    if (!pw || pw.length < 8) {
-      pwModalErr.textContent = "パスワードは8文字以上にしてください";
-      pwModalErr.className = "gx10-admin-msg err";
-      return;
-    }
-    var btn = document.getElementById("hpc-pw-modal-submit");
-    btn.disabled = true;
-    postAction({ action: "password", username: pwModalUser, password: pw })
-      .then(function () {
-        var name = pwModalUser;
-        closePwModal();
-        showMsg(document.getElementById("list-msg"), name + " のパスワードを更新しました", true);
-      })
-      .catch(function (e) {
-        pwModalErr.textContent = e.message;
-        pwModalErr.className = "gx10-admin-msg err";
-      })
-      .finally(function () { btn.disabled = false; });
-  };
-  function bindRowButtons() {
-    document.querySelectorAll(".hpc-del-btn").forEach(function (btn) {
-      btn.onclick = function () {
-        var name = btn.getAttribute("data-username");
-        if (!confirm(name + " を削除しますか？ホームディレクトリも削除されます。")) return;
-        btn.disabled = true;
-        postAction({ action: "delete", username: name })
-          .then(function (body) {
-            if (body.warning) {
-              showWarn(document.getElementById("list-msg"), name + " を削除しました。" + body.warning);
-              return reloadUsers();
-            }
-            window.location.reload();
-          })
-          .catch(function (e) {
-            showMsg(document.getElementById("list-msg"), e.message, false);
-            failOp(e.message);
-            btn.disabled = false;
-          });
-      };
-    });
-	    document.querySelectorAll(".hpc-pw-btn").forEach(function (btn) {
-	      btn.onclick = function () {
-	        openPwModal(btn.getAttribute("data-username"));
-	      };
-	    });
-	    document.querySelectorAll(".hpc-api-disable-btn").forEach(function (btn) {
-	      btn.onclick = function () {
-	        var name = btn.getAttribute("data-username");
-	        if (!confirm(name + " の LiteLLM API key を無効化しますか？")) return;
-	        btn.disabled = true;
-	        postAction({ action: "api_disable", username: name })
-	          .then(function () {
-	            showMsg(document.getElementById("list-msg"), name + " の API key を無効化しました", true);
-	          })
-	          .catch(function (e) {
-	            showMsg(document.getElementById("list-msg"), e.message, false);
-	            failOp(e.message);
-	          })
-	          .finally(function () { btn.disabled = false; });
-	      };
-	    });
-	    document.querySelectorAll(".hpc-api-enable-btn").forEach(function (btn) {
-	      btn.onclick = function () {
-	        var name = btn.getAttribute("data-username");
-	        if (!confirm(name + " の LiteLLM API key を有効化しますか？")) return;
-	        btn.disabled = true;
-	        postAction({ action: "api_enable", username: name })
-	          .then(function () {
-	            showMsg(document.getElementById("list-msg"), name + " の API key を有効化しました", true);
-	          })
-	          .catch(function (e) {
-	            showMsg(document.getElementById("list-msg"), e.message, false);
-	            failOp(e.message);
-	          })
-	          .finally(function () { btn.disabled = false; });
-	      };
-	    });
-	  }
-  function postAction(payload) {
-    return fetch(apiUrl(), {
-      method: "POST",
-      credentials: "same-origin",
-      headers: apiHeaders(),
-      body: JSON.stringify(payload)
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (body) {
-        if (!r.ok) throw new Error(body.error || body.message || ("HTTP " + r.status));
-        return body;
-      });
-    });
-  }
-  function reloadUsers() {
-    return fetch(apiUrl(), { credentials: "same-origin", headers: apiHeaders() })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        var tbody = document.getElementById("users-tbody");
-        tbody.innerHTML = "";
-        (data.users || []).forEach(function (u) {
-          var tr = document.createElement("tr");
-          tr.setAttribute("data-username", u.username);
-	        var ops = u.protected
-	            ? '<span class="hpc-muted" style="font-size:12px;">—</span>'
-	            : '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-pw-btn" data-username="' + u.username + '">パスワード変更</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-warn hpc-api-disable-btn" data-username="' + u.username + '">API無効化</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-enable-btn" data-username="' + u.username + '">API有効化</button>'
-	              + '<button type="button" class="gx10-admin-btn gx10-admin-btn-danger hpc-del-btn" data-username="' + u.username + '">削除</button>';
-          tr.innerHTML = '<td><strong>' + u.username + '</strong>'
-            + (u.protected ? ' <span class="gx10-admin-badge" style="margin-left:6px;">保護</span>' : '') + '</td>'
-            + '<td>' + u.uid + '</td>'
-            + '<td><code>' + u.home + '</code></td>'
-            + '<td>' + ops + '</td>';
-          tbody.appendChild(tr);
-        });
-        bindRowButtons();
-      });
-  }
-  var createForm = document.getElementById("hpc-create-user-form");
-  var keyBox = document.getElementById("create-keybox");
-  var keyValue = document.getElementById("create-keyvalue");
-  document.getElementById("copy-key-btn").onclick = function () {
-    var key = keyValue.textContent || "";
-    if (!key) return;
-    if (!navigator.clipboard || !navigator.clipboard.writeText) {
-      window.prompt("API key をコピーしてください", key);
-      return;
-    }
-    navigator.clipboard.writeText(key).then(function () {
-      showMsg(document.getElementById("create-msg"), "API key をコピーしました", true);
-    }).catch(function () {
-      window.prompt("API key をコピーしてください", key);
-    });
-  };
-  createForm.onsubmit = function (ev) {
-    ev.preventDefault();
-    var btn = document.getElementById("create-btn");
-    var msg = document.getElementById("create-msg");
-    keyBox.className = "gx10-admin-keybox";
-    keyValue.textContent = "";
-    btn.disabled = true;
-    postAction({
-      action: "create",
-      username: document.getElementById("new-username").value.trim().toLowerCase(),
-      password: document.getElementById("new-password").value,
-      sudo: document.getElementById("new-sudo").checked
-    }).then(function (body) {
-      if (body.api_key) {
-        keyValue.textContent = body.api_key;
-        keyBox.className = "gx10-admin-keybox visible";
-      }
-      if (body.warning) {
-        showWarn(msg, "ユーザーは作成しました。" + body.warning);
-      } else {
-        showMsg(msg, "ユーザーを作成しました", true);
-      }
-      createForm.reset();
-      if (createForm.getAttribute("data-default-sudo") === "true") {
-        document.getElementById("new-sudo").checked = true;
-      }
-      return reloadUsers();
-    }).catch(function (e) {
-      showMsg(msg, e.message, false);
-      failOp(e.message);
-    }).finally(function () { btn.disabled = false; });
-  };
-  document.getElementById("reload-btn").onclick = function () {
-    reloadUsers().catch(function (e) {
-      showMsg(document.getElementById("list-msg"), e.message, false);
-      failOp(e.message);
-    });
-  };
-  bindRowButtons();
-})();
-</script>
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/admin-users.js?v={{ hpc_static_versions['js/admin-users.js'] }}"></script>
 {% endblock %}
 {% endraw %}

@@ -1,0 +1,113 @@
+.gx10-model-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.gx10-model-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.gx10-model-select {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  padding: 12px 14px;
+  border: 1px solid var(--hpc-border);
+  border-radius: 10px;
+  background: var(--hpc-code-bg);
+}
+
+.gx10-model-select:hover,
+.gx10-model-select.selected {
+  border-color: var(--hpc-primary);
+  box-shadow: 0 0 0 1px var(--hpc-primary);
+}
+
+.gx10-code-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--hpc-muted);
+}
+
+.gx10-api-key-placeholder { color: #f5c451; font-weight: 700; }
+.gx10-api-model { color: #63c5ff; font-weight: 700; }
+.gx10-copy-status { min-height: 1.2em; margin-top: 5px; color: var(--hpc-danger); font-size: 12px; }
+
+.gx10-pull-progress { margin-top: 12px; }
+.gx10-pull-progress[hidden] { display: none; }
+.gx10-pull-progress .hpc-progress-fill { width: 0; background: var(--hpc-primary); transition: width .25s ease; }
+
+.gx10-model-register-retry { margin-top: 12px; }
+.gx10-model-register-retry[hidden] { display: none; }
+
+.gx10-model-name {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--hpc-text);
+  overflow-wrap: anywhere;
+}
+
+.gx10-model-meta {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.hpc-ollama-model-name {
+  color: var(--hpc-link);
+  font-weight: 600;
+}
+
+.hpc-progress {
+  margin-top: 8px;
+  height: 6px;
+  background: var(--hpc-border-muted);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.hpc-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--hpc-warning);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.hpc-progress[hidden] {
+  display: none;
+}
+
+.hpc-progress-indeterminate .hpc-progress-fill {
+  width: 38%;
+  background: linear-gradient(90deg, var(--hpc-warning), var(--hpc-primary));
+  animation: hpc-progress-sweep 1.25s ease-in-out infinite;
+  will-change: transform;
+}
+
+.hpc-progress-error .hpc-progress-fill {
+  width: 100%;
+  background: var(--hpc-danger);
+}
+
+@keyframes hpc-progress-sweep {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(280%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hpc-progress-fill {
+    transition: none;
+  }
+
+  .hpc-progress-indeterminate .hpc-progress-fill {
+    width: 55%;
+    animation: none;
+    transform: none;
+  }
+}

@@ -66,6 +66,147 @@
   ansible.builtin.set_fact:
     slurm_effective_gpu_count: "{{ slurm_gpu_count | default(slurm_nvidia_smi.stdout_lines | select('match', '^GPU ') | list | length) | int }}"
 
+- name: Slurmジョブを確認
+  ansible.builtin.command: squeue -h -o "%A"
+  register: slurm_active_jobs_during_deploy
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: 通常デプロイでSlurm設定を配置できるか判定
+  ansible.builtin.set_fact:
+    slurm_can_apply_config: >-
+      {{
+        not (hpc_defer_slurm_config_apply | default(false) | bool)
+        and (
+          (hpc_force_service_restarts | default(false) | bool)
+          or (
+            slurm_active_jobs_during_deploy.rc == 0
+            and (slurm_active_jobs_during_deploy.stdout | trim | length == 0)
+          )
+        )
+      }}
+
+- name: Slurm候補設定ディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/slurm/.hpc-deploy
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: not ansible_check_mode
+
+- name: GPU GRES候補設定を生成
+  ansible.builtin.template:
+    src: gres.conf.j2
+    dest: /etc/slurm/.hpc-deploy/gres.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - not ansible_check_mode
+    - slurm_effective_gpu_count | int > 0
+
+- name: GPU未検出時はGRES候補設定を削除
+  ansible.builtin.file:
+    path: /etc/slurm/.hpc-deploy/gres.conf
+    state: absent
+  when:
+    - not ansible_check_mode
+    - slurm_effective_gpu_count | int == 0
+
+- name: slurm.conf候補設定を生成
+  ansible.builtin.template:
+    src: slurm.conf.j2
+    dest: /etc/slurm/.hpc-deploy/slurm.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: not ansible_check_mode
+
+- name: SlurmとGRESの候補設定を検証
+  ansible.builtin.command: slurmd -G -f /etc/slurm/.hpc-deploy/slurm.conf
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: GPU GRES候補設定と現行設定の差分を確認
+  ansible.builtin.copy:
+    src: /etc/slurm/.hpc-deploy/gres.conf
+    dest: /etc/slurm/gres.conf
+    remote_src: true
+  check_mode: true
+  register: slurm_gres_candidate_check
+  when:
+    - not ansible_check_mode
+    - slurm_effective_gpu_count | int > 0
+
+- name: GPU未検出時の現行GRES設定を確認
+  ansible.builtin.stat:
+    path: /etc/slurm/gres.conf
+  register: slurm_gres_live_stat
+  when: slurm_effective_gpu_count | int == 0
+
+- name: slurm.conf候補設定と現行設定の差分を確認
+  ansible.builtin.copy:
+    src: /etc/slurm/.hpc-deploy/slurm.conf
+    dest: /etc/slurm/slurm.conf
+    remote_src: true
+  check_mode: true
+  register: slurm_main_candidate_check
+  when: not ansible_check_mode
+
+- name: ドライランでGPU GRES設定の差分を確認
+  ansible.builtin.template:
+    src: gres.conf.j2
+    dest: /etc/slurm/gres.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: slurm_gres_dry_run_check
+  when:
+    - ansible_check_mode
+    - slurm_effective_gpu_count | int > 0
+
+- name: ドライランでslurm.confの差分を確認
+  ansible.builtin.template:
+    src: slurm.conf.j2
+    dest: /etc/slurm/slurm.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: slurm_main_dry_run_check
+  when: ansible_check_mode
+
+- name: Slurm設定の変更要否を記録
+  ansible.builtin.set_fact:
+    slurm_gres_change_required: >-
+      {{
+        (
+          slurm_gres_dry_run_check.changed
+          if ansible_check_mode
+          else slurm_gres_candidate_check.changed
+        )
+        if (slurm_effective_gpu_count | int > 0)
+        else slurm_gres_live_stat.stat.exists
+      }}
+    slurm_main_change_required: >-
+      {{
+        slurm_main_dry_run_check.changed
+        if ansible_check_mode
+        else slurm_main_candidate_check.changed
+      }}
+
+- name: Slurm設定の未反映状態を記録
+  ansible.builtin.set_fact:
+    hpc_slurm_deploy_skipped: >-
+      {{
+        not (slurm_can_apply_config | bool)
+        and (
+          (slurm_gres_change_required | bool)
+          or (slurm_main_change_required | bool)
+        )
+      }}
+
 - name: mungeキーを作成
   ansible.builtin.shell: |
     dd if=/dev/urandom of=/etc/munge/munge.key bs=1 count=1024
@@ -73,33 +214,14 @@
     chmod 0400 /etc/munge/munge.key
   args:
     creates: /etc/munge/munge.key
-  notify: mungeを再起動
+  notify: Slurm再起動を要求
 
-- name: GPU GRES設定を配置
-  ansible.builtin.template:
-    src: gres.conf.j2
-    dest: /etc/slurm/gres.conf
-    owner: root
-    group: root
-    mode: "0644"
-  when: slurm_effective_gpu_count | int > 0
-  notify: slurmサービスを再起動
-
-- name: GPU未検出時はGRES設定を削除
-  ansible.builtin.file:
-    path: /etc/slurm/gres.conf
-    state: absent
-  when: slurm_effective_gpu_count | int == 0
-  notify: slurmサービスを再起動
-
-- name: 単一ノード用slurm.confを配置
-  ansible.builtin.template:
-    src: slurm.conf.j2
-    dest: /etc/slurm/slurm.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: slurmサービスを再起動
+- name: 検証済みSlurm設定を反映
+  ansible.builtin.include_tasks: apply_config.yml
+  when:
+    - not ansible_check_mode
+    - slurm_can_apply_config | bool
+    - (slurm_gres_change_required | bool) or (slurm_main_change_required | bool)
 
 - name: mungeを有効化して起動
   ansible.builtin.systemd:

@@ -16,39 +16,55 @@
 
 ### 2. システムアーキテクチャ
 
-単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM を連携させます。外部公開は Cloudflare Tunnel 経由だけで、Ollama と PostgreSQL はホスト内部からのみ利用します。
+単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、Web検索MCP、SearXNGはホスト内部からのみ利用します。
 
 #### 全体構成
 
 ```mermaid
-flowchart LR
-    User[利用者]
-    CF[Cloudflare Tunnel]
+flowchart TB
+    User[利用者] --> CF[Cloudflare Tunnel]
+    Proxy[configurable-http-proxy<br/>:8000]
+    JHub[JupyterHub<br/>ポータル]
+    Slurm[Slurm]
+    Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
+    LiteLLM[LiteLLM<br/>API Gateway]
+    SearchMCP[Web検索MCP<br/>内部ツール]
+    SearXNG[SearXNG<br/>内部検索API]
+    Ollama[共有Ollama]
+    DB[(PostgreSQL)]
+    Models[(共有モデル保存領域)]
+    Search[外部検索サービス]
 
-    subgraph Host[単一ノード]
-        Proxy[configurable-http-proxy<br/>公開入口 :8000]
-        JHub[JupyterHub<br/>ポータル]
-        Slurm[Slurm]
-        Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
-        LiteLLM[LiteLLM<br/>API Gateway]
-        Ollama[共有 Ollama]
-        DB[(PostgreSQL)]
-        Models[(共有モデル保存領域)]
-    end
-
-    User --> CF
     CF -->|Hub・アプリURL| Proxy
+    CF -->|LLM API・管理UI| LiteLLM
     Proxy --> JHub
     Proxy --> Apps
-    JHub -->|動的ルートを登録| Proxy
     JHub -->|ジョブ投入| Slurm
     Slurm --> Apps
-    Apps -->|利用者別 Virtual Key| LiteLLM
-    CF -->|LLM API・管理UI| LiteLLM
+    Slurm --> Ollama
+    JHub -->|ユーザー・Key・モデル管理| LiteLLM
+    Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
+    Apps -->|Web検索| SearXNG
+    LiteLLM -->|MCPツール呼び出し| SearchMCP
+    SearchMCP -->|JSON検索| SearXNG
     LiteLLM <--> DB
-    LiteLLM --> Ollama
+    LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
+    SearXNG --> Search
+
+    classDef external fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#111827
+    classDef workload fill:#dcfce7,stroke:#16a34a,color:#111827
+    classDef service fill:#ede9fe,stroke:#7c3aed,color:#111827
+    classDef data fill:#fef3c7,stroke:#d97706,color:#111827
+    class User,CF,Search external
+    class Proxy,JHub,Slurm control
+    class Apps,Ollama workload
+    class LiteLLM,SearchMCP,SearXNG service
+    class DB,Models data
 ```
+
+色分け: 灰=外部、青=ポータル・ジョブ管理、緑=Slurmワークロード、紫=AI・検索基盤、黄=永続データ。青・緑・紫・黄の各コンポーネントは単一ノード上で動作します。
 
 #### 起動・推論の流れ
 
@@ -65,6 +81,8 @@ sequenceDiagram
         participant App as 利用者ごとの Slurm ジョブ<br/>JupyterLab / Open WebUI
         participant LiteLLM as LiteLLM API Gateway<br/>127.0.0.1:4000
         participant Ollama as 共有 Ollama Slurm ジョブ<br/>127.0.0.1:11434
+        participant SearchMCP as Web検索MCP<br/>127.0.0.1:8890
+        participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
 
@@ -96,10 +114,23 @@ sequenceDiagram
     LiteLLM-->>App: OpenAI互換レスポンス
     App-->>User: 応答を表示
 
+    opt Web検索を利用
+        App->>SearXNG: 検索語を内部JSON APIへ送信
+        SearXNG-->>App: 複数検索サービスの結果を返す
+    end
+
     Note over User,LiteLLM: 外部API利用時
     User->>CF: LLM API / 管理UIへアクセス
     CF->>LiteLLM: API / 管理UIを転送
+    opt APIリクエストでWeb検索MCPを指定
+        LiteLLM->>SearchMCP: search_webを呼び出す
+        SearchMCP->>SearXNG: 検索語を内部JSON APIへ送信
+        SearXNG-->>SearchMCP: 検索結果を返す
+        SearchMCP-->>LiteLLM: タイトル・URL・概要を返す
+    end
 ```
+
+Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Open WebUIはSearXNGを直接使用し、外部LLM APIはLiteLLMに登録したWeb検索MCP経由で同じSearXNGを使用します。
 
 ---
 
@@ -131,41 +162,115 @@ sequenceDiagram
    ```bash
    ssh <ansible_user>@<target-ip>
    ```
-4. **インベントリと秘密情報の設定**（雛形コピー）:
+4. **インベントリと秘密情報の設定**:
    ```bash
    make setup
    # inventory/production.ini … IP / ansible_user / ドメイン変数
-   # group_vars/all/secret.yml … cloudflared_token など
+   # group_vars/all/secret.yml … cloudflared_tokenなど外部発行の値を設定
    ```
+
+   `make setup`はLiteLLM・PostgreSQL・SearXNGの未設定の秘密値だけを自動生成します。設定済みの値は変更しません。
 
 #### 📋 よく使う make コマンド
 
 プロジェクト直下の [Makefile](./Makefile) に、Ansible の定番操作をまとめています。一覧は `make help` で確認できます。
 
+##### 基本操作
+
 | コマンド | 内容 |
 |----------|------|
+| `make deploy` | ジョブを維持し、変更されたコンポーネントだけを安全に反映 |
+| `make deploy-restart` | 全ジョブ停止・関連サービス再起動を伴う全体反映（`restart`確認あり） |
 | `make ping` | 接続確認 |
 | `make check` | ドライラン（`--check --diff`） |
-| `make deploy` | フルデプロイ（`site.yml`） |
-| `make deploy-safe` | 再起動抑止デプロイ（`site_safe.yml`） |
-| `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
-| `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
-| `make jupyterhub` | JupyterHub ロールのみ |
-| `make slurm` | Slurm ロールのみ |
-| `make ollama` | shared Ollama ロールのみ |
-| `make apptainer` | Apptainer ロールのみ |
-| `make status` | Slurm ジョブ・ディスク空き |
-| `make gpu` | GPU / VRAM |
-| `make services` | サービス・shared Ollama 状態・主要ログ |
-| `make processes` | 実行ユーザー / hpc-ollama の残存プロセス確認 |
+| `make test` | ローカルでpytestを実行（実機接続なし） |
+| `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
 
 別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
 
+##### コンポーネント別の反映
+
+| コマンド | 内容 |
+|----------|------|
+| `make jupyterhub` | JupyterHubだけを差分反映。Hub再起動時もジョブを維持 |
+| `make ollama` | shared Ollamaの次回起動設定だけを差分反映 |
+| `make apptainer` | ApptainerとSIFを差分反映。実行中コンテナは維持 |
+| `make litellm` | PostgreSQL・LiteLLMだけを差分反映 |
+| `make searxng` | SearXNG・Web検索MCP・LiteLLM・Open WebUI検索設定を差分反映 |
+| `make search-mcp` | Web検索MCPとLiteLLM設定だけを差分反映 |
+| `make common` | OS共通設定を差分反映。OSは自動再起動しない |
+| `make slurm` | Slurmだけを差分反映。ジョブ実行中に設定差分があれば未変更のままスキップ |
+| `make postgres` | PostgreSQLだけを差分反映 |
+| `make cloudflared` | cloudflaredだけを差分反映 |
+
+##### 状態確認
+
+| コマンド | 内容 |
+|----------|------|
+| `make status` | Slurm ジョブ・ディスク空き |
+| `make services` | サービス・shared Ollama 状態・主要ログ |
+| `make gpu` | GPU / VRAM |
+| `make processes` | 実行ユーザー / hpc-ollama の残存プロセス確認 |
+
+##### クリーンアップ
+
+| コマンド | 内容 |
+|----------|------|
+| `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
+| `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
+
 #### 🚀 デプロイ実行
+
+通常の更新:
 
 ```bash
 make deploy
 ```
+
+実行中のSlurmジョブを維持したまま、変更された構成だけを反映します。
+
+Slurm設定を含む全体更新:
+
+```bash
+make deploy-restart
+```
+
+確認に`restart`と入力すると全ジョブを停止して反映します。停止したアプリは自動起動しないため、完了後に必要なアプリをポータルから起動してください。
+
+<details>
+<summary>デプロイの動作詳細</summary>
+
+`make deploy`はジョブ実行中にSlurm設定差分を検出すると、その設定だけを保留して残りを反映し、最後に`make deploy-restart`が必要だと表示します。アプリ起動設定の変更は次回起動から反映されます。Slurm設定は固定名の一時バックアップを使い、成功時または復元成功時に削除します。
+
+</details>
+
+#### 🧪 開発環境・テスト
+
+[uv](https://docs.astral.sh/uv/) をインストール後、リポジトリ直下で実行します。
+
+##### 初回セットアップ・依存更新時
+
+```bash
+uv sync --dev
+```
+
+Python 3.12の`.venv`を作成し、開発用依存を同期します。
+
+##### pytest（deploy前）
+
+```bash
+make test
+```
+
+実機へ接続せず、Pythonの入力検証・権限・処理分岐を確認します。
+
+##### スモークテスト（deploy後）
+
+```bash
+make smoke
+```
+
+実機へ読み取り専用で接続して主要機能を確認します。ユーザー、ジョブ、モデル、パスワードは変更しません。SearXNGのJSON検索APIとLiteLLMから見えるWeb検索MCPも確認し、共有Ollamaは停止中ならスキップします。
 
 #### 🧹 クリーンアップ
 

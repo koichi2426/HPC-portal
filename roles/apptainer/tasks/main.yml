@@ -48,10 +48,26 @@
     group: root
     mode: "0644"
   loop:
-    - { src: jupyter-cpu.def }
-    - { src: openwebui.def }
     - { src: ubuntu-22.04-ttyd.def }
   register: apptainer_def_copy
+
+- name: JupyterLab Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: jupyter-cpu.def.j2
+    dest: /opt/apptainer/jupyter-cpu.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: apptainer_jupyter_def_template
+
+- name: Open WebUI Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: openwebui.def.j2
+    dest: /opt/apptainer/openwebui.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: apptainer_openwebui_def_template
 
 - name: Ollama Apptainer定義ファイルを配置
   ansible.builtin.template:
@@ -62,6 +78,15 @@
     mode: "0644"
   register: ollama_def_template
 
+- name: SearXNG Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: searxng.def.j2
+    dest: /opt/apptainer/searxng.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: searxng_def_template
+
 - name: 既存SIFの有無を確認
   ansible.builtin.stat:
     path: "{{ item.image }}"
@@ -69,14 +94,25 @@
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
     - { src: ollama.def, image: /opt/images/ollama.sif, def: /opt/apptainer/ollama.def }
     - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
+    - { src: searxng.def, image: /opt/images/searxng.sif, def: /opt/apptainer/searxng.def }
   register: apptainer_image_stat
 
 - name: SIFイメージをビルド（定義更新時は再作成）
-  ansible.builtin.command: "apptainer build --force {{ item.image }} {{ item.def }}"
+  ansible.builtin.shell: |
+    set -euo pipefail
+    temporary_image="{{ item.image }}.new"
+    trap 'rm -f "$temporary_image"' EXIT
+    apptainer build --force "$temporary_image" "{{ item.def }}"
+    mv -f "$temporary_image" "{{ item.image }}"
+    trap - EXIT
+  args:
+    executable: /bin/bash
+  changed_when: true
   loop:
     - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
     - { src: ollama.def, image: /opt/images/ollama.sif, def: /opt/apptainer/ollama.def }
     - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
+    - { src: searxng.def, image: /opt/images/searxng.sif, def: /opt/apptainer/searxng.def }
   when: >
     (apptainer_def_copy.results
       | selectattr('item.src', 'equalto', item.src)
@@ -84,7 +120,14 @@
       | first
       | default(false))
     or
+    (item.src == 'jupyter-cpu.def' and apptainer_jupyter_def_template.changed)
+    or
     (item.src == 'ollama.def' and ollama_def_template.changed)
+    or
+    (item.src == 'openwebui.def' and
+      apptainer_openwebui_def_template.changed)
+    or
+    (item.src == 'searxng.def' and searxng_def_template.changed)
     or
     not
     (apptainer_image_stat.results
@@ -101,4 +144,18 @@
     - { image: /opt/images/ollama.sif, cmd: ollama }
     - { image: /opt/images/openwebui.sif, cmd: python3 }
     - { image: /opt/images/openwebui.sif, cmd: uvicorn }
+    - { image: /opt/images/searxng.sif, cmd: /usr/local/searxng/.venv/bin/granian }
+  changed_when: false
+
+- name: SearXNG Pythonモジュールを読み込めることを確認
+  ansible.builtin.command:
+    argv:
+      - apptainer
+      - exec
+      - --pwd
+      - /usr/local/searxng
+      - "{{ searxng_apptainer_image }}"
+      - /usr/local/searxng/.venv/bin/python
+      - -c
+      - import searx
   changed_when: false

@@ -38,9 +38,6 @@ cloudflared_ingress:
     port: "{{ litellm_port | default(4000) }}"
   - hostname: "*.{{ hpc_base_domain | default('example.com') }}"
 
-# true のとき設定反映のみ行い、サービス再起動を抑止（運用中の 502 瞬断を回避）
-hpc_skip_service_restarts: false
-
 # nvcc 未検出時に apt で CUDA Toolkit を入れる（GB10 等で別途 NVIDIA 公式 CUDA が必要な場合あり）
 hpc_install_cuda_toolkit: true
 hpc_cuda_toolkit_packages:
@@ -54,7 +51,7 @@ hpc_portal_protected_users:
   - "{{ ansible_user }}"
   - root
 hpc_portal_user_min_uid: 1000
-hpc_portal_grant_sudo_on_create: true
+hpc_portal_grant_sudo_on_create: false
 hpc_portal_user_sudo_group: sudo
 
 # LiteLLM / PostgreSQL
@@ -70,7 +67,7 @@ litellm_public_base_url: "{{ hpc_llm_public_base_url }}"
 litellm_proxy_base_url: "{{ hpc_llm_admin_base_url }}"
 litellm_admin_url: "{{ hpc_llm_admin_url }}"
 litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
-# 宣言的に同梱するモデルはなし。利用モデルは LiteLLM 管理画面で登録する。
+# 宣言的に同梱するモデルはなし。OllamaモデルはHPCポータルからDBへ同期する。
 litellm_initial_models: []
 
 # shared Ollama
@@ -83,13 +80,59 @@ ollama_models_dir: /srv/ollama/models
 ollama_apptainer_image: /opt/images/ollama.sif
 ollama_slurm_job_name: shared-ollama
 ollama_slurm_partition: debug
-ollama_slurm_default_cpus: 4
-ollama_slurm_default_memory: 16G
+ollama_slurm_default_cpus: 8
+ollama_slurm_default_memory: 64G
 ollama_slurm_allowed_cpus: [4, 8, 12, 16, 20]
 ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
 ollama_slurm_gpus: 1
 ollama_slurm_time: "INFINITE"
+ollama_default_parallel: 2
+ollama_allowed_parallel: [1, 2, 4]
+ollama_default_max_loaded_models: 2
+ollama_allowed_max_loaded_models: [1, 2, 3]
+# Web検索やツール利用に必要な長さを確保する。
+ollama_default_context_length: 131072
+ollama_allowed_context_lengths: [32768, 65536, 131072, 262144]
+# q8_0はKVキャッシュをf16の約半分に抑えつつ、精度低下を小さくする。
+ollama_default_kv_cache_type: q8_0
+ollama_allowed_kv_cache_types: [f16, q8_0, q4_0]
+ollama_default_keep_alive: 30m
+ollama_allowed_keep_alive: [5m, 30m, 1h, -1]
+ollama_default_max_queue: 64
+ollama_allowed_max_queue: [32, 64, 128, 256]
+# 長いコンテキストでもAttention計算時のGPUメモリ使用量を抑える。
+ollama_default_flash_attention: true
 
+
+# Ubuntu/JupyterLab
+jupyter_image_ubuntu_version: "24.04"
 # Open WebUI -> LiteLLM
+openwebui_version: "0.10.2"
 openwebui_litellm_base_url: "{{ litellm_internal_base_url }}/v1"
 openwebui_litellm_key_dir: /etc/litellm/openwebui-keys
+
+# SearXNG / Open WebUI Web検索
+searxng_version: "2026.7.16-f2432e33d"
+searxng_service_user: searxng
+searxng_service_home: /var/lib/searxng
+searxng_host: "127.0.0.1"
+searxng_port: 8888
+searxng_apptainer_image: /opt/images/searxng.sif
+searxng_instance_name: "HPC Search"
+searxng_safe_search: 1
+searxng_query_url: "http://{{ searxng_host }}:{{ searxng_port }}/search?q=<query>"
+openwebui_web_search_result_count: 6
+openwebui_web_search_concurrent_requests: 1
+search_mcp_version: "3.4.4"
+search_mcp_user: hpc-search-mcp
+search_mcp_home: /var/lib/hpc-search-mcp
+search_mcp_install_dir: /opt/hpc-search-mcp
+search_mcp_host: "127.0.0.1"
+search_mcp_port: 8890
+search_mcp_default_result_count: 6
+search_mcp_max_result_count: 10
+search_mcp_query_max_length: 256
+search_mcp_timeout: 5
+search_mcp_max_response_bytes: 2097152
+openwebui_web_loader_concurrent_requests: 2
+openwebui_web_fetch_max_content_length: 12000

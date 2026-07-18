@@ -1,13 +1,18 @@
 """ポータル上のアプリ表示とアプリ詳細情報を組み立てる。"""
 
+import asyncio
+import html
+import json
+import secrets
+import time
+import urllib.request
+
 from .common import (
     BaseHandler,
     HPC_JOB_DNS_DOMAIN,
+    HPC_JUPYTER_UBUNTU_VERSION,
+    HPC_OPENWEBUI_VERSION,
     HPC_PUBLIC_SCHEME,
-    c,
-    html,
-    secrets,
-    time,
     url_escape_path,
     url_path_join,
     web,
@@ -34,9 +39,6 @@ class HpcNewApplicationHandler(BaseHandler):
             url_escape_path(server_name),
         )
         self.redirect(target)
-
-
-c.JupyterHub.extra_handlers = [(r"/new", HpcNewApplicationHandler)]
 
 
 class HpcAppDetailHandler(BaseHandler):
@@ -93,6 +95,93 @@ class HpcAppDetailHandler(BaseHandler):
         self.finish(html)
 
 
+def _hpc_openwebui_runtime_version(spawner) -> tuple[str | None, str | None]:
+    """起動中Open WebUIの公開バージョンAPIをローカル経由で確認する。
+
+    Args:
+        spawner: 確認対象のOpen WebUI Spawner。
+
+    Returns:
+        ``(バージョン, エラー)``。確認できない場合はバージョンがNone。
+    """
+    try:
+        port = int(getattr(spawner, "port", 0) or 0)
+    except (TypeError, ValueError):
+        return None, "ポートを確認できません"
+    if not 1 <= port <= 65535:
+        return None, "ポートを確認できません"
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/version",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=1.0) as response:
+            payload = json.loads(response.read(65536).decode("utf-8"))
+        version = str(payload.get("version") or "").strip().removeprefix("v")
+        if not version:
+            return None, "バージョンが空です"
+        return version, None
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return None, str(exc)
+
+
+class HpcOpenWebuiVersionHandler(BaseHandler):
+    """ログインユーザー自身のOpen WebUIバージョンを返す。"""
+
+    @web.authenticated
+    async def get(self, server_name_path):
+        """起動中と新規起動のOpen WebUIバージョンを返す。
+
+        Args:
+            server_name_path: URLに含まれるnamed server名。
+
+        Raises:
+            web.HTTPError: 対象が存在しない、またはOpen WebUIではない場合。
+        """
+        server_name = _hpc_server_name_from_path(server_name_path)
+        spawner = self.current_user.spawners.get(server_name)
+        if spawner is None or not _is_openwebui_spawner(spawner):
+            raise web.HTTPError(404, "Open WebUIが見つかりません")
+
+        stored_version = str(
+            (getattr(spawner, "user_options", None) or {}).get(
+                "openwebui_version", ""
+            )
+        ).strip().removeprefix("v")
+        runtime_version = None
+        runtime_error = None
+        verified = False
+        if getattr(spawner, "active", False):
+            runtime_version, runtime_error = await asyncio.to_thread(
+                _hpc_openwebui_runtime_version, spawner
+            )
+            verified = bool(runtime_version)
+            if runtime_error:
+                self.log.debug(
+                    "HPC: Open WebUI version check failed for %s: %s",
+                    server_name,
+                    runtime_error,
+                )
+        displayed_version = runtime_version or stored_version or None
+        target_version = HPC_OPENWEBUI_VERSION.removeprefix("v")
+        self.set_header("Cache-Control", "no-store")
+        self.write(
+            {
+                "ok": True,
+                "data": {
+                    "running_version": displayed_version,
+                    "target_version": target_version,
+                    "verified": verified,
+                    "update_available": bool(
+                        displayed_version
+                        and target_version
+                        and displayed_version != target_version
+                    ),
+                },
+            }
+        )
+
+
 def _job_host(job_id: str) -> str:
     """Slurm JOBIDから公開ホスト名を作る。
 
@@ -106,7 +195,14 @@ def _job_host(job_id: str) -> str:
 
 
 def _spawner_job_id(spawner) -> str:
-    """実行中に job_id が属性から消えるケースがあるため複数ソースから回収する"""
+    """実行中に job_id が属性から消えるケースがあるため複数ソースから回収する
+
+    Args:
+        spawner: 対象のSpawner。
+
+    Returns:
+        SlurmジョブID。取得できない場合は空文字列。
+    """
     jid = getattr(spawner, "job_id", "") or ""
     if jid:
         return str(jid)
@@ -124,7 +220,14 @@ def _spawner_job_id(spawner) -> str:
 
 
 def _job_user_path(spawner) -> str:
-    """Hub が期待するプレフィックス: /user/<name>/ または named の場合はその配下"""
+    """Hub が期待するプレフィックス: /user/<name>/ または named の場合はその配下
+
+    Args:
+        spawner: 対象のSpawner。
+
+    Returns:
+        対象アプリのユーザーURLパス。
+    """
     u = spawner.user
     if spawner.name:
         return url_path_join(u.base_url, url_escape_path(spawner.name), "/")
@@ -132,7 +235,14 @@ def _job_user_path(spawner) -> str:
 
 
 def _is_openwebui_spawner(spawner) -> bool:
-    """OpenWebUI テンプレート起動かどうかを判定する"""
+    """OpenWebUI テンプレート起動かどうかを判定する
+
+    Args:
+        spawner: 対象のSpawner。
+
+    Returns:
+        Open WebUI用SpawnerならTrue。
+    """
     try:
         return str((spawner.user_options or {}).get("app_choice", "")) == "open-webui"
     except Exception:
@@ -140,7 +250,14 @@ def _is_openwebui_spawner(spawner) -> bool:
 
 
 def _hpc_runtime_hours_label(runtime: str) -> str:
-    """Slurm 形式の実行時間 (HH:MM:SS / UNLIMITED) を表示用に短縮する"""
+    """Slurm 形式の実行時間 (HH:MM:SS / UNLIMITED) を表示用に短縮する
+
+    Args:
+        runtime: 実行時間の設定値。
+
+    Returns:
+        画面表示用の実行時間。
+    """
     rt = str(runtime or "").strip()
     if rt.upper() in ("UNLIMITED", "INFINITE"):
         return "無制限"
@@ -154,7 +271,14 @@ def _hpc_runtime_hours_label(runtime: str) -> str:
 
 
 def _hpc_runtime_from_hours_choice(hours_value: str) -> tuple[str, str]:
-    """起動フォームの hours 値から (runtime, #SBATCH 行) を生成する"""
+    """起動フォームの hours 値から (runtime, #SBATCH 行) を生成する
+
+    Args:
+        hours_value: フォームで選択された実行時間。
+
+    Returns:
+        Slurm形式の実行時間と、対応する``#SBATCH --time``行の組。
+    """
     raw = str(hours_value or "").strip().lower()
     if raw in ("unlimited", "infinite", "none", "0"):
         return "UNLIMITED", "#SBATCH --time=UNLIMITED"
@@ -168,12 +292,19 @@ def _hpc_runtime_from_hours_choice(hours_value: str) -> tuple[str, str]:
 
 
 def _hpc_allocation_summary(user_options) -> dict:
-    """起動時に要求した Slurm リソース割り当てを表示用 dict にまとめる"""
+    """起動時に要求した Slurm リソース割り当てを表示用 dict にまとめる
+
+    Args:
+        user_options: Spawnerへ渡された起動オプション。
+
+    Returns:
+        CPU・メモリ・GPU割当の要約。
+    """
     uo = user_options or {}
     app_choice = str(uo.get("app_choice", "ubuntu-cli"))
     if app_choice == "open-webui":
         app_label = "Open WebUI"
-    elif app_choice in ("jupyterlab", "jupyter"):
+    elif app_choice in ("ubuntu-cli", "jupyterlab", "jupyter"):
         app_label = "JupyterLab"
     else:
         app_label = app_choice.replace("-", " ").title() or "Application"
@@ -200,7 +331,14 @@ def _hpc_allocation_summary(user_options) -> dict:
 
 
 def _hpc_allocation_html(user_options) -> str:
-    """割り当てリソースの HTML 行（spawn フォーム・一覧用）"""
+    """割り当てリソースの HTML 行（spawn フォーム・一覧用）
+
+    Args:
+        user_options: Spawnerへ渡された起動オプション。
+
+    Returns:
+        HTMLエスケープ済みの割当表示。
+    """
     a = _hpc_allocation_summary(user_options)
     return (
         f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;'
@@ -209,7 +347,14 @@ def _hpc_allocation_html(user_options) -> str:
 
 
 def _hpc_stop_button_html(server_name: str) -> str:
-    """named server 停止ボタン（data-server-name 空 = デフォルト server）"""
+    """named server 停止ボタン（data-server-name 空 = デフォルト server）
+
+    Args:
+        server_name: 対象のnamed server名。
+
+    Returns:
+        停止ボタンのHTML。
+    """
     sn = html.escape(str(server_name or ""), quote=True)
     return (
         f'<button type="button" class="gx10-stop-btn" data-server-name="{sn}" '
@@ -219,7 +364,14 @@ def _hpc_stop_button_html(server_name: str) -> str:
 
 
 def _hpc_server_name_to_path(server_name: str) -> str:
-    """URL パス用（空名は __default__）"""
+    """URL パス用（空名は __default__）
+
+    Args:
+        server_name: 対象のnamed server名。
+
+    Returns:
+        URLへ利用できるserver path。
+    """
     return str(server_name or "") or "__default__"
 
 
@@ -236,7 +388,16 @@ def _hpc_server_name_from_path(path_segment: str) -> str:
 
 
 def _hpc_spawner_job_url(spawner, server_name: str, user) -> str:
-    """アプリへ JUMP する公開 URL（home.html と同じ優先順位）"""
+    """アプリへ JUMP する公開 URL（home.html と同じ優先順位）
+
+    Args:
+        spawner: 対象のSpawner。
+        server_name: 対象のnamed server名。
+        user: 対象のJupyterHubユーザー。
+
+    Returns:
+        ジョブ用公開URL。生成できない場合は空文字列。
+    """
     uo = getattr(spawner, "user_options", None) or {}
     is_openwebui = str(uo.get("app_choice", "")) == "open-webui"
     jid = _spawner_job_id(spawner) or getattr(spawner, "job_id", "") or ""
@@ -269,7 +430,16 @@ def _hpc_spawner_job_url(spawner, server_name: str, user) -> str:
 
 
 def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
-    """アプリ詳細画面用の表示データ"""
+    """アプリ詳細画面用の表示データ
+
+    Args:
+        spawner: 対象のSpawner。
+        server_name: 対象のnamed server名。
+        user: 対象のJupyterHubユーザー。
+
+    Returns:
+        アプリ詳細画面へ渡すコンテキスト。
+    """
     uo = getattr(spawner, "user_options", None) or {}
     alloc = _hpc_allocation_summary(uo)
     jid = _spawner_job_id(spawner) or getattr(spawner, "job_id", "") or ""
@@ -302,42 +472,11 @@ def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
         "port": port,
         "public_url": getattr(spawner, "public_url", "") or "",
         "proxy_spec": getattr(spawner, "proxy_spec", "") or "",
+        "openwebui_version": str(uo.get("openwebui_version", "")),
+        "openwebui_target_version": HPC_OPENWEBUI_VERSION,
+        # 旧構成のJupyterイメージもUbuntu 24.04固定だったため、保存値がない既存jobは現行設定値で補完する。
+        "ubuntu_version": str(
+            uo.get("ubuntu_version") or HPC_JUPYTER_UBUNTU_VERSION
+        ),
+        "ubuntu_target_version": HPC_JUPYTER_UBUNTU_VERSION,
     }
-
-
-HPC_STOP_SERVER_JS = """
-function hpcReadXsrf() {
-    var m = document.cookie.match(/(?:^|; )_xsrf=([^;]*)/);
-    return m ? decodeURIComponent(m[1]) : "";
-}
-function hpcStopServer(btn) {
-    if (!btn || btn.disabled) return;
-    var serverName = btn.getAttribute("data-server-name") || "";
-    if (!confirm("このアプリケーションを停止・削除しますか？\\n関連する Slurm ジョブも終了します。")) return;
-    var user = window.HPC_HUB_USER;
-    if (!user) {
-        alert("ユーザー情報を取得できません");
-        return;
-    }
-    var xsrf = hpcReadXsrf();
-    var api = serverName
-        ? "/hub/api/users/" + encodeURIComponent(user) + "/servers/" + encodeURIComponent(serverName)
-        : "/hub/api/users/" + encodeURIComponent(user) + "/server";
-    btn.disabled = true;
-    btn.textContent = "停止中…";
-    fetch(api, {
-        method: "DELETE",
-        credentials: "same-origin",
-        headers: xsrf ? { "X-XSRFToken": xsrf } : {}
-    })
-        .then(function (r) {
-            if (!r.ok && r.status !== 202 && r.status !== 204) throw new Error("stop failed");
-            window.location.reload();
-        })
-        .catch(function () {
-            btn.disabled = false;
-            btn.textContent = "停止";
-            alert("停止に失敗しました。しばらくしてから再度お試しください。");
-        });
-}
-"""

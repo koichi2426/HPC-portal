@@ -1,7 +1,8 @@
 """アプリ起動フォームの生成と入力値変換を提供する。"""
 
+import html
+
 from .apps import (
-    HPC_STOP_SERVER_JS,
     _hpc_allocation_html,
     _hpc_runtime_from_hours_choice,
     _hpc_stop_button_html,
@@ -11,18 +12,157 @@ from .apps import (
 from .common import (
     HPC_GPU_COUNT,
     HPC_OLLAMA_ALLOWED_CPUS,
+    HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+    HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+    HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+    HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+    HPC_OLLAMA_ALLOWED_MAX_QUEUE,
     HPC_OLLAMA_ALLOWED_MEMORY,
+    HPC_OLLAMA_ALLOWED_PARALLEL,
     HPC_OLLAMA_DEFAULT_CPUS,
+    HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+    HPC_OLLAMA_DEFAULT_FLASH_ATTENTION,
+    HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+    HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+    HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+    HPC_OLLAMA_DEFAULT_MAX_QUEUE,
     HPC_OLLAMA_DEFAULT_MEMORY,
+    HPC_OLLAMA_DEFAULT_PARALLEL,
+    HPC_OLLAMA_VERSION,
+    HPC_JUPYTER_UBUNTU_VERSION,
+    HPC_OPENWEBUI_VERSION,
     HPC_PUBLIC_SCHEME,
+    HPC_STATIC_VERSIONS,
     c,
-    html,
     url_escape_path,
     url_path_join,
 )
 from .ollama import _hpc_shared_ollama_detail_context
 from .resources import _hpc_resource_snapshot
 from .users import _hpc_is_portal_admin
+
+
+def _hpc_memory_display_label(memory: str) -> str:
+    """Slurm形式のメモリ値を画面表示用のGB表記へ変換する。
+
+    Args:
+        memory: ``32G``または``32GB``形式のメモリ値。
+
+    Returns:
+        ``32 GB``形式の表示値。
+    """
+    normalized = str(memory).strip().upper()
+    if normalized.endswith("GB"):
+        normalized = normalized[:-2]
+    elif normalized.endswith("G"):
+        normalized = normalized[:-1]
+    return f"{normalized} GB"
+
+
+def _hpc_select_options(
+    values: tuple[str, ...], default: str, labels: dict[str, str] | None = None
+) -> str:
+    """許可値だけを含むselect要素用option一覧を生成する。
+
+    Args:
+        values: 選択を許可する値。
+        default: 初期選択する値。
+        labels: 値ごとの表示名。省略時は値をそのまま表示する。
+
+    Returns:
+        HTMLエスケープ済みのoption要素一覧。
+    """
+    labels = labels or {}
+    return "".join(
+        f'<option value="{html.escape(value, quote=True)}"'
+        f'{" selected" if value == default else ""}>'
+        f'{html.escape(labels.get(value, value))}</option>'
+        for value in values
+    )
+
+
+def _hpc_app_resource_recommendations() -> dict[str, dict[str, str]]:
+    """アプリ選択時に適用する推奨リソースと案内文を返す。
+
+    Returns:
+        アプリ内部名をキーとする推奨リソース設定。
+    """
+    return {
+        "ubuntu-cli": {
+            "label": "JupyterLab",
+            "cpu": "2",
+            "memory": "4",
+            "memory_label": "4 GB",
+            "gpu": "0",
+            "hours": "2",
+            "hours_label": "2時間",
+            "summary": "コード編集や軽いPython処理向けです。",
+            "guidance": (
+                "データ分析は4 vCPU・8 GB、AI処理は"
+                "8 vCPU・32 GB・GPU 1が目安です。"
+            ),
+        },
+        "open-webui": {
+            "label": "Open WebUI",
+            "cpu": "2",
+            "memory": "4",
+            "memory_label": "4 GB",
+            "gpu": "0",
+            "hours": "2",
+            "hours_label": "2時間",
+            "summary": "通常のチャットやWeb検索に十分です。",
+            "guidance": "モデル推論は共有Ollamaが担当します。",
+        },
+        "shared-ollama": {
+            "label": "Ollama",
+            "cpu": HPC_OLLAMA_DEFAULT_CPUS,
+            "memory": HPC_OLLAMA_DEFAULT_MEMORY,
+            "memory_label": _hpc_memory_display_label(
+                HPC_OLLAMA_DEFAULT_MEMORY
+            ),
+            "gpu": "1",
+            "hours": "unlimited",
+            "hours_label": "無制限",
+            "summary": "共有モデルの推論向けです。",
+            "guidance": (
+                "大きなモデルや同時利用が増えた場合はRAMを調整してください。"
+            ),
+        },
+    }
+
+
+def _hpc_app_option_html(app_choice: str, recommendation: dict[str, str]) -> str:
+    """推奨リソースをdata属性に含むアプリ選択肢を生成する。
+
+    Args:
+        app_choice: フォーム内部で使うアプリ名。
+        recommendation: 表示名、推奨値、案内文を含む設定。
+
+    Returns:
+        HTMLエスケープ済みのoption要素。
+    """
+    attributes = {
+        "value": app_choice,
+        "data-label": recommendation["label"],
+        "data-cpu": recommendation["cpu"],
+        "data-memory": recommendation["memory"],
+        "data-memory-label": recommendation["memory_label"],
+        "data-gpu": recommendation["gpu"],
+        "data-hours": recommendation["hours"],
+        "data-hours-label": recommendation["hours_label"],
+        "data-summary": recommendation["summary"],
+        "data-guidance": recommendation["guidance"],
+    }
+    rendered_attributes = " ".join(
+        f'{name}="{html.escape(str(value), quote=True)}"'
+        for name, value in attributes.items()
+    )
+    label = html.escape(recommendation["label"])
+    if app_choice == "open-webui":
+        label += " (AI Chat)"
+    elif app_choice == "shared-ollama":
+        label += " (管理者専用)"
+    return f"<option {rendered_attributes}>{label}</option>"
 
 
 # 2. カスタムフォーム生成
@@ -49,12 +189,28 @@ def make_options_form(spawner):
     disk_available_gb = resource["disk_available_gb"]
     disk_total_gb = resource["disk_total_gb"]
     disk_status = resource["disk_status"]
-    gpu_available = resource["gpu_available"]
-    gpu_available_count = resource["gpu_available_count"]
     gpu_max = resource["gpu_max"]
-    gpu_vram_available_gb = resource["gpu_vram_available_gb"]
-    gpu_vram_total_gb = resource["gpu_vram_total_gb"]
-    gpu_status = resource["gpu_status"]
+    gpu_processes = resource["gpu_processes"]
+    gpu_processes_available = resource["gpu_processes_available"]
+    if not gpu_processes_available:
+        gpu_process_count_label = "取得できません"
+        gpu_process_list_html = (
+            '<li class="hpc-gpu-process-empty">GPUプロセス情報を取得できません</li>'
+        )
+    elif gpu_processes:
+        gpu_process_count_label = f"利用中 {len(gpu_processes)}件"
+        gpu_process_list_html = "".join(
+            '<li class="hpc-gpu-process-item">'
+            f'<span class="hpc-gpu-process-name">{html.escape(str(process["name"]))}</span>'
+            f'<span class="hpc-gpu-process-meta">{html.escape(str(process["username"]))} · PID {int(process["pid"])}</span>'
+            "</li>"
+            for process in gpu_processes
+        )
+    else:
+        gpu_process_count_label = "利用中 0件"
+        gpu_process_list_html = (
+            '<li class="hpc-gpu-process-empty">GPUを使用中のプロセスはありません</li>'
+        )
 
     active_sessions_html = ""
     user = spawner.user
@@ -62,7 +218,7 @@ def make_options_form(spawner):
         shared = _hpc_shared_ollama_detail_context()
         if shared.get("active"):
             active_sessions_html += (
-                f'<div class="gx10-app-card" style="padding:12px;margin-top:10px;">'
+                f'<div class="gx10-app-card" data-hpc-shared-ollama-status data-hpc-ollama-target-version="{html.escape(str(shared.get("target_version") or HPC_OLLAMA_VERSION), quote=True)}" style="padding:12px;margin-top:10px;">'
                 f'<div class="hpc-row-between">'
                 f'<div class="hpc-section-title">● Ollama <span class="hpc-muted" style="font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
                 f'<div class="hpc-inline-actions">'
@@ -70,6 +226,9 @@ def make_options_form(spawner):
                 f'</div></div>'
                 f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;">割り当て: '
                 f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
+                f'<span class="hpc-app-version" style="display:block;">バージョン: '
+                f'<strong data-hpc-ollama-running-version>{"v" + html.escape(str(shared.get("version") or "")) if shared.get("version") else "確認中"}</strong>'
+                f'<span class="hpc-version-update" data-hpc-ollama-version-update{"" if shared.get("update_available") else " hidden"}>再起動で更新</span></span>'
                 f'</div>'
             )
     for name, s in user.spawners.items():
@@ -105,7 +264,33 @@ def make_options_form(spawner):
         else:
             url = f"/user/{user.name}/{name}/" if name else f"/user/{user.name}/"
 
-        alloc_html = _hpc_allocation_html(getattr(s, "user_options", None) or {})
+        user_options = getattr(s, "user_options", None) or {}
+        alloc_html = _hpc_allocation_html(user_options)
+        running_version = str(user_options.get("openwebui_version", ""))
+        version_server_path = url_escape_path(str(name)) if name else "__default__"
+        if is_openwebui:
+            version_html = (
+                '<span class="hpc-app-version" style="display:block;margin-top:4px;" '
+                f'data-hpc-openwebui-version-url="/hub/apps/{version_server_path}/version">'
+                'バージョン: '
+                f'<strong data-hpc-running-version>{"v" + html.escape(running_version) if running_version else "確認中"}</strong>'
+                '<span class="hpc-version-update" data-hpc-version-update hidden>再起動で更新</span></span>'
+            )
+        else:
+            # 旧構成もUbuntu 24.04固定だったため、保存値がない既存jobは現行設定値で補完する。
+            running_version = str(
+                user_options.get("ubuntu_version") or HPC_JUPYTER_UBUNTU_VERSION
+            )
+            update_html = (
+                '<span class="hpc-version-update">再起動で更新</span>'
+                if running_version and running_version != HPC_JUPYTER_UBUNTU_VERSION
+                else ""
+            )
+            version_html = (
+                '<span class="hpc-app-version" style="display:block;margin-top:4px;">'
+                f'環境: <strong>{"Ubuntu " + html.escape(running_version) if running_version else "不明"}</strong>'
+                f'{update_html}</span>'
+            )
         stop_btn = _hpc_stop_button_html(name)
         server_name_attr = html.escape(str(name or ""), quote=True)
 
@@ -118,6 +303,7 @@ def make_options_form(spawner):
                 f'<div>● {app_label} <span data-hpc-app-status-text class="hpc-status-warn">起動中（{pending_state}）</span></div>'
                 f'<div>{stop_btn}</div></div>'
                 f'{alloc_html}'
+                f'{version_html}'
                 f'<div data-hpc-app-progress class="hpc-progress hpc-progress-indeterminate" role="progressbar" aria-label="アプリを起動しています"><div class="hpc-progress-fill"></div></div>'
                 f'</div>'
             )
@@ -127,30 +313,79 @@ def make_options_form(spawner):
                 f'<div class="hpc-row-between">'
                 f'<div class="hpc-section-title">● {app_label}</div>'
                 f'<div class="hpc-inline-actions">'
-                f'<a class="hpc-page-link" href="{url}" target="_blank">JUMP ↗</a>'
+                f'<a class="hpc-page-link hpc-external-link" href="{url}" target="_blank" rel="noopener noreferrer" aria-label="JUMPを新しいタブで開く">'
+                f'<span>JUMP</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>'
                 f'{stop_btn}</div></div>'
-                f'{alloc_html}</div>'
+                f'{alloc_html}{version_html}</div>'
             )
 
     if not active_sessions_html:
         active_sessions_html = '<div class="hpc-empty" style="font-style:italic;">No active sessions.</div>'
 
     is_portal_admin = _hpc_is_portal_admin(user)
-    shared_ollama_option = '<option value="shared-ollama">Ollama (管理者専用)</option>' if is_portal_admin else ''
-    shared_cpu_options = "".join(
-        f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_CPUS else ""}>{html.escape(v)} vCPU</option>'
-        for v in HPC_OLLAMA_ALLOWED_CPUS
+    recommendations = _hpc_app_resource_recommendations()
+    app_options = [
+        _hpc_app_option_html("ubuntu-cli", recommendations["ubuntu-cli"]),
+        _hpc_app_option_html("open-webui", recommendations["open-webui"]),
+    ]
+    if is_portal_admin:
+        app_options.append(
+            _hpc_app_option_html(
+                "shared-ollama", recommendations["shared-ollama"]
+            )
+        )
+    app_options_html = "".join(app_options)
+    initial_recommendation = recommendations["ubuntu-cli"]
+    shared_cpu_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_CPUS,
+        HPC_OLLAMA_DEFAULT_CPUS,
+        {value: f"{value} vCPU" for value in HPC_OLLAMA_ALLOWED_CPUS},
     )
-    shared_memory_options = "".join(
-        f'<option value="{html.escape(v)}"{" selected" if v == HPC_OLLAMA_DEFAULT_MEMORY else ""}>{html.escape(v)} RAM</option>'
-        for v in HPC_OLLAMA_ALLOWED_MEMORY
+    shared_memory_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_MEMORY,
+        HPC_OLLAMA_DEFAULT_MEMORY,
+        {value: f"{value} RAM" for value in HPC_OLLAMA_ALLOWED_MEMORY},
+    )
+    shared_parallel_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_PARALLEL, HPC_OLLAMA_DEFAULT_PARALLEL
+    )
+    shared_loaded_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_MAX_LOADED_MODELS,
+        HPC_OLLAMA_DEFAULT_MAX_LOADED_MODELS,
+    )
+    shared_context_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_CONTEXT_LENGTHS,
+        HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,
+        {
+            "32768": "32K",
+            "65536": "64K",
+            "131072": "128K",
+            "262144": "256K",
+        },
+    )
+    shared_kv_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_KV_CACHE_TYPES,
+        HPC_OLLAMA_DEFAULT_KV_CACHE_TYPE,
+    )
+    shared_keep_alive_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_KEEP_ALIVE,
+        HPC_OLLAMA_DEFAULT_KEEP_ALIVE,
+        {"5m": "5分", "30m": "30分", "1h": "1時間", "-1": "常時"},
+    )
+    shared_queue_options = _hpc_select_options(
+        HPC_OLLAMA_ALLOWED_MAX_QUEUE, HPC_OLLAMA_DEFAULT_MAX_QUEUE
+    )
+    shared_flash_options = _hpc_select_options(
+        ("1", "0"),
+        "1" if HPC_OLLAMA_DEFAULT_FLASH_ATTENTION else "0",
+        {"1": "ON", "0": "OFF"},
     )
 
     header_html = f"""
-    <div id="resource-dashboard" data-hpc-resource-meter>
+    <div id="resource-dashboard" data-hpc-resource-meter data-hpc-user="{html.escape(user.name, quote=True)}">
         <div class="gx10-card">
             <h3 class="hpc-page-title">gx10-ac12 Control Center</h3>
-            <div class="hpc-muted" style="font-size:0.8rem;">Node: gx10-ac12 <span data-resource-updated-at style="float:right;">5秒ごとに自動更新</span></div>
+            <div class="hpc-muted hpc-spawn-resource-head" style="font-size:0.8rem;">Node: gx10-ac12 <span class="hpc-refresh-status" data-resource-refresh-status aria-live="polite"><span class="hpc-refresh-spinner" aria-hidden="true"></span><span data-resource-updated-at>最終更新 --:--:--</span><span class="visually-hidden" data-resource-refresh-live>取得中</span></span></div>
             <div class="resource-grid" aria-label="現在使えるリソース">
                 <div class="resource-meter">
                     <div class="meter-head"><span>CPU 空き</span><span class="meter-status" data-resource-text="cpu_status">{cpu_status}</span></div>
@@ -162,16 +397,19 @@ def make_options_form(spawner):
                         <span data-resource-text="cpu_total">最大 {cpu_total} vCPU</span>
                     </div>
                 </div>
-                <div class="resource-meter">
-                    <div class="meter-head"><span>RAM 空き</span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
-                    <div class="meter-track" title="RAM 空きリソース">
-                        <div class="meter-fill" data-resource-width="mem_available" style="width:{mem_available:.0f}%;"></div>
+                <details class="resource-meter hpc-unified-memory hpc-resource-menu">
+                    <summary class="hpc-unified-memory-summary" aria-label="統合メモリの説明を開く">
+                        <div class="meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
+                        <div class="meter-track" title="統合メモリの空きリソース"><div class="meter-fill" data-resource-width="mem_available" style="width:{mem_available:.0f}%;"></div></div>
+                        <div class="meter-numbers"><span data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</span><span data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</span></div>
+                    </summary>
+                    <div class="hpc-unified-memory-panel">
+                        <strong>統合メモリについて</strong>
+                        <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
+                        <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{max(0, mem_total_gb - mem_available_gb):.1f} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</dd></div></dl>
+                        <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
                     </div>
-                    <div class="meter-numbers">
-                        <span data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</span>
-                        <span data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</span>
-                    </div>
-                </div>
+                </details>
                 <div class="resource-meter">
                     <div class="meter-head"><span>Storage 空き</span><span class="meter-status" data-resource-text="disk_status">{disk_status}</span></div>
                     <div class="meter-track" title="Storage 空きリソース">
@@ -182,16 +420,10 @@ def make_options_form(spawner):
                         <span data-resource-text="disk_total_gb">最大 {disk_total_gb:.1f} GB</span>
                     </div>
                 </div>
-                <div class="resource-meter">
-                    <div class="meter-head"><span>GPU 空き</span><span class="meter-status" data-resource-text="gpu_status">{gpu_status}</span></div>
-                    <div class="meter-track" title="GPU VRAM 空きリソース">
-                        <div class="meter-fill" data-resource-width="gpu_available" style="width:{gpu_available:.0f}%;"></div>
-                    </div>
-                    <div class="meter-numbers">
-                        <span data-resource-text="gpu_available_count">空き {gpu_available_count}/{gpu_max} GPU</span>
-                        <span data-resource-text="gpu_vram_available_gb">VRAM {gpu_vram_available_gb:.1f}/{gpu_vram_total_gb:.1f} GB</span>
-                    </div>
-                </div>
+                <details class="resource-meter hpc-gpu-processes">
+                    <summary><span>GPU</span><span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{gpu_process_count_label}</span></summary>
+                    <ul class="hpc-gpu-process-list" data-gpu-process-list>{gpu_process_list_html}</ul>
+                </details>
             </div>
             <div id="active-list">{active_sessions_html}</div>
         </div>
@@ -199,17 +431,36 @@ def make_options_form(spawner):
             <div class="form-group">
                 <label class="label">App Template</label>
                 <select class="form-control input-dark" name="app_choice">
-                    <option value="ubuntu-cli">Ubuntu CLI (JupyterLab)</option>
-                    <option value="open-webui">Open WebUI (AI Chat)</option>
-                    {shared_ollama_option}
+                    {app_options_html}
                 </select>
+                <div id="app-version-help" class="hpc-app-version" style="margin-top:8px;"
+                     data-ubuntu-label="Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION, quote=True)}"
+                     data-openwebui-label="Open WebUI v{html.escape(HPC_OPENWEBUI_VERSION, quote=True)}"
+                     data-ollama-label="Ollama v{html.escape(HPC_OLLAMA_VERSION, quote=True)}">バージョン: Ubuntu {html.escape(HPC_JUPYTER_UBUNTU_VERSION)}</div>
                 <div id="shared-ollama-options" class="hpc-shared-options">
-                    <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は hpc-ollama ユーザーの共有 Slurm job として起動します。GPU は 1 固定です。</div>
+                    <div class="hpc-muted" style="font-size:0.78rem;margin-bottom:10px;">Ollama は共有 Slurm job として起動します。この設定は全ユーザーに共通で、停止後の次回起動時に反映されます。</div>
                     <div class="hpc-form-grid-3">
-                        <div><label class="label">Ollama vCPUs</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
-                        <div><label class="label">Ollama RAM</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
-                        <div><label class="label">Ollama GPUs</label><input type="text" class="form-control input-dark" value="1" readonly></div>
+                        <div><label class="label">vCPU</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
+                        <div><label class="label">メモリ割り当て</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
+                        <div><label class="label">GPU</label><input type="text" class="form-control input-dark" value="1" readonly></div>
                     </div>
+                    <div class="hpc-form-grid-2">
+                        <div><label class="label">同時処理数</label><select class="form-control input-dark" name="ollama_parallel">{shared_parallel_options}</select></div>
+                        <div><label class="label">同時ロードモデル数</label><select class="form-control input-dark" name="ollama_max_loaded_models">{shared_loaded_options}</select></div>
+                    </div>
+                    <div class="hpc-form-grid-2">
+                        <div><label class="label">コンテキスト長</label><select class="form-control input-dark" name="ollama_context_length">{shared_context_options}</select></div>
+                        <div><label class="label">KVキャッシュ</label><select class="form-control input-dark" name="ollama_kv_cache_type">{shared_kv_options}</select></div>
+                    </div>
+                    <details class="hpc-ollama-advanced">
+                        <summary>詳細設定</summary>
+                        <div class="hpc-form-grid-3">
+                            <div><label class="label">モデル保持時間</label><select class="form-control input-dark" name="ollama_keep_alive">{shared_keep_alive_options}</select></div>
+                            <div><label class="label">最大待機数</label><select class="form-control input-dark" name="ollama_max_queue">{shared_queue_options}</select></div>
+                            <div><label class="label">Flash Attention</label><select class="form-control input-dark" name="ollama_flash_attention">{shared_flash_options}</select></div>
+                        </div>
+                    </details>
+                    <div class="hpc-muted" style="font-size:0.74rem;margin-top:8px;">並列数とコンテキスト長を増やすと、KVキャッシュのメモリ使用量が増えます。</div>
                 </div>
                 <div id="standard-resource-options">
                     <div class="hpc-form-grid-2">
@@ -221,9 +472,9 @@ def make_options_form(spawner):
                         <div><label class="label">最大実行時間</label>
                             <select class="form-control input-dark" name="hours">
                                 <option value="1">1 時間</option>
-                                <option value="2">2 時間</option>
+                                <option value="2" selected>2 時間</option>
                                 <option value="4">4 時間</option>
-                                <option value="8" selected>8 時間</option>
+                                <option value="8">8 時間</option>
                                 <option value="12">12 時間</option>
                                 <option value="24">24 時間</option>
                                 <option value="48">48 時間</option>
@@ -233,78 +484,38 @@ def make_options_form(spawner):
                     </div>
                 </div>
                 <div id="standard-resource-help" class="hpc-muted" style="font-size:0.74rem;margin-top:-5px;">無制限は Slurm パーティションで許可された上限まで実行できます。</div>
+                <section id="app-resource-recommendation" class="hpc-resource-recommendation" aria-labelledby="app-resource-recommendation-title" aria-live="polite">
+                    <div class="hpc-recommendation-heading">
+                        <span class="hpc-recommendation-badge">推奨リソース</span>
+                        <strong id="app-resource-recommendation-title" data-recommendation-label>{initial_recommendation["label"]}</strong>
+                    </div>
+                    <dl class="hpc-recommendation-values" aria-label="選択中アプリの推奨割り当て">
+                        <div><dt>CPU</dt><dd data-recommendation-cpu>{initial_recommendation["cpu"]} vCPU</dd></div>
+                        <div><dt>RAM</dt><dd data-recommendation-memory>{initial_recommendation["memory_label"]}</dd></div>
+                        <div><dt>GPU</dt><dd data-recommendation-gpu>{initial_recommendation["gpu"]}</dd></div>
+                        <div><dt>時間</dt><dd data-recommendation-hours>{initial_recommendation["hours_label"]}</dd></div>
+                    </dl>
+                    <p class="hpc-recommendation-summary" data-recommendation-summary>{initial_recommendation["summary"]}</p>
+                    <p class="hpc-recommendation-guidance" data-recommendation-guidance>{initial_recommendation["guidance"]}</p>
+                </section>
             </div>
         </div>
     </div>
     """
 
-    hub_user_js = html.escape(user.name, quote=True)
-    js_code = (
-        f"""
-    <script>
-    window.HPC_HUB_USER = "{hub_user_js}";
-"""
-        + HPC_STOP_SERVER_JS
-        + """
-    document.addEventListener("DOMContentLoaded", function() {
-        const form = document.querySelector('form');
-        const appChoice = document.querySelector('select[name="app_choice"]');
-        const sharedBox = document.getElementById("shared-ollama-options");
-        const standardBox = document.getElementById("standard-resource-options");
-        const standardHelp = document.getElementById("standard-resource-help");
-        function refreshAppChoice() {
-            if (!appChoice) return;
-            const isSharedOllama = appChoice.value === "shared-ollama";
-            if (sharedBox) sharedBox.style.display = isSharedOllama ? "block" : "none";
-            if (standardBox) {
-                standardBox.style.display = isSharedOllama ? "none" : "block";
-                standardBox.querySelectorAll("input, select, textarea, button").forEach(function(el) {
-                    el.disabled = isSharedOllama;
-                });
-            }
-            if (standardHelp) standardHelp.style.display = isSharedOllama ? "none" : "block";
-        }
-        if (appChoice) {
-            appChoice.addEventListener("change", refreshAppChoice);
-            refreshAppChoice();
-        }
-        if (form) {
-            form.onsubmit = function(ev) {
-                if (appChoice && appChoice.value === "shared-ollama") {
-                    ev.preventDefault();
-                    const xsrf = hpcReadXsrf();
-                    const cpus = document.querySelector('select[name="ollama_cpus"]').value;
-                    const memory = document.querySelector('select[name="ollama_memory"]').value;
-                    fetch("/hub/admin/users/api", {
-                        method: "POST",
-                        credentials: "same-origin",
-                        headers: Object.assign({"Content-Type": "application/json"}, xsrf ? {"X-XSRFToken": xsrf} : {}),
-                        body: JSON.stringify({ action: "ollama_start", cpus: cpus, memory: memory })
-                    }).then(function(r) {
-                        return r.json().then(function(body) {
-                            if (!r.ok) throw new Error(body.error || "Ollama の起動に失敗しました");
-                            window.location.href = "/hub/apps/shared-ollama";
-                        });
-                    }).catch(function(e) {
-                        alert(e.message || "Ollama の起動に失敗しました");
-                    });
-                    return false;
-                }
-                const inputs = document.querySelectorAll('input[name="_xsrf"]');
-                if (inputs.length > 1) {
-                    for (let i = 1; i < inputs.length; i++) inputs[i].remove();
-                }
-            };
-        }
-    });
-    </script>
-    """
+    static_js = "".join(
+        '<script src="/hub/hpc-js/{filename}?v={version}"></script>'.format(
+            filename=filename,
+            version=HPC_STATIC_VERSIONS["js/" + filename],
+        )
+        for filename in (
+            "core.js",
+            "resource-meter.js",
+            "app-status.js",
+            "spawn-form.js",
+        )
     )
-    static_js = (
-        '<script src="/hub/hpc-resource-meter.js?v=2"></script>'
-        '<script src="/hub/hpc-app-status.js?v=1"></script>'
-    )
-    return header_html + static_js + js_code
+    return header_html + static_js
 
 
 # 3. データの受け取り
@@ -317,24 +528,31 @@ def options_from_form(formdata):
     Returns:
         検証・正規化済みのuser_options。
     """
-    h = formdata.get("hours", ["8"])[0]
+    app_choice = str(formdata.get("app_choice", ["ubuntu-cli"])[0])
+    recommendations = _hpc_app_resource_recommendations()
+    recommendation = recommendations.get(app_choice, recommendations["ubuntu-cli"])
+    h = formdata.get("hours", [recommendation["hours"]])[0]
     runtime, runtime_line = _hpc_runtime_from_hours_choice(h)
     gpu_max = HPC_GPU_COUNT
     try:
-        g = int(formdata.get("gpu", ["0"])[0] or 0)
+        g = int(formdata.get("gpu", [recommendation["gpu"]])[0] or 0)
     except ValueError:
         g = 0
     g = max(0, min(gpu_max, g))
-    app_choice = str(formdata.get("app_choice", ["ubuntu-cli"])[0])
+    memory = str(formdata.get("mem", [recommendation["memory"]])[0]).strip()
+    if not memory.upper().endswith("G"):
+        memory = f"{memory}G"
     return {
-        "nprocs": str(formdata.get("cpu", ["2"])[0]),
-        "memory": f"{formdata.get('mem', ['4'])[0]}G",
+        "nprocs": str(formdata.get("cpu", [recommendation["cpu"]])[0]),
+        "memory": memory,
         "runtime": runtime,
         "runtime_line": runtime_line,
         "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
         "gpu": str(g),
         "app_choice": app_choice,
         "job_name": "jhub-openwebui" if app_choice == "open-webui" else "jhub-app",
+        "openwebui_version": HPC_OPENWEBUI_VERSION if app_choice == "open-webui" else "",
+        "ubuntu_version": HPC_JUPYTER_UBUNTU_VERSION if app_choice != "open-webui" else "",
     }
 
 
@@ -347,17 +565,24 @@ def apply_user_options(spawner, user_options):
     """
     spawner.req_nprocs = str(user_options.get("nprocs", "2"))
     spawner.req_memory = str(user_options.get("memory", "4G"))
-    spawner.req_runtime = str(user_options.get("runtime", "08:00:00"))
+    spawner.req_runtime = str(user_options.get("runtime", "02:00:00"))
     spawner.user_options["nprocs"] = str(user_options.get("nprocs", "2"))
     spawner.user_options["memory"] = str(user_options.get("memory", "4G"))
-    spawner.user_options["runtime"] = str(user_options.get("runtime", "08:00:00"))
+    spawner.user_options["runtime"] = str(user_options.get("runtime", "02:00:00"))
     spawner.user_options["gpu"] = str(user_options.get("gpu", "0"))
     app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
     spawner.user_options["app_choice"] = app_choice
     spawner.user_options["job_name"] = "jhub-openwebui" if app_choice == "open-webui" else "jhub-app"
     if app_choice == "open-webui":
+        spawner.user_options["openwebui_version"] = str(
+            user_options.get("openwebui_version", HPC_OPENWEBUI_VERSION)
+        )
         # BatchSpawner の service_url が :0 になると pending から進めないため、
         # server_name ベースで Hub 側ポートを事前確定する
         seed = str(getattr(spawner, "name", "") or "")
         h = sum(ord(c) for c in seed) % 20000
         spawner.port = 20000 + h
+    else:
+        spawner.user_options["ubuntu_version"] = str(
+            user_options.get("ubuntu_version", HPC_JUPYTER_UBUNTU_VERSION)
+        )
