@@ -51,7 +51,9 @@
   -H "Content-Type: application/json" \
   -d '{
     "model": "<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
-    "messages": [{"role": "user", "content": "こんにちは"}]
+    "messages": [{"role": "user", "content": "こんにちは"}],
+    "reasoning_effort": "none",
+    "stream": false
   }'</pre>
     <div id="curl-copy-status" class="gx10-copy-status" aria-live="polite"></div>
     <div class="gx10-code-heading"><span>Python</span><button type="button" class="gx10-key-btn gx10-key-btn-muted gx10-copy-example" data-copy="python-example" data-copy-status="python-copy-status">コピー</button></div>
@@ -65,6 +67,8 @@ client = OpenAI(
 response = client.chat.completions.create(
     model="<span class="gx10-api-model" data-model-output>{{ default_model }}</span>",
     messages=[{"role": "user", "content": "こんにちは"}],
+    reasoning_effort="none",
+    stream=False,
 )
 print(response.choices[0].message.content)</pre>
     <div id="python-copy-status" class="gx10-copy-status" aria-live="polite"></div>
