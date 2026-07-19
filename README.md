@@ -16,7 +16,7 @@
 
 ### 2. システムアーキテクチャ
 
-単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、Web検索MCP、SearXNGはホスト内部からのみ利用します。
+単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、Web検索MCP、SearXNGはホスト内部からのみ利用します。Web検索MCPはLiteLLMからの認証済み通信だけを受け付け、SearXNGの検索結果から選んだ公開ページの本文を安全性・時間・サイズの制限内で取得します。
 
 #### 全体構成
 
@@ -33,7 +33,7 @@ flowchart TB
     Ollama[共有Ollama]
     DB[(PostgreSQL)]
     Models[(共有モデル保存領域)]
-    Search[外部検索サービス]
+    Search[外部検索サービス・公開Webページ]
 
     CF -->|Hub・アプリURL| Proxy
     CF -->|LLM API・管理UI| LiteLLM
@@ -46,7 +46,8 @@ flowchart TB
     Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
     Apps -->|Web検索| SearXNG
     LiteLLM -->|MCPツール呼び出し| SearchMCP
-    SearchMCP -->|JSON検索| SearXNG
+    SearchMCP -->|候補検索| SearXNG
+    SearchMCP -->|選択した公開ページの本文取得| Search
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
@@ -85,6 +86,7 @@ sequenceDiagram
         participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
+    participant Web as 公開Webページ
 
     Note over User,App: フェーズ1：ポータルからアプリを起動
     User->>CF: Hub またはアプリ用URLへアクセス
@@ -123,14 +125,16 @@ sequenceDiagram
     User->>CF: LLM API / 管理UIへアクセス
     CF->>LiteLLM: API / 管理UIを転送
     opt APIリクエストでWeb検索MCPを指定
-        LiteLLM->>SearchMCP: search_webを呼び出す
+        LiteLLM->>SearchMCP: search_and_fetch_webを呼び出す
         SearchMCP->>SearXNG: 検索語を内部JSON APIへ送信
-        SearXNG-->>SearchMCP: 検索結果を返す
-        SearchMCP-->>LiteLLM: タイトル・URL・概要を返す
+        SearXNG-->>SearchMCP: 候補ページを返す
+        SearchMCP->>Web: 検証済みURLから本文を取得
+        Web-->>SearchMCP: HTML / テキスト
+        SearchMCP-->>LiteLLM: URL・概要・取得した本文を返す
     end
 ```
 
-Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Open WebUIはSearXNGを直接使用し、外部LLM APIはLiteLLMに登録したWeb検索MCP経由で同じSearXNGを使用します。
+Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Open WebUIはSearXNGを直接使用し、外部LLM APIはLiteLLMに登録したWeb検索MCPを通して検索結果と公開ページ本文を取得します。APIリクエストから`tools`を省略した場合、Web検索MCPは使用されません。
 
 ---
 

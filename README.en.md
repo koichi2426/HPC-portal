@@ -16,7 +16,7 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 
 ### 2. System Architecture
 
-JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, the web-search MCP service, and SearXNG remain internal to the host.
+JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, the web-search MCP service, and SearXNG remain internal to the host. The web-search MCP service accepts only authenticated requests from LiteLLM and fetches selected public pages from SearXNG results within network, time, and size limits.
 
 #### Overview
 
@@ -33,7 +33,7 @@ flowchart TB
     Ollama[Shared Ollama]
     DB[(PostgreSQL)]
     Models[(Shared model storage)]
-    Search[External search services]
+    Search[External search services and public pages]
 
     CF -->|Hub and application URLs| Proxy
     CF -->|LLM API and admin UI| LiteLLM
@@ -46,7 +46,8 @@ flowchart TB
     Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
     Apps -->|Web search| SearXNG
     LiteLLM -->|MCP tool call| SearchMCP
-    SearchMCP -->|JSON search| SearXNG
+    SearchMCP -->|Search for candidates| SearXNG
+    SearchMCP -->|Fetch selected public page content| Search
     LiteLLM <--> DB
     LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
@@ -85,6 +86,7 @@ sequenceDiagram
         participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
+    participant Web as Public web page
 
     Note over User,App: Phase 1: Start an application from the portal
     User->>CF: Access a Hub or app URL
@@ -123,14 +125,16 @@ sequenceDiagram
     User->>CF: Access the LLM API or admin UI
     CF->>LiteLLM: Forward API or admin UI traffic
     opt Request the web-search MCP tool
-        LiteLLM->>SearchMCP: Call search_web
+        LiteLLM->>SearchMCP: Call search_and_fetch_web
         SearchMCP->>SearXNG: Send a query to the internal JSON API
-        SearXNG-->>SearchMCP: Return search results
-        SearchMCP-->>LiteLLM: Return titles, URLs, and snippets
+        SearXNG-->>SearchMCP: Return candidate pages
+        SearchMCP->>Web: Fetch content from a validated URL
+        Web-->>SearchMCP: Return HTML or text
+        SearchMCP-->>LiteLLM: Return URLs, snippets, and page content
     end
 ```
 
-Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Open WebUI calls SearXNG directly, while external LLM API requests use the same SearXNG service through LiteLLM's web-search MCP tool.
+Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Open WebUI calls SearXNG directly, while external LLM API requests retrieve search results and public page content through LiteLLM's web-search MCP tool. The MCP tool is not available when the API request omits `tools`.
 
 ---
 
