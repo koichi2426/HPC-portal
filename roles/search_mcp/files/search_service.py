@@ -9,6 +9,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from fetch_reference import create_fetch_reference
+
 
 SEARXNG_SEARCH_URL = os.environ.get(
     "SEARXNG_SEARCH_URL", "http://127.0.0.1:8888/search"
@@ -61,6 +63,7 @@ def _result_item(item: Any) -> dict[str, str] | None:
         "url": url,
         "snippet": str(item.get("content") or "").strip(),
         "engine": engine,
+        "fetch_ref": create_fetch_reference(url),
     }
 
 
@@ -69,7 +72,7 @@ def search_web(
     count: int = DEFAULT_RESULT_COUNT,
     language: str = "ja-JP",
 ) -> dict[str, Any]:
-    """SearXNGでWeb検索し、タイトル・URL・概要を返す。
+    """SearXNGでWeb検索し、タイトル・URL・概要・本文参照を返す。
 
     Args:
         query: 検索語。最大文字数は環境設定で制限する。
@@ -77,7 +80,7 @@ def search_web(
         language: SearXNGへ渡す検索言語。
 
     Returns:
-        検索語、検索結果、応答しなかった検索エンジン。
+        検索語、署名付き本文参照を含む検索結果、応答しなかった検索エンジン。
 
     Raises:
         SearchServiceError: 検索語が不正、応答過大、通信失敗の場合。

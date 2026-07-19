@@ -1,4 +1,13 @@
 ---
+- name: Web検索MCPの内部認証tokenを確認
+  ansible.builtin.assert:
+    that:
+      - search_mcp_auth_token is defined
+      - search_mcp_auth_token | length >= 32
+    fail_msg: >-
+      make setupを実行してsearch_mcp_auth_tokenを生成してください。
+  no_log: true
+
 - name: Web検索MCP用OSユーザーを作成
   ansible.builtin.user:
     name: "{{ search_mcp_user }}"
@@ -28,9 +37,19 @@
       group: "{{ search_mcp_user }}"
       mode: "0750"
 
-- name: Web検索MCP用venvとFastMCPを用意
+- name: Web検索MCPの固定依存関係を配置
+  ansible.builtin.copy:
+    src: requirements.lock
+    dest: "{{ search_mcp_install_dir }}/requirements.lock"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Web検索MCPを再起動
+
+- name: Web検索MCP用venvと固定依存関係を用意
   ansible.builtin.pip:
-    name: "fastmcp=={{ search_mcp_version }}"
+    requirements: "{{ search_mcp_install_dir }}/requirements.lock"
+    extra_args: --require-hashes
     virtualenv: "{{ search_mcp_install_dir }}/venv"
     virtualenv_command: python3 -m venv
     state: present
@@ -45,7 +64,11 @@
     group: root
     mode: "0644"
   loop:
+    - combined_search.py
+    - fetch_reference.py
+    - mcp_auth.py
     - search_service.py
+    - web_fetch.py
     - server.py
   notify: Web検索MCPを再起動
 

@@ -182,7 +182,32 @@
       ansible.builtin.uri:
         url: "http://{{ search_mcp_host }}:{{ search_mcp_port }}/health"
         method: GET
+        headers:
+          Authorization: "Bearer {{ search_mcp_auth_token }}"
         status_code: 200
+        return_content: false
+        timeout: 5
+      no_log: true
+
+    - name: Web検索MCPが認証なしの直接呼び出しを拒否することを確認
+      ansible.builtin.uri:
+        url: "http://{{ search_mcp_host }}:{{ search_mcp_port }}/mcp"
+        method: POST
+        headers:
+          Accept: application/json, text/event-stream
+          Content-Type: application/json
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          id: smoke-unauthorized
+          method: initialize
+          params:
+            protocolVersion: "2025-11-25"
+            capabilities: {}
+            clientInfo:
+              name: hpc-smoke
+              version: "1.0"
+        status_code: 401
         return_content: false
         timeout: 5
 
@@ -199,11 +224,13 @@
       register: smoke_search_mcp_tools
       no_log: true
 
-    - name: Web検索MCPにsearch_webが登録されていることを確認
+    - name: Web検索MCPの検索・本文取得ツールが登録されていることを確認
       ansible.builtin.assert:
         that:
           - "'search_web' in smoke_search_mcp_tools.content"
-        fail_msg: LiteLLMからWeb検索MCPのsearch_webを確認できませんでした
+          - "'search_and_fetch_web' in smoke_search_mcp_tools.content"
+          - "'fetch_web_page' in smoke_search_mcp_tools.content"
+        fail_msg: LiteLLMからWeb検索MCPの必須ツールを確認できませんでした
         quiet: true
 
     - name: 共有Ollamaの状態を取得

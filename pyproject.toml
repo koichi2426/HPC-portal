@@ -9,6 +9,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "batchspawner",
+    "dnspython==2.8.0",
     "jupyterhub>=5.5,<6",
     "nest-asyncio",
     "psutil",

@@ -28,5 +28,6 @@ mcp_servers:
     url: "http://{{ search_mcp_host }}:{{ search_mcp_port }}/mcp"
     transport: "http"
     description: "SearXNGを使用するHPCポータル内部Web検索"
-    auth_type: "none"
+    auth_type: "bearer_token"
+    authentication_token: "{{ search_mcp_auth_token }}"
     allow_all_keys: true
