@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 ### 1. Project Overview
-This project provides a platform on a single ARM server (`gx10-ac12`) to launch and use resource-limited applications (CPU, memory, and GPU) directly from a browser. By integrating JupyterHub with Slurm, it enables efficient resource management and secure access in a single-node environment.
+This project provides a platform on a single ARM server to launch and use resource-limited applications (CPU, memory, and GPU) directly from a browser. By integrating JupyterHub with Slurm, it enables efficient resource management and secure access in a single-node environment.
 
 - Launch compute applications from a browser via JupyterHub
 - Control CPU, memory, and GPU resources through Slurm integration
@@ -16,55 +16,78 @@ This project provides a platform on a single ARM server (`gx10-ac12`) to launch 
 
 ### 2. System Architecture
 
-JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, the web-search MCP service, and SearXNG remain internal to the host.
+JupyterHub, Slurm, shared Ollama, LiteLLM, PostgreSQL, and SearXNG run together on one node. JupyterLab and Open WebUI run as per-user Slurm jobs, while shared Ollama runs in Apptainer as an administrator-managed shared Slurm job. External access goes through Cloudflare Tunnel only; Ollama, PostgreSQL, the web-search MCP service, and SearXNG remain internal to the host. The web-search MCP service accepts only authenticated requests from LiteLLM and fetches selected public pages from SearXNG results within network, time, and size limits.
 
 #### Overview
 
 ```mermaid
 flowchart TB
-    User[User] --> CF[Cloudflare Tunnel]
-    Proxy[configurable-http-proxy<br/>:8000]
-    JHub[JupyterHub<br/>Portal]
-    Slurm[Slurm]
-    Apps[Per-user applications<br/>JupyterLab / Open WebUI]
-    LiteLLM[LiteLLM<br/>API Gateway]
-    SearchMCP[Web-search MCP<br/>internal tool]
-    SearXNG[SearXNG<br/>internal search API]
-    Ollama[Shared Ollama]
-    DB[(PostgreSQL)]
-    Models[(Shared model storage)]
-    Search[External search services]
+    Browser["User browser"]
+    APIClient["LLM API client"]
+    Access["Cloudflare Access<br/>user authentication"]
+    Tunnel["Cloudflare Tunnel<br/>public route"]
+    Internet["External websites and search services"]
 
-    CF -->|Hub and application URLs| Proxy
-    CF -->|LLM API and admin UI| LiteLLM
-    Proxy --> JHub
-    Proxy --> Apps
-    JHub -->|Submit jobs| Slurm
-    Slurm --> Apps
-    Slurm --> Ollama
-    JHub -->|Manage users, keys, and models| LiteLLM
-    Apps -->|OpenAI-compatible API<br/>per-user Virtual Key| LiteLLM
-    Apps -->|Web search| SearXNG
-    LiteLLM -->|MCP tool call| SearchMCP
-    SearchMCP -->|JSON search| SearXNG
+    Browser --> Access --> Tunnel
+    APIClient --> Tunnel
+
+    subgraph Server["HPC server / single node"]
+        Cloudflared["cloudflared<br/>Tunnel connection"]
+        Portal["HPC portal / JupyterHub<br/>Proxy :8000 / Hub :8081"]
+        Slurm["Slurm<br/>job and resource management"]
+        LiteLLM["LiteLLM<br/>OpenAI-compatible API :4000"]
+
+        subgraph Containers["Slurm-managed Apptainer containers"]
+            Jupyter["JupyterLab<br/>per user"]
+            WebUI["Open WebUI<br/>per user"]
+            Ollama["Shared Ollama<br/>model inference"]
+        end
+
+        subgraph Services["Internal services outside Slurm"]
+            SearchMCP["Web-search MCP<br/>search and public page retrieval :8890"]
+            SearXNG["SearXNG<br/>internal search API :8888"]
+            DB[("PostgreSQL<br/>LiteLLM data :5432")]
+            Models[("Shared model storage")]
+        end
+    end
+
+    Tunnel --> Cloudflared
+    Cloudflared -->|Website| Portal
+    Cloudflared -->|OpenAI-compatible API| LiteLLM
+    Portal -->|Submit jobs| Slurm
+    Slurm -->|Allocate resources and start| Jupyter
+    Slurm -->|Allocate resources and start| WebUI
+    Slurm -->|Allocate resources and start| Ollama
+    Portal -.->|Manage users, keys, and models| LiteLLM
+    WebUI -->|OpenAI-compatible API| LiteLLM
+    LiteLLM -->|Model inference| Ollama
     LiteLLM <--> DB
-    LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
-    SearXNG --> Search
+    WebUI -->|Web search| SearXNG
+    LiteLLM -->|Authenticated MCP call| SearchMCP
+    SearchMCP -->|Search for candidates| SearXNG
+    SearchMCP -->|Fetch content from a validated URL| Internet
+    SearXNG --> Internet
 
     classDef external fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef cloudflare fill:#ffedd5,stroke:#f97316,color:#7c2d12
     classDef control fill:#dbeafe,stroke:#2563eb,color:#111827
     classDef workload fill:#dcfce7,stroke:#16a34a,color:#111827
     classDef service fill:#ede9fe,stroke:#7c3aed,color:#111827
     classDef data fill:#fef3c7,stroke:#d97706,color:#111827
-    class User,CF,Search external
-    class Proxy,JHub,Slurm control
-    class Apps,Ollama workload
+    class Browser,APIClient,Internet external
+    class Access,Tunnel,Cloudflared cloudflare
+    class Portal,Slurm control
+    class Jupyter,WebUI,Ollama workload
     class LiteLLM,SearchMCP,SearXNG service
     class DB,Models data
+
+    style Server fill:#f8fafc,stroke:#475569,stroke-width:2px
+    style Containers fill:#f0fdf4,stroke:#16a34a,stroke-width:2px
+    style Services fill:#faf5ff,stroke:#7c3aed,stroke-width:2px
 ```
 
-Colors: gray=external, blue=portal and job management, green=Slurm workloads, purple=AI and search services, yellow=persistent data. Blue, green, purple, and yellow components run on the single node.
+Colors: gray=users and external services, orange=Cloudflare, blue=portal and job management, green=Slurm workloads, purple=AI and search services, yellow=persistent data. Components inside the server boundary run on the same single node.
 
 #### Startup and inference flow
 
@@ -85,6 +108,7 @@ sequenceDiagram
         participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
+    participant Web as Public web page
 
     Note over User,App: Phase 1: Start an application from the portal
     User->>CF: Access a Hub or app URL
@@ -123,14 +147,16 @@ sequenceDiagram
     User->>CF: Access the LLM API or admin UI
     CF->>LiteLLM: Forward API or admin UI traffic
     opt Request the web-search MCP tool
-        LiteLLM->>SearchMCP: Call search_web
+        LiteLLM->>SearchMCP: Call search_and_fetch_web
         SearchMCP->>SearXNG: Send a query to the internal JSON API
-        SearXNG-->>SearchMCP: Return search results
-        SearchMCP-->>LiteLLM: Return titles, URLs, and snippets
+        SearXNG-->>SearchMCP: Return candidate pages
+        SearchMCP->>Web: Fetch content from a validated URL
+        Web-->>SearchMCP: Return HTML or text
+        SearchMCP-->>LiteLLM: Return URLs, snippets, and page content
     end
 ```
 
-Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Open WebUI calls SearXNG directly, while external LLM API requests use the same SearXNG service through LiteLLM's web-search MCP tool.
+Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and LiteLLM forwards portal-managed models to shared Ollama as `ollama_chat/<model>`. After a model is pulled or deleted, the HPC portal synchronizes the LiteLLM models it manages. Open WebUI calls SearXNG directly, while external LLM API requests retrieve search results and public page content through LiteLLM's web-search MCP tool. The MCP tool is not available when the API request omits `tools`.
 
 ---
 

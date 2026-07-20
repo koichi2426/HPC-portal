@@ -15,6 +15,7 @@ SECRET_GENERATORS = {
     "litellm_salt_key": lambda: secrets.token_hex(32),
     "litellm_database_password": lambda: secrets.token_hex(32),
     "searxng_secret_key": lambda: secrets.token_hex(32),
+    "search_mcp_auth_token": lambda: secrets.token_urlsafe(48),
 }
 SECRET_LINE_PATTERN = re.compile(
     r"^(?P<indent>\s*)(?P<key>[A-Za-z_][A-Za-z0-9_]*)"

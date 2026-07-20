@@ -1,0 +1,3 @@
+# Web検索MCPの直接依存関係。requirements.lockはuv pip compileで更新する。
+fastmcp==3.4.4
+dnspython==2.8.0

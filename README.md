@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 ### 1. プロジェクト概要
-このプロジェクトは、ARMサーバー1台（`gx10-ac12`）上で、CPU・メモリ・GPUのリソース制限を適用したアプリケーションをブラウザから即時起動・利用できる基盤を構築するものです。JupyterHubとSlurmを統合し、単一ノード環境で効率的なリソース管理とセキュアなアクセスを実現します。
+このプロジェクトは、ARMサーバー1台で、CPU・メモリ・GPUのリソース制限を適用したアプリケーションをブラウザから即時起動・利用できる基盤を構築するものです。JupyterHubとSlurmを統合し、単一ノード環境で効率的なリソース管理とセキュアなアクセスを実現します。
 
 - ブラウザから JupyterHub 経由で計算アプリを起動
 - Slurm 連携による CPU / メモリ / GPU のリソース制御
@@ -16,55 +16,78 @@
 
 ### 2. システムアーキテクチャ
 
-単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、Web検索MCP、SearXNGはホスト内部からのみ利用します。
+単一ノード上で JupyterHub、Slurm、共有 Ollama、LiteLLM、PostgreSQL、SearXNG を連携させます。JupyterLabとOpen WebUIは利用者ごとのSlurmジョブ、共有Ollamaは管理者が操作する共有SlurmジョブとしてApptainer上で動作します。外部公開はCloudflare Tunnel経由だけで、Ollama、PostgreSQL、Web検索MCP、SearXNGはホスト内部からのみ利用します。Web検索MCPはLiteLLMからの認証済み通信だけを受け付け、SearXNGの検索結果から選んだ公開ページの本文を安全性・時間・サイズの制限内で取得します。
 
 #### 全体構成
 
 ```mermaid
 flowchart TB
-    User[利用者] --> CF[Cloudflare Tunnel]
-    Proxy[configurable-http-proxy<br/>:8000]
-    JHub[JupyterHub<br/>ポータル]
-    Slurm[Slurm]
-    Apps[利用者ごとのアプリ<br/>JupyterLab / Open WebUI]
-    LiteLLM[LiteLLM<br/>API Gateway]
-    SearchMCP[Web検索MCP<br/>内部ツール]
-    SearXNG[SearXNG<br/>内部検索API]
-    Ollama[共有Ollama]
-    DB[(PostgreSQL)]
-    Models[(共有モデル保存領域)]
-    Search[外部検索サービス]
+    Browser["利用者のブラウザ"]
+    APIClient["LLM API利用プログラム"]
+    Access["Cloudflare Access<br/>利用者認証"]
+    Tunnel["Cloudflare Tunnel<br/>公開経路"]
+    Internet["外部Webサイト・検索サービス"]
 
-    CF -->|Hub・アプリURL| Proxy
-    CF -->|LLM API・管理UI| LiteLLM
-    Proxy --> JHub
-    Proxy --> Apps
-    JHub -->|ジョブ投入| Slurm
-    Slurm --> Apps
-    Slurm --> Ollama
-    JHub -->|ユーザー・Key・モデル管理| LiteLLM
-    Apps -->|OpenAI互換API<br/>利用者別Virtual Key| LiteLLM
-    Apps -->|Web検索| SearXNG
-    LiteLLM -->|MCPツール呼び出し| SearchMCP
-    SearchMCP -->|JSON検索| SearXNG
+    Browser --> Access --> Tunnel
+    APIClient --> Tunnel
+
+    subgraph Server["HPCサーバー / 単一ノード"]
+        Cloudflared["cloudflared<br/>Tunnel接続"]
+        Portal["HPCポータル / JupyterHub<br/>Proxy :8000 / Hub :8081"]
+        Slurm["Slurm<br/>ジョブ・リソース管理"]
+        LiteLLM["LiteLLM<br/>OpenAI互換API :4000"]
+
+        subgraph Containers["Slurmで管理するApptainerコンテナ"]
+            Jupyter["JupyterLab<br/>利用者ごと"]
+            WebUI["Open WebUI<br/>利用者ごと"]
+            Ollama["共有Ollama<br/>モデル推論"]
+        end
+
+        subgraph Services["Slurm外の内部サービス"]
+            SearchMCP["Web検索MCP<br/>検索・公開ページ本文取得 :8890"]
+            SearXNG["SearXNG<br/>内部検索API :8888"]
+            DB[("PostgreSQL<br/>LiteLLMデータ :5432")]
+            Models[("共有モデル保存領域")]
+        end
+    end
+
+    Tunnel --> Cloudflared
+    Cloudflared -->|Webサイト| Portal
+    Cloudflared -->|OpenAI互換API| LiteLLM
+    Portal -->|ジョブ投入| Slurm
+    Slurm -->|リソース割り当て・起動| Jupyter
+    Slurm -->|リソース割り当て・起動| WebUI
+    Slurm -->|リソース割り当て・起動| Ollama
+    Portal -.->|ユーザー・Key・モデル管理| LiteLLM
+    WebUI -->|OpenAI互換API| LiteLLM
+    LiteLLM -->|モデル推論| Ollama
     LiteLLM <--> DB
-    LiteLLM -->|ollama_chat| Ollama
     Ollama --> Models
-    SearXNG --> Search
+    WebUI -->|Web検索| SearXNG
+    LiteLLM -->|認証付きMCP呼び出し| SearchMCP
+    SearchMCP -->|候補検索| SearXNG
+    SearchMCP -->|検証済みURLの本文取得| Internet
+    SearXNG --> Internet
 
     classDef external fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef cloudflare fill:#ffedd5,stroke:#f97316,color:#7c2d12
     classDef control fill:#dbeafe,stroke:#2563eb,color:#111827
     classDef workload fill:#dcfce7,stroke:#16a34a,color:#111827
     classDef service fill:#ede9fe,stroke:#7c3aed,color:#111827
     classDef data fill:#fef3c7,stroke:#d97706,color:#111827
-    class User,CF,Search external
-    class Proxy,JHub,Slurm control
-    class Apps,Ollama workload
+    class Browser,APIClient,Internet external
+    class Access,Tunnel,Cloudflared cloudflare
+    class Portal,Slurm control
+    class Jupyter,WebUI,Ollama workload
     class LiteLLM,SearchMCP,SearXNG service
     class DB,Models data
+
+    style Server fill:#f8fafc,stroke:#475569,stroke-width:2px
+    style Containers fill:#f0fdf4,stroke:#16a34a,stroke-width:2px
+    style Services fill:#faf5ff,stroke:#7c3aed,stroke-width:2px
 ```
 
-色分け: 灰=外部、青=ポータル・ジョブ管理、緑=Slurmワークロード、紫=AI・検索基盤、黄=永続データ。青・緑・紫・黄の各コンポーネントは単一ノード上で動作します。
+色分け: 灰=利用者・外部サービス、オレンジ=Cloudflare、青=ポータル・ジョブ管理、緑=Slurmワークロード、紫=AI・検索基盤、黄=永続データ。サーバー枠内のコンポーネントは同じ単一ノード上で動作します。
 
 #### 起動・推論の流れ
 
@@ -85,6 +108,7 @@ sequenceDiagram
         participant SearXNG as SearXNG<br/>127.0.0.1:8888
         participant DB as PostgreSQL<br/>127.0.0.1:5432
     end
+    participant Web as 公開Webページ
 
     Note over User,App: フェーズ1：ポータルからアプリを起動
     User->>CF: Hub またはアプリ用URLへアクセス
@@ -123,14 +147,16 @@ sequenceDiagram
     User->>CF: LLM API / 管理UIへアクセス
     CF->>LiteLLM: API / 管理UIを転送
     opt APIリクエストでWeb検索MCPを指定
-        LiteLLM->>SearchMCP: search_webを呼び出す
+        LiteLLM->>SearchMCP: search_and_fetch_webを呼び出す
         SearchMCP->>SearXNG: 検索語を内部JSON APIへ送信
-        SearXNG-->>SearchMCP: 検索結果を返す
-        SearchMCP-->>LiteLLM: タイトル・URL・概要を返す
+        SearXNG-->>SearchMCP: 候補ページを返す
+        SearchMCP->>Web: 検証済みURLから本文を取得
+        Web-->>SearchMCP: HTML / テキスト
+        SearchMCP-->>LiteLLM: URL・概要・取得した本文を返す
     end
 ```
 
-Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Open WebUIはSearXNGを直接使用し、外部LLM APIはLiteLLMに登録したWeb検索MCP経由で同じSearXNGを使用します。
+Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLMはポータル管理モデルを`ollama_chat/<モデル名>`として共有Ollamaへ中継します。モデルのpull・削除後は、HPCポータルが管理対象のLiteLLMモデルを同期します。Open WebUIはSearXNGを直接使用し、外部LLM APIはLiteLLMに登録したWeb検索MCPを通して検索結果と公開ページ本文を取得します。APIリクエストから`tools`を省略した場合、Web検索MCPは使用されません。
 
 ---
 

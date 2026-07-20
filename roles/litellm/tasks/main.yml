@@ -102,6 +102,7 @@
     group: "{{ litellm_user }}"
     mode: "0640"
   notify: LiteLLM を再起動
+  no_log: true
   when: not ansible_check_mode
 
 - name: LiteLLM 環境ファイルを配置

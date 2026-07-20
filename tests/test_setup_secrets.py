@@ -11,6 +11,7 @@ TARGET_KEYS = {
     "litellm_salt_key",
     "litellm_database_password",
     "searxng_secret_key",
+    "search_mcp_auth_token",
 }
 
 
@@ -49,12 +50,14 @@ def test_ensure_secrets_generates_only_missing_or_placeholder_values(tmp_path):
         "litellm_salt_key",
         "litellm_database_password",
         "searxng_secret_key",
+        "search_mcp_auth_token",
     }
     assert values["cloudflared_token"] == "external-token"
     assert values["litellm_master_key"] == "existing-master-key"
     assert len(values["litellm_salt_key"]) == 64
     assert len(values["litellm_database_password"]) == 64
     assert len(values["searxng_secret_key"]) == 64
+    assert len(values["search_mcp_auth_token"]) >= 64
     assert secret_file.stat().st_mode & 0o777 == 0o600
 
 
@@ -79,7 +82,8 @@ def test_ensure_secrets_treats_yaml_null_as_missing(tmp_path):
         "litellm_master_key: null\n"
         "litellm_salt_key: ~\n"
         "litellm_database_password:\n"
-        "searxng_secret_key: ''\n",
+        "searxng_secret_key: ''\n"
+        'search_mcp_auth_token: "REPLACE_WITH_RANDOM_SEARCH_MCP_AUTH_TOKEN"\n',
         encoding="utf-8",
     )
 
