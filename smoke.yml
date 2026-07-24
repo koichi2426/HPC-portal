@@ -259,8 +259,85 @@
         msg: "[SKIP] 共有Ollamaは停止中です"
       when: not (smoke_ollama_status.running | default(false) | bool)
 
+    - name: スモークテスト対象のNFSマウントを抽出
+      ansible.builtin.set_fact:
+        smoke_nfs_mounts: >-
+          {{
+            (nfs_mounts | default([]) | rejectattr('state', 'defined') | list)
+            + (
+              nfs_mounts
+              | default([])
+              | selectattr('state', 'defined')
+              | selectattr('state', 'equalto', 'present')
+              | list
+            )
+          }}
+
+    - name: 一般ユーザーとしてNFSマウント先を確認
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+      become: true
+      become_user: "{{ ansible_user }}"
+      loop: "{{ smoke_nfs_mounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: smoke_nfs_mount_stats
+
+    - name: NFSマウント先を読み取れることを確認
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir | default(false)
+          - item.stat.readable | default(false)
+          - item.stat.executable | default(false)
+        fail_msg: "{{ item.item.name }} のマウント先を一般ユーザーとして参照できません"
+        quiet: true
+      loop: "{{ smoke_nfs_mount_stats.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: 専用グループに属さないユーザーからもNFSマウント先を参照できることを確認
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/runuser
+          - --user
+          - nobody
+          - --
+          - /usr/bin/test
+          - -r
+          - "{{ item.path }}"
+          - -a
+          - -x
+          - "{{ item.path }}"
+      loop: "{{ smoke_nfs_mounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+
+    - name: NFSが読み取り専用でマウントされたことを確認
+      ansible.builtin.command:
+        argv:
+          - findmnt
+          - --noheadings
+          - --types
+          - nfs,nfs4
+          - --target
+          - "{{ item.path }}"
+          - --output
+          - OPTIONS
+      loop: "{{ smoke_nfs_mounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: smoke_nfs_mount_options
+      changed_when: false
+      failed_when:
+        - smoke_nfs_mount_options.rc != 0
+          or 'ro' not in (smoke_nfs_mount_options.stdout | trim).split(',')
+          or 'rw' in (smoke_nfs_mount_options.stdout | trim).split(',')
+
     - name: スモークテスト成功を表示
       ansible.builtin.debug:
         msg: >-
           [OK] 必須サービス、Slurm、PostgreSQL、GPU、Pydantic、Apptainerイメージ、
-          JupyterHub、HPCポータル静的ファイル、LiteLLM、SearXNG、Web検索MCPを確認しました。
+          JupyterHub、HPCポータル静的ファイル、LiteLLM、SearXNG、Web検索MCP、
+          設定済みの読み取り専用NFSマウントを確認しました。

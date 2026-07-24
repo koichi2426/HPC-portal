@@ -188,14 +188,15 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
    ```bash
    ssh <ansible_user>@<target-ip>
    ```
-4. **インベントリと秘密情報の設定**:
+4. **インベントリとローカル設定の準備**:
    ```bash
    make setup
    # inventory/production.ini … IP / ansible_user / ドメイン変数
    # group_vars/all/secret.yml … cloudflared_tokenなど外部発行の値を設定
+   # group_vars/all/nfs_mounts.yml … 必要な読み取り専用NFS共有を設定
    ```
 
-   `make setup`はLiteLLM・PostgreSQL・SearXNGの未設定の秘密値だけを自動生成します。設定済みの値は変更しません。
+   `make setup`は不足しているローカル設定ファイルを作成し、未設定の秘密値だけを自動生成します。設定済みの値は変更しません。実環境の値を含む3ファイルはGit管理外です。
 
 #### 📋 よく使う make コマンド
 
@@ -211,6 +212,7 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 | `make check` | ドライラン（`--check --diff`） |
 | `make test` | ローカルでpytestを実行（実機接続なし） |
 | `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
+| `make nfs-mounts` | NASの読み取り専用NFS設定だけを反映 |
 
 別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
 
@@ -244,6 +246,16 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 |----------|------|
 | `make cleanup` | サービス・設定のクリーンアップ（モデル・DBは残す） |
 | `make cleanup-purge-data` | モデル・DBを含む完全削除（日本語確認あり） |
+
+#### NASの読み取り専用マウント
+
+任意のNFS共有を、HPC上の`/mnt/nas/`配下から全ユーザー向けに読み取り専用で参照できます。実環境の設定はGit管理外の`group_vars/all/nfs_mounts.yml`に記載します。
+
+- 有効化: `state: present`にして`make nfs-mounts`
+- 解除: `state: absent`にして`make nfs-mounts`
+- 確認: `make smoke`
+
+共有への接続は、利用者がマウント先へアクセスした時に行われます。`make deploy`にも同じNFS設定が含まれます。
 
 #### 🚀 デプロイ実行
 
