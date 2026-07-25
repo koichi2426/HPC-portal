@@ -11,7 +11,7 @@ PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
 .PHONY: help setup test check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
-	common slurm postgres litellm ollama jupyterhub apptainer searxng cloudflared \
+	common nfs-mounts slurm postgres litellm ollama jupyterhub apptainer searxng cloudflared \
 	search-mcp status gpu cuda services processes
 
 help: ## ターゲット一覧
@@ -20,11 +20,12 @@ help: ## ターゲット一覧
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@printf '\n例: make deploy   make jupyterhub   make status\n\n'
 
-setup: ## インベントリとsecretを初期化（設定済みの値は維持）
+setup: ## インベントリ・secret・NFS設定を初期化（設定済みの値は維持）
 	@test -f $(INV) || cp inventory/production.ini.example $(INV)
 	@test -f group_vars/all/secret.yml || cp group_vars/all/secret.yml.example group_vars/all/secret.yml
+	@test -f group_vars/all/nfs_mounts.yml || cp group_vars/all/nfs_mounts.yml.example group_vars/all/nfs_mounts.yml
 	@python3 scripts/setup_secrets.py group_vars/all/secret.yml
-	@echo "OK: $(INV) と group_vars/all/secret.yml を確認してください"
+	@echo "OK: $(INV)、group_vars/all/secret.yml、group_vars/all/nfs_mounts.yml を確認してください"
 
 test: ## ローカルでpytestを実行（実機接続なし）
 	uv run pytest
@@ -68,6 +69,9 @@ cleanup-purge-data: check-inv ## モデル・DBを含む完全削除（要確認
 
 common: check-inv ## common ロールのみ
 	$(PB) site.yml --tags common
+
+nfs-mounts: check-inv ## NASの読み取り専用NFS設定のみ
+	$(PB) site.yml --tags nfs_mounts
 
 slurm: check-inv ## slurm ロールのみ
 	$(PB) site.yml --tags slurm

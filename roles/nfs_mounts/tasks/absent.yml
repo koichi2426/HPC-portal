@@ -1,0 +1,120 @@
+---
+- name: 解除対象のNFS実マウント状態を確認
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --types
+      - nfs,nfs4
+      - --mountpoint
+      - "{{ item.path }}"
+  loop: "{{ nfs_mounts_absent }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: nfs_mounts_absent_mount_states
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: 実マウントを利用中のプロセスがないことを確認
+  ansible.builtin.command:
+    argv:
+      - fuser
+      - --mount
+      - "{{ item.item.path }}"
+  loop: "{{ nfs_mounts_absent_mount_states.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: nfs_mounts_absent_usage_states
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: item.rc == 0
+  no_log: true
+
+- name: 解除できないNFSマウント名を抽出
+  ansible.builtin.set_fact:
+    nfs_mounts_busy_names: >-
+      {{
+        nfs_mounts_absent_usage_states.results
+        | rejectattr('skipped', 'defined')
+        | rejectattr('rc', 'equalto', 1)
+        | map(attribute='item.item.name')
+        | list
+      }}
+  no_log: true
+
+- name: 利用中または状態を確認できないNFSマウントは解除しない
+  ansible.builtin.assert:
+    that:
+      - nfs_mounts_busy_names | length == 0
+    fail_msg: >-
+      {{ nfs_mounts_busy_names | join(', ') }} は利用中か、利用状況を確認できないため解除しません。
+      利用中のプロセスやジョブを終了してから再度make deployを実行してください。
+    quiet: true
+
+- name: 解除対象のAutomountユニット名を取得
+  ansible.builtin.command:
+    argv:
+      - systemd-escape
+      - --path
+      - --suffix=automount
+      - "{{ item.path }}"
+  loop: "{{ nfs_mounts_absent }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: nfs_mounts_absent_automount_units
+  changed_when: false
+  check_mode: false
+
+- name: Automountの起動状態を確認
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=ActiveState
+      - --value
+      - "{{ item.stdout }}"
+  loop: "{{ nfs_mounts_absent_automount_units.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: nfs_mounts_absent_automount_states
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Automountを停止
+  ansible.builtin.systemd_service:
+    name: "{{ item.item.stdout }}"
+    state: stopped
+  loop: "{{ nfs_mounts_absent_automount_states.results }}"
+  loop_control:
+    label: "{{ item.item.item.name }}"
+  when:
+    - item.stdout | trim in ['active', 'activating', 'reloading', 'deactivating']
+    - not ansible_check_mode
+
+- name: NFS実マウントを解除
+  ansible.posix.mount:
+    path: "{{ item.item.path }}"
+    state: unmounted
+  loop: "{{ nfs_mounts_absent_mount_states.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc == 0
+  no_log: true
+
+- name: NFS設定をfstabから削除
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    state: absent_from_fstab
+    backup: true
+  loop: "{{ nfs_mounts_absent }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Fstabからsystemdユニットを再生成
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode

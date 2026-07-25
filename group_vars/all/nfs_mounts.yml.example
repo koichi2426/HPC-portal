@@ -1,0 +1,25 @@
+---
+# 実環境の値は、Git管理外の group_vars/all/nfs_mounts.yml に設定します。
+nfs_mounts: []
+
+# 各項目:
+#   name: 設定を識別する一意な名前。
+#   server: NFSサーバーのIPアドレスまたはホスト名。
+#   export: NFSサーバーが公開する共有パス。
+#   path: HPC上のマウント先。/mnt/nas/ 配下にする。
+#   state:
+#     present = fstabへ登録し、アクセス時の自動マウントを有効にする。
+#     absent  = 利用中でない場合にマウントを解除し、fstab登録を削除する。
+#   fstype: 通常は省略する。必要な場合だけ nfs または nfs4 を指定する。
+#   options: 通常は省略する。追加のNFSオプションをリストで指定する。
+#
+# stateをabsentにしても、NAS上のファイルとHPC上のマウント先ディレクトリは削除しません。
+# 設定済みの共有を解除するときは、リストからすぐ削除せず、state: absentで
+# make nfs-mountsを一度実行してください。解除後は設定項目を削除しても構いません。
+# 設定例（ドキュメント用の架空アドレス）:
+# nfs_mounts:
+#   - name: example_documents
+#     server: 192.0.2.10
+#     export: /share/documents
+#     path: /mnt/nas/documents
+#     state: present

@@ -1,0 +1,24 @@
+---
+nfs_mounts: [] # noqa var-naming[no-role-prefix]
+
+nfs_mounts_root: /mnt/nas
+
+# このロールで管理する共有は常に読み取り専用です。
+# noexec は共有上のプログラムの直接実行、nosuid/nodev は特殊権限・デバイスを無効にします。
+nfs_mounts_default_options:
+  - ro
+  - nosuid
+  - nodev
+  - noexec
+  - _netdev
+  - nofail
+  - x-systemd.automount
+  - x-systemd.mount-timeout=10s
+  - x-systemd.idle-timeout=5min
+
+# 末尾に指定すると上の保護設定を打ち消すため、個別設定では許可しません。
+nfs_mounts_forbidden_options:
+  - rw
+  - suid
+  - dev
+  - exec

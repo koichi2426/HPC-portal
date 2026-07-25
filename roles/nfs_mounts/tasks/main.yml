@@ -1,0 +1,84 @@
+---
+- name: NFSマウント設定の型を確認
+  ansible.builtin.assert:
+    that:
+      - nfs_mounts is sequence
+      - nfs_mounts is not string
+      - nfs_mounts_root is string
+      - nfs_mounts_root is match('^/[^\\s]*$')
+      - "'..' not in nfs_mounts_root.split('/')"
+      - nfs_mounts | map(attribute='name') | unique | length == nfs_mounts | length
+      - nfs_mounts | map(attribute='path') | unique | length == nfs_mounts | length
+    fail_msg: nfs_mounts は共有設定のリストで指定してください
+    quiet: true
+
+- name: NFSマウント設定を検証
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.name is defined
+      - item.name is string
+      - item.name | length > 0
+      - item.server is defined
+      - item.server is string
+      - item.server is match('^[A-Za-z0-9.-]+$')
+      - item.export is defined
+      - item.export is string
+      - item.export is match('^/[^\\s]*$')
+      - "'..' not in item.export.split('/')"
+      - item.path is defined
+      - item.path is string
+      - item.path is match('^' ~ (nfs_mounts_root | regex_escape) ~ '/[^\\s]+$')
+      - "'..' not in item.path.split('/')"
+      - item.state | default('present') in ['present', 'absent']
+      - item.fstype is not defined or item.fstype in ['nfs', 'nfs4']
+      - item.options is not defined or (item.options is sequence and item.options is not string)
+      - >-
+        item.options is not defined
+        or ((item.options | intersect(nfs_mounts_forbidden_options)) | length == 0)
+      - >-
+        item.options is not defined
+        or ((item.options | select('string') | list | length) == (item.options | length))
+      - >-
+        item.options is not defined
+        or ((item.options | select('match', '.*,.*') | list | length) == 0)
+    fail_msg: >-
+      {{ item.name | default('名前なし') }} の設定が不正です。
+      server、絶対パスのexport、{{ nfs_mounts_root }}/ 配下のpathを指定してください。
+      optionsを指定する場合はリストにしてください。
+    quiet: true
+  loop: "{{ nfs_mounts }}"
+  loop_control:
+    label: "{{ item.name | default('名前なし') }}"
+  no_log: true
+
+- name: 状態別にNFSマウント設定を分類
+  ansible.builtin.set_fact:
+    nfs_mounts_present: >-
+      {{
+        (nfs_mounts | rejectattr('state', 'defined') | list)
+        + (nfs_mounts | selectattr('state', 'defined') | selectattr('state', 'equalto', 'present') | list)
+      }}
+    nfs_mounts_absent: >-
+      {{
+        nfs_mounts
+        | selectattr('state', 'defined')
+        | selectattr('state', 'equalto', 'absent')
+        | list
+      }}
+
+- name: NFSクライアントと利用状況確認ツールをインストール
+  ansible.builtin.package:
+    name:
+      - nfs-common
+      - psmisc
+    state: present
+  when: nfs_mounts | length > 0
+
+- name: 有効なNFSマウントを設定
+  ansible.builtin.include_tasks: present.yml
+  when: nfs_mounts_present | length > 0
+
+- name: 無効なNFSマウントを解除
+  ansible.builtin.include_tasks: absent.yml
+  when: nfs_mounts_absent | length > 0

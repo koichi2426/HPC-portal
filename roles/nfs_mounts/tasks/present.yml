@@ -1,0 +1,78 @@
+---
+- name: NFSマウントの基点を作成
+  ansible.builtin.file:
+    path: "{{ nfs_mounts_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: NFSマウント先の現在の状態を確認
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --mountpoint
+      - "{{ item.path }}"
+  loop: "{{ nfs_mounts_present }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: nfs_mounts_mountpoint_states
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: NFSマウント先を作成
+  ansible.builtin.file:
+    path: "{{ item.item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ nfs_mounts_mountpoint_states.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+
+- name: 読み取り専用NFSをfstabへ登録
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ item.server }}:{{ item.export }}"
+    fstype: "{{ item.fstype | default('nfs') }}"
+    opts: "{{ (nfs_mounts_default_options + (item.options | default([]))) | unique | join(',') }}"
+    dump: "0"
+    passno: "0"
+    state: present
+    backup: true
+  loop: "{{ nfs_mounts_present }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Automountユニット名を取得
+  ansible.builtin.command:
+    argv:
+      - systemd-escape
+      - --path
+      - --suffix=automount
+      - "{{ item.path }}"
+  loop: "{{ nfs_mounts_present }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: nfs_mounts_automount_units
+  changed_when: false
+  check_mode: false
+
+- name: Fstabからsystemdユニットを再生成
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: NFS automountを待機状態にする
+  ansible.builtin.systemd_service:
+    name: "{{ item.stdout }}"
+    state: started
+  loop: "{{ nfs_mounts_automount_units.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not ansible_check_mode

@@ -7,6 +7,7 @@
     hpc_defer_slurm_config_apply: true
   roles:
     - common
+    - nfs_mounts
     - slurm
     - postgres
     - apptainer

@@ -188,13 +188,15 @@ Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and
    ```bash
    ssh <ansible_user>@<target-ip>
    ```
-4. **Set up the inventory and secrets**:
+4. **Prepare the inventory and local configuration**:
    ```bash
    make setup
+   # inventory/production.ini contains the host and connection settings
    # Set external values such as cloudflared_token in group_vars/all/secret.yml
+   # Define optional read-only shares in group_vars/all/nfs_mounts.yml
    ```
 
-   `make setup` generates only missing LiteLLM, PostgreSQL, and SearXNG secrets. It never replaces values that are already configured.
+   `make setup` creates missing local configuration files and generates only missing secrets. It never replaces configured values. The three files containing environment-specific values are excluded from Git.
 
 #### 📋 Common make targets
 
@@ -210,6 +212,7 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make check` | Dry run (`--check --diff`) |
 | `make test` | Run pytest locally without connecting to the target host |
 | `make smoke` | Run read-only checks against services, APIs, and deployed assets |
+| `make nfs-mounts` | Apply only the read-only NAS/NFS configuration |
 
 Override inventory: `make deploy INV=inventory/staging.ini`
 
@@ -243,6 +246,16 @@ Override inventory: `make deploy INV=inventory/staging.ini`
 |---------|-------------|
 | `make cleanup` | Cleanup services and config while keeping model/DB data |
 | `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
+
+#### Read-only NAS mounts
+
+Optional NFS shares can be exposed read-only to all HPC users under `/mnt/nas/`. Keep the real configuration only in the Git-ignored `group_vars/all/nfs_mounts.yml`.
+
+- Enable: set `state: present`, then run `make nfs-mounts`
+- Disable: set `state: absent`, then run `make nfs-mounts`
+- Verify: run `make smoke`
+
+The NAS is contacted only when a user accesses the mount path. The same NFS configuration is also included in `make deploy`.
 
 #### 🚀 Deploy
 
