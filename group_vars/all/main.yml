@@ -71,7 +71,7 @@ litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
 litellm_initial_models: []
 
 # shared Ollama
-ollama_version: "0.31.1"
+ollama_version: "0.32.4"
 ollama_service_user: hpc-ollama
 ollama_service_home: /var/lib/hpc-ollama
 ollama_host: "127.0.0.1"
