@@ -112,6 +112,38 @@ def _write_atomically(path: Path, content: str) -> None:
             temporary_path.unlink()
 
 
+def find_missing(path: Path) -> list[str]:
+    """未設定または雛形のままの秘密キーを一覧化する（書き込みは行わない）。
+
+    Args:
+        path: secret.ymlのパス。
+
+    Returns:
+        未設定のキー名の一覧。
+
+    Raises:
+        FileNotFoundError: secret.ymlが存在しない場合。
+    """
+
+    if not path.exists():
+        raise FileNotFoundError(f"秘密情報ファイルがありません: {path}")
+
+    target = path.resolve() if path.is_symlink() else path
+    content = target.read_text(encoding="utf-8")
+
+    found: dict[str, str] = {}
+    for line in content.splitlines():
+        match = SECRET_LINE_PATTERN.match(line)
+        if match is not None and match["key"] in SECRET_GENERATORS:
+            found[match["key"]] = match["value"]
+
+    return [
+        key
+        for key in SECRET_GENERATORS
+        if key not in found or _is_unset(found[key])
+    ]
+
+
 def ensure_secrets(path: Path) -> list[str]:
     """不足する秘密値を生成し、既存値を維持する。
 
@@ -149,7 +181,21 @@ def main() -> int:
         description="secret.ymlの未設定値だけを安全なランダム値で初期化します。"
     )
     parser.add_argument("path", type=Path, help="secret.ymlのパス")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="書き込まずに未設定の秘密値がないか確認する（デプロイ前チェック用）",
+    )
     args = parser.parse_args()
+
+    if args.check:
+        missing = find_missing(args.path)
+        if missing:
+            print("未設定の秘密値: " + ", ".join(missing))
+            print("make setup を実行して秘密値を生成してください。")
+            return 1
+        print("秘密値は設定済みです")
+        return 0
 
     generated = ensure_secrets(args.path)
     if generated:

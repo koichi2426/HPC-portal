@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from scripts.setup_secrets import ensure_secrets
+from scripts.setup_secrets import ensure_secrets, find_missing
 
 
 TARGET_KEYS = {
@@ -91,6 +91,38 @@ def test_ensure_secrets_treats_yaml_null_as_missing(tmp_path):
 
     assert set(generated) == TARGET_KEYS
     assert "null" not in secret_file.read_text(encoding="utf-8")
+
+
+def test_find_missing_reports_absent_and_placeholder_keys_without_writing(tmp_path):
+    secret_file = tmp_path / "secret.yml"
+    secret_file.write_text(
+        'cloudflared_token: "external-token"\n'
+        'litellm_master_key: "existing-master-key"\n'
+        'litellm_salt_key: "REPLACE_WITH_RANDOM_SALT_KEY"\n'
+        'litellm_database_password: ""\n'
+        'searxng_secret_key: "existing-searxng-key"\n',
+        encoding="utf-8",
+    )
+    before = secret_file.read_bytes()
+
+    missing = find_missing(secret_file)
+
+    assert set(missing) == {
+        "litellm_salt_key",
+        "litellm_database_password",
+        "search_mcp_auth_token",
+    }
+    assert secret_file.read_bytes() == before
+
+
+def test_find_missing_returns_empty_when_all_keys_configured(tmp_path):
+    secret_file = tmp_path / "secret.yml"
+    secret_file.write_text(
+        "\n".join(f'{key}: "configured-{key}"' for key in TARGET_KEYS) + "\n",
+        encoding="utf-8",
+    )
+
+    assert find_missing(secret_file) == []
 
 
 def test_ensure_secrets_updates_symlink_target_without_replacing_link(tmp_path):

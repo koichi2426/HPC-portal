@@ -81,8 +81,8 @@
         and (
           (hpc_force_service_restarts | default(false) | bool)
           or (
-            slurm_active_jobs_during_deploy.rc == 0
-            and (slurm_active_jobs_during_deploy.stdout | trim | length == 0)
+            slurm_active_jobs_during_deploy.rc != 0
+            or (slurm_active_jobs_during_deploy.stdout | trim | length == 0)
           )
         )
       }}

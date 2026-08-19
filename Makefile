@@ -32,6 +32,8 @@ test: ## ローカルでpytestを実行（実機接続なし）
 
 check-inv:
 	@test -f $(INV) || { echo "エラー: $(INV) がありません。make setup を実行してください"; exit 1; }
+	@test -f group_vars/all/secret.yml || { echo "エラー: group_vars/all/secret.yml がありません。make setup を実行してください"; exit 1; }
+	@python3 scripts/setup_secrets.py --check group_vars/all/secret.yml
 
 check: check-inv ## 変更内容のドライラン（--check --diff）
 	$(PB) site.yml --check --diff
