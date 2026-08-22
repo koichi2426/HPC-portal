@@ -3,6 +3,19 @@
   hosts: gx10
   become: true
   tasks:
+    - name: shared Ollama Slurm job を停止
+      ansible.builtin.shell: |
+        if command -v /usr/local/sbin/hpc-ollama >/dev/null 2>&1; then
+          /usr/local/sbin/hpc-ollama stop || true
+        else
+          squeue -h -u "{{ ollama_service_user | default('hpc-ollama') }}" -n "{{ ollama_slurm_job_name | default('shared-ollama') }}" -o '%A' \
+            | xargs -r scancel
+        fi
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: false
+
     - name: 関連サービスの停止
       ansible.builtin.systemd:
         name: "{{ item }}"
@@ -18,19 +31,6 @@
         - slurmd
         - munge
         - cloudflared
-
-    - name: shared Ollama Slurm job を停止
-      ansible.builtin.shell: |
-        if command -v /usr/local/sbin/hpc-ollama >/dev/null 2>&1; then
-          /usr/local/sbin/hpc-ollama stop || true
-        else
-          squeue -h -u "{{ ollama_service_user | default('hpc-ollama') }}" -n "{{ ollama_slurm_job_name | default('shared-ollama') }}" -o '%A' \
-            | xargs -r scancel
-        fi
-      args:
-        executable: /bin/bash
-      failed_when: false
-      changed_when: false
 
     - name: 実行ユーザーのゾンビプロセス親を強制終了
       ansible.builtin.shell: |
