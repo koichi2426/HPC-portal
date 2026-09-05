@@ -7,7 +7,7 @@
 {% set live_status = 'pending' if (d.status == 'pending' or (d.shared_ollama and d.active and not d.api)) else d.status %}
 {% set live_status_label = '起動中 / API応答待ち' if (d.shared_ollama and d.active and not d.api) else d.status_label %}
 <div class="gx10-app-detail-page" data-hpc-user="{{ user.name }}"
-     {% if d.shared_ollama %}data-hpc-shared-ollama-status{% else %}data-hpc-app-status data-server-name="{{ d.server_name }}"{% endif %}
+     {% if d.shared_ollama %}data-hpc-shared-ollama-status data-hpc-reload-on-change="false"{% else %}data-hpc-app-status data-server-name="{{ d.server_name }}"{% endif %}
      data-hpc-app-state="{{ live_status }}">
   <div style="margin-bottom: 20px;">
     <a class="hpc-back-link" href="/hub/home">← Home</a>
@@ -123,7 +123,9 @@
       <tr><th>Slurm JOB ID</th><td>{% if d.job_id %}{{ d.job_id }}{% else %}<span class="hpc-muted">—</span>{% endif %}</td></tr>
       {% if d.shared_ollama %}
       <tr><th>API</th><td><span data-hpc-ollama-api-status class="{% if d.api %}hpc-status-ok{% else %}hpc-status-warn{% endif %}">{% if d.api %}OK{% else %}起動待ち / 未応答{% endif %}</span></td></tr>
-      <tr><th>バージョン</th><td class="hpc-app-version"><strong data-hpc-ollama-running-version>{% if d.version %}v{{ d.version }}{% else %}確認中{% endif %}</strong><span class="hpc-version-update" data-hpc-ollama-version-update {% if not d.update_available %}hidden{% endif %}>再起動で更新</span></td></tr>
+      <tr><th>実行中バージョン</th><td class="hpc-app-version"><strong data-hpc-ollama-running-version>{% if d.version %}v{{ d.version }}{% else %}確認中{% endif %}</strong><span class="hpc-version-update" data-hpc-ollama-version-update {% if not d.update_available %}hidden{% endif %}>更新可能</span></td></tr>
+      <tr><th>最新安定版</th><td class="hpc-app-version"><strong data-hpc-ollama-latest-version>{% if d.latest_version %}v{{ d.latest_version }}{% else %}未確認{% endif %}</strong><button type="button" class="gx10-primary-btn" style="margin-left:8px; padding:6px 10px; font-size:12px;" data-hpc-ollama-check-button onclick="hpcOllamaCheckUpdate(this)">最新版を確認</button><button type="button" class="gx10-primary-btn" style="margin-left:8px; padding:6px 10px; font-size:12px;" data-hpc-ollama-update-button data-target-version="{{ d.latest_version }}" {% if not d.update_available %}hidden{% endif %} onclick="hpcOllamaUpdate(this)">{% if d.latest_version %}v{{ d.latest_version }}へ更新{% else %}最新版へ更新{% endif %}</button></td></tr>
+      <tr data-hpc-ollama-update-status-row {% if not d.update_state %}hidden{% endif %}><th>更新状態</th><td><span data-hpc-ollama-update-status class="{% if d.update_state == 'completed' %}hpc-status-ok{% elif d.update_error %}hpc-status-danger{% else %}hpc-status-warn{% endif %}">{{ d.update_message or d.update_error }}</span>{% if d.update_error %}<div data-hpc-ollama-update-error class="hpc-help hpc-status-danger">{{ d.update_error }}</div>{% else %}<div data-hpc-ollama-update-error class="hpc-help hpc-status-danger" hidden></div>{% endif %}</td></tr>
       <tr><th>Port</th><td>{{ d.port }}</td></tr>
       <tr><th>Models dir</th><td><code style="font-size:11px;">{{ d.models_dir }}</code></td></tr>
       {% if d.status_error %}
@@ -194,7 +196,7 @@
   <div class="gx10-actions">
     {% if d.shared_ollama %}
     {% if d.active %}
-    <button type="button" class="gx10-delete-btn" onclick="hpcOllamaStop(this)">停止</button>
+    <button type="button" class="gx10-delete-btn" data-hpc-ollama-stop-button onclick="hpcOllamaStop(this)">停止</button>
     {% endif %}
     {% else %}
     {% if d.active and d.job_url %}

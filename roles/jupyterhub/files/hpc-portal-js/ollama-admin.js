@@ -299,3 +299,45 @@ function hpcOllamaStop(btn) {
     btn.disabled = false;
   });
 }
+function hpcOllamaUpdate(btn) {
+  var version = btn.dataset.targetVersion || "";
+  var target = version ? "v" + version : "最新版";
+  if (!confirm("Ollamaを" + target + "へ更新しますか？\nイメージの取得後、LLM APIが一時的に停止します。")) return;
+  btn.disabled = true;
+  btn.textContent = "更新を開始中…";
+  hpcOllamaMsg("Ollamaの更新を準備しています", true);
+  hpcOllamaPost({action: "ollama_update"}).then(function () {
+    hpcOllamaMsg("更新を開始しました。画面に進捗を表示します", true);
+    if (window.HpcAppStatus) window.HpcAppStatus.refresh();
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+    btn.disabled = false;
+    btn.textContent = target + "へ更新";
+  });
+}
+function hpcOllamaCheckUpdate(btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "確認中…";
+  }
+  hpcOllamaPost({action: "ollama_update_check"}).then(function (body) {
+    var data = body.data || {};
+    var message;
+    if (!data.running_version) {
+      message = "最新版は v" + data.latest_version + " です。実行中のバージョンは確認できません";
+    } else if (data.update_available) {
+      message = "最新版 v" + data.latest_version + " を利用できます";
+    } else {
+      message = "現在のOllamaは最新です";
+    }
+    hpcOllamaMsg(message, true);
+    if (window.HpcAppStatus) window.HpcAppStatus.refresh();
+  }).catch(function (e) {
+    hpcOllamaMsg(e.message, false);
+  }).then(function () {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "最新版を確認";
+    }
+  });
+}
