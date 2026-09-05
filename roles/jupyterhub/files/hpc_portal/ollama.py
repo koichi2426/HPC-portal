@@ -250,12 +250,13 @@ def _hpc_ollama_cmd(
             return json.loads(body), None
         except json.JSONDecodeError:
             return {"raw": body}, None
-    if action == "start" and body:
+    if action in {"start", "update", "update-check"} and body:
         try:
             data = json.loads(body)
-            for key, value in (start_settings or {}).items():
-                data.setdefault(key, value)
-            data.setdefault("gpus", HPC_OLLAMA_GPUS)
+            if action == "start":
+                for key, value in (start_settings or {}).items():
+                    data.setdefault(key, value)
+                data.setdefault("gpus", HPC_OLLAMA_GPUS)
             return data, None
         except json.JSONDecodeError:
             return {
@@ -409,7 +410,7 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
                     "modified_at": item.get("modified_at", ""),
                 })
     running_version = str(status.get("version") or "").removeprefix("v")
-    target_version = HPC_OLLAMA_VERSION.removeprefix("v")
+    latest_version = str(status.get("latest_version") or "").removeprefix("v")
     def running_setting(key: str, default: str) -> str:
         """稼働中は実測値だけを、停止中は次回起動の既定値を返す。
 
@@ -463,10 +464,19 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
         "models_dir": HPC_OLLAMA_MODELS_DIR,
         "api": api,
         "version": running_version,
-        "target_version": target_version,
+        "bootstrap_version": str(
+            status.get("bootstrap_version") or HPC_OLLAMA_VERSION
+        ).removeprefix("v"),
+        "latest_version": latest_version,
         "update_available": bool(
-            running_version and target_version and running_version != target_version
+            running_version and latest_version and running_version != latest_version
         ),
+        "update_state": str(status.get("update_state") or ""),
+        "update_target_version": str(
+            status.get("update_target_version") or ""
+        ).removeprefix("v"),
+        "update_message": str(status.get("update_message") or ""),
+        "update_error": str(status.get("update_error") or ""),
         "ollama_settings": {
             "parallel": running_setting(
                 "parallel", HPC_OLLAMA_DEFAULT_PARALLEL

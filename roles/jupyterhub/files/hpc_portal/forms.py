@@ -218,7 +218,7 @@ def make_options_form(spawner):
         shared = _hpc_shared_ollama_detail_context()
         if shared.get("active"):
             active_sessions_html += (
-                f'<div class="gx10-app-card" data-hpc-shared-ollama-status data-hpc-ollama-target-version="{html.escape(str(shared.get("target_version") or HPC_OLLAMA_VERSION), quote=True)}" style="padding:12px;margin-top:10px;">'
+                '<div class="gx10-app-card" data-hpc-shared-ollama-status style="padding:12px;margin-top:10px;">'
                 f'<div class="hpc-row-between">'
                 f'<div class="hpc-section-title">● Ollama <span class="hpc-muted" style="font-size:11px;">(job {html.escape(str(shared.get("job_id") or ""))})</span></div>'
                 f'<div class="hpc-inline-actions">'
@@ -228,7 +228,7 @@ def make_options_form(spawner):
                 f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
                 f'<span class="hpc-app-version" style="display:block;">バージョン: '
                 f'<strong data-hpc-ollama-running-version>{"v" + html.escape(str(shared.get("version") or "")) if shared.get("version") else "確認中"}</strong>'
-                f'<span class="hpc-version-update" data-hpc-ollama-version-update{"" if shared.get("update_available") else " hidden"}>再起動で更新</span></span>'
+                f'<span class="hpc-version-update" data-hpc-ollama-version-update{"" if shared.get("update_available") else " hidden"}>更新可能</span></span>'
                 f'</div>'
             )
     for name, s in user.spawners.items():

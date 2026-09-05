@@ -32,5 +32,5 @@ exec apptainer exec --nv \
   --env OLLAMA_MAX_QUEUE="$OLLAMA_MAX_QUEUE" \
   --env OLLAMA_FLASH_ATTENTION="$OLLAMA_FLASH_ATTENTION" \
   --env HOME={{ ollama_service_home }} \
-  {{ ollama_apptainer_image }} \
+  "${HPC_OLLAMA_IMAGE:-{{ ollama_apptainer_image }}}" \
   ollama serve

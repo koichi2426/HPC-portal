@@ -71,13 +71,19 @@ litellm_internal_base_url: "http://{{ litellm_host }}:{{ litellm_port }}"
 litellm_initial_models: []
 
 # shared Ollama
+# 新規構築・復旧用の動作確認済みバージョン。Web更新後の実行版は上書きしない。
 ollama_version: "0.32.4"
 ollama_service_user: hpc-ollama
 ollama_service_home: /var/lib/hpc-ollama
 ollama_host: "127.0.0.1"
 ollama_port: 11434
 ollama_models_dir: /srv/ollama/models
-ollama_apptainer_image: /opt/images/ollama.sif
+ollama_apptainer_image_dir: /opt/images/ollama
+ollama_apptainer_image: /opt/images/ollama/current.sif
+ollama_release_api_url: https://api.github.com/repos/ollama/ollama/releases/latest
+ollama_update_cache_seconds: 600
+ollama_update_min_free_mb: 4096
+ollama_update_start_timeout_seconds: 300
 ollama_slurm_job_name: shared-ollama
 ollama_slurm_partition: debug
 ollama_slurm_default_cpus: 8
