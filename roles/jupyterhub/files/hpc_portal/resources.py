@@ -119,6 +119,56 @@ def _parse_slurm_gres_count(gres: str) -> int:
     return 0
 
 
+_SLURM_GPU_TRES_RE = re.compile(r"gres[/:]gpu(?::[A-Za-z0-9_.-]+)?:(\d+)")
+
+
+def _parse_slurm_gpu_tres_per_node(raw: str) -> int:
+    """squeue の TRES_PER_NODE 表記から GPU 要求数を取り出す
+
+    Args:
+        raw: squeue -o '%b' が返す gres/gpu:1 のような文字列。
+
+    Returns:
+        GPU要求数。GPUを要求していなければ0。
+    """
+    return sum(int(m.group(1)) for m in _SLURM_GPU_TRES_RE.finditer(str(raw or "")))
+
+
+def _hpc_slurm_allocated_gpus():
+    """実行中ジョブが確保しているGPU数を squeue から集計する
+
+    AccountingStorageTRES に gres/gpu を含めていない構成では scontrol の
+    AllocTRES へGPUが現れず、割当を検出できない。squeue の TRES_PER_NODE は
+    その設定に依存しないため、そちらを集計する。
+
+    Returns:
+        確保済みGPU数。取得に失敗した場合はNone。
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "squeue",
+                "--noheader",
+                "--states=RUNNING",
+                "--nodelist",
+                SLURM_NODE_NAME,
+                "-o",
+                "%b",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        return sum(
+            _parse_slurm_gpu_tres_per_node(line) for line in proc.stdout.splitlines()
+        )
+    except Exception:
+        return None
+
+
 def _hpc_slurm_free_resources():
     """Slurm が管理している未割り当て CPU / RAM / GPU（ジョブ停止で増える）
 
@@ -154,6 +204,12 @@ def _hpc_slurm_free_resources():
             or gpu_default
         )
         gpu_alloc = alloc["gpu"]
+        if not gpu_alloc:
+            # AccountingStorageTRES に gres/gpu が無いと AllocTRES へ現れないため、
+            # squeue の TRES_PER_NODE から実際の割当を補う。
+            squeue_gpu = _hpc_slurm_allocated_gpus()
+            if squeue_gpu is not None:
+                gpu_alloc = squeue_gpu
         if cpu_total <= 0:
             return None
         cpu_free = max(0, cpu_total - cpu_alloc)
@@ -247,11 +303,26 @@ def _hpc_resource_snapshot(disk_path="/home"):
         cpu = psutil.cpu_percent()
         cpu_available = max(0, min(100, 100 - cpu))
         cpu_available_count = cpu_total * cpu_available / 100
-    # GB10はCPUとGPUが同じメモリを共有するため、Slurm予約量ではなく実空き容量を示す。
+    # GB10はCPUとGPUが同じメモリを共有するため、OSの実空き容量も併せて示す。
     mem_available = max(0, min(100, mem.available / mem.total * 100))
     mem_available_gb = mem.available / (1024 ** 3)
     mem_total_gb = mem.total / (1024 ** 3)
     mem_used_gb = max(0, mem_total_gb - mem_available_gb)
+    # ジョブが起動できるかを決めるのはOSの実空きではなく、Slurmが割り当て可能な残量。
+    # 予約済みでもOS上は未使用のことがあり、実空きだけを見せると起動できない構成が
+    # 「空きあり」に見えてしまう。
+    if slurm_free and slurm_free["mem_total_mb"]:
+        mem_slurm_total_gb = slurm_free["mem_total_mb"] / 1024
+        mem_slurm_available_gb = slurm_free["mem_available_mb"] / 1024
+    else:
+        mem_slurm_total_gb = mem_total_gb
+        mem_slurm_available_gb = mem_available_gb
+    mem_slurm_used_gb = max(0, mem_slurm_total_gb - mem_slurm_available_gb)
+    mem_slurm_available = (
+        max(0, min(100, mem_slurm_available_gb / mem_slurm_total_gb * 100))
+        if mem_slurm_total_gb
+        else 0
+    )
     try:
         disk = psutil.disk_usage(disk_path)
     except Exception:
@@ -260,6 +331,13 @@ def _hpc_resource_snapshot(disk_path="/home"):
     disk_available_gb = disk.free / (1024 ** 3)
     disk_total_gb = disk.total / (1024 ** 3)
     gpu_max = (slurm_free["gpu_max"] if slurm_free else 0) or HPC_GPU_COUNT
+    gpu_available_count = (
+        slurm_free["gpu_available_count"] if slurm_free else gpu_max
+    )
+    gpu_available_count = max(0, min(gpu_max, int(gpu_available_count)))
+    gpu_available = (
+        max(0, min(100, gpu_available_count / gpu_max * 100)) if gpu_max else 0
+    )
     gpu_processes, gpu_processes_available = _hpc_gpu_process_snapshot()
     return {
         "cpu_available": cpu_available,
@@ -271,11 +349,19 @@ def _hpc_resource_snapshot(disk_path="/home"):
         "mem_used_gb": mem_used_gb,
         "mem_total_gb": mem_total_gb,
         "mem_status": _hpc_resource_status(mem_available),
+        "mem_slurm_available": mem_slurm_available,
+        "mem_slurm_available_gb": mem_slurm_available_gb,
+        "mem_slurm_used_gb": mem_slurm_used_gb,
+        "mem_slurm_total_gb": mem_slurm_total_gb,
+        "mem_slurm_status": _hpc_resource_status(mem_slurm_available),
         "disk_available": disk_available,
         "disk_available_gb": disk_available_gb,
         "disk_total_gb": disk_total_gb,
         "disk_status": _hpc_resource_status(disk_available),
         "gpu_max": gpu_max,
+        "gpu_available": gpu_available,
+        "gpu_available_count": gpu_available_count,
+        "gpu_status": _hpc_resource_status(gpu_available),
         "gpu_processes": gpu_processes,
         "gpu_process_count": len(gpu_processes),
         "gpu_processes_available": gpu_processes_available,

@@ -181,15 +181,22 @@ def make_options_form(spawner):
     cpu_available_count = resource["cpu_available_count"]
     cpu_total = resource["cpu_total"]
     cpu_status = resource["cpu_status"]
-    mem_available = resource["mem_available"]
     mem_available_gb = resource["mem_available_gb"]
     mem_total_gb = resource["mem_total_gb"]
-    mem_status = resource["mem_status"]
+    mem_used_gb = resource["mem_used_gb"]
+    mem_slurm_available = resource["mem_slurm_available"]
+    mem_slurm_available_gb = resource["mem_slurm_available_gb"]
+    mem_slurm_used_gb = resource["mem_slurm_used_gb"]
+    mem_slurm_total_gb = resource["mem_slurm_total_gb"]
+    mem_slurm_status = resource["mem_slurm_status"]
     disk_available = resource["disk_available"]
     disk_available_gb = resource["disk_available_gb"]
     disk_total_gb = resource["disk_total_gb"]
     disk_status = resource["disk_status"]
     gpu_max = resource["gpu_max"]
+    gpu_available = resource["gpu_available"]
+    gpu_available_count = resource["gpu_available_count"]
+    gpu_status = resource["gpu_status"]
     gpu_processes = resource["gpu_processes"]
     gpu_processes_available = resource["gpu_processes_available"]
     if not gpu_processes_available:
@@ -399,15 +406,15 @@ def make_options_form(spawner):
                 </div>
                 <details class="resource-meter hpc-unified-memory hpc-resource-menu">
                     <summary class="hpc-unified-memory-summary" aria-label="統合メモリの説明を開く">
-                        <div class="meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="meter-status" data-resource-text="mem_status">{mem_status}</span></div>
-                        <div class="meter-track" title="統合メモリの空きリソース"><div class="meter-fill" data-resource-width="mem_available" style="width:{mem_available:.0f}%;"></div></div>
-                        <div class="meter-numbers"><span data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</span><span data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</span></div>
+                        <div class="meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="meter-status" data-resource-text="mem_slurm_status">{mem_slurm_status}</span></div>
+                        <div class="meter-track" title="Slurmが割り当て可能な統合メモリ"><div class="meter-fill" data-resource-width="mem_slurm_available" style="width:{mem_slurm_available:.0f}%;"></div></div>
+                        <div class="meter-numbers"><span data-resource-text="mem_slurm_available_gb">残り {mem_slurm_available_gb:.1f} GB</span><span data-resource-text="mem_slurm_total_gb">最大 {mem_slurm_total_gb:.1f} GB</span></div>
                     </summary>
                     <div class="hpc-unified-memory-panel">
                         <strong>統合メモリについて</strong>
                         <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
-                        <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{max(0, mem_total_gb - mem_available_gb):.1f} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {mem_available_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {mem_total_gb:.1f} GB</dd></div></dl>
-                        <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
+                        <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{mem_slurm_used_gb:.1f} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {mem_slurm_available_gb:.1f} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{mem_used_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {mem_slurm_total_gb:.1f} GB</dd></div></dl>
+                        <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。</p>
                     </div>
                 </details>
                 <div class="resource-meter">
@@ -421,7 +428,11 @@ def make_options_form(spawner):
                     </div>
                 </div>
                 <details class="resource-meter hpc-gpu-processes">
-                    <summary><span>GPU</span><span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{gpu_process_count_label}</span></summary>
+                    <summary class="hpc-gpu-summary" aria-label="GPUを使用中のプロセスを開く">
+                        <div class="meter-head"><span class="hpc-resource-label">GPU 空き</span><span class="meter-status" data-resource-text="gpu_status">{gpu_status}</span></div>
+                        <div class="meter-track" title="Slurmが割り当て可能なGPU"><div class="meter-fill" data-resource-width="gpu_available" style="width:{gpu_available:.0f}%;"></div></div>
+                        <div class="meter-numbers"><span data-resource-text="gpu_available_count">残り {gpu_available_count} / {gpu_max} 枚</span><span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{gpu_process_count_label}</span></div>
+                    </summary>
                     <ul class="hpc-gpu-process-list" data-gpu-process-list>{gpu_process_list_html}</ul>
                 </details>
             </div>

@@ -46,12 +46,21 @@ def test_spawn_form_renders_recommendation_card(monkeypatch):
         "mem_available": 75.0,
         "mem_available_gb": 90.0,
         "mem_total_gb": 120.0,
+        "mem_used_gb": 30.0,
         "mem_status": "余裕あり",
+        "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6,
+        "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6,
+        "mem_slurm_status": "やや混雑",
         "disk_available": 60.0,
         "disk_available_gb": 600.0,
         "disk_total_gb": 1000.0,
         "disk_status": "余裕あり",
         "gpu_max": 1,
+        "gpu_available": 0.0,
+        "gpu_available_count": 0,
+        "gpu_status": "逼迫",
         "gpu_processes": [],
         "gpu_processes_available": True,
     }
@@ -71,6 +80,13 @@ def test_spawn_form_renders_recommendation_card(monkeypatch):
     assert 'data-label="Open WebUI"' in rendered
     assert 'data-label="Ollama"' not in rendered
     assert "データ分析は4 vCPU・8 GB" in rendered
+    # GPUメーターが空き枚数を示すこと（利用者が起動可否を判断できる）
+    assert "残り 0 / 1 枚" in rendered
+    assert 'data-resource-width="gpu_available"' in rendered
+    # 統合メモリのメーターはSlurmの割当可能量を示し、OS実空きは併記に留めること
+    assert 'data-resource-width="mem_slurm_available"' in rendered
+    assert "残り 55.6 GB" in rendered
+    assert 'data-resource-width="mem_available"' not in rendered
 
 
 def test_missing_form_values_fall_back_to_selected_app_recommendation():
@@ -102,12 +118,21 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
         "mem_available": 75.0,
         "mem_available_gb": 90.0,
         "mem_total_gb": 120.0,
+        "mem_used_gb": 30.0,
         "mem_status": "余裕あり",
+        "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6,
+        "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6,
+        "mem_slurm_status": "やや混雑",
         "disk_available": 60.0,
         "disk_available_gb": 600.0,
         "disk_total_gb": 1000.0,
         "disk_status": "余裕あり",
         "gpu_max": 1,
+        "gpu_available": 0.0,
+        "gpu_available_count": 0,
+        "gpu_status": "逼迫",
         "gpu_processes": [],
         "gpu_processes_available": True,
     }
