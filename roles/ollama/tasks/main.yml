@@ -36,3 +36,9 @@
     group: root
     mode: "0755"
   when: not ansible_check_mode
+
+- name: 共有Ollamaを起動 (未起動の場合のみ)
+  ansible.builtin.command: /usr/local/sbin/hpc-ollama start
+  register: ollama_start_result
+  changed_when: ollama_start_result.stdout is search('"status":"started"')
+  when: not ansible_check_mode
