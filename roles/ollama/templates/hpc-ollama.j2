@@ -186,11 +186,17 @@ case "$cmd" in
       exit 0
     fi
     mkdir -p "$PULL_STATE_DIR"
+    # GPUS=0 のときは --gres を渡さない。GRES予約をしなくても ConstrainDevices=no の
+    # 環境では GPU を利用できるため、1枚しかないGPUを占有せずに済む。
+    gres_args=()
+    if [ "${GPUS:-0}" -gt 0 ]; then
+      gres_args+=(--gres="gpu:$GPUS")
+    fi
     sbatch_output="$(sudo -u "$SERVICE_USER" sbatch \
       --parsable \
       --cpus-per-task="$cpus" \
       --mem="$memory" \
-      --gres="gpu:$GPUS" \
+      ${gres_args[@]+"${gres_args[@]}"} \
       --export="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin,OLLAMA_NUM_PARALLEL=$parallel,OLLAMA_MAX_LOADED_MODELS=$max_loaded_models,OLLAMA_CONTEXT_LENGTH=$context_length,OLLAMA_KV_CACHE_TYPE=$kv_cache_type,OLLAMA_KEEP_ALIVE=$keep_alive,OLLAMA_MAX_QUEUE=$max_queue,OLLAMA_FLASH_ATTENTION=$flash_attention" \
       "$SBATCH_SCRIPT")"
     job_id="${sbatch_output%%;*}"
@@ -246,7 +252,7 @@ case "$cmd" in
     if printf '%s' "$job_gres" | grep -q 'gpu'; then
       job_gpus="$GPUS"
     else
-      job_gpus="$GPUS"
+      job_gpus="0"
     fi
     if version_response="$(curl -fsS "$OLLAMA_URL/api/version" 2>/dev/null)"; then
       running_version="$(printf '%s' "$version_response" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"

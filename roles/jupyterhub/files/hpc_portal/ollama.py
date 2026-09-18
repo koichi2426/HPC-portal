@@ -21,6 +21,7 @@ from .common import (
     HPC_OLLAMA_DEFAULT_MAX_QUEUE,
     HPC_OLLAMA_DEFAULT_MEMORY,
     HPC_OLLAMA_DEFAULT_PARALLEL,
+    HPC_OLLAMA_GPUS,
     HPC_OLLAMA_MODELS_DIR,
     HPC_OLLAMA_PORT,
     HPC_OLLAMA_RUNTIME,
@@ -30,7 +31,28 @@ from .common import (
 from .users import _hpc_run_cmd
 
 _HPC_OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
-HPC_OLLAMA_GPUS = "1"
+
+
+def _hpc_ollama_gpu_count() -> int:
+    """共有OllamaがGRESで予約するGPU数を返す。
+
+    Returns:
+        予約するGPU数。0ならGRES予約なし。
+    """
+    try:
+        return max(0, int(HPC_OLLAMA_GPUS))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _hpc_ollama_gpu_label() -> str:
+    """共有OllamaのGPU割り当てを画面表示用の文言にする。
+
+    Returns:
+        GRES予約している場合は枚数、予約なしでGPUを共有する場合はその旨。
+    """
+    count = _hpc_ollama_gpu_count()
+    return f"{count} GPU" if count > 0 else "GPU 共有（予約なし）"
 
 
 def _hpc_normalize_ollama_choice(
@@ -454,8 +476,8 @@ def _hpc_shared_ollama_detail_context(user=None) -> dict:
         "allocation": {
             "cpu": status.get("cpus") or HPC_OLLAMA_DEFAULT_CPUS,
             "memory": status.get("memory") or HPC_OLLAMA_DEFAULT_MEMORY,
-            "gpu": 1,
-            "gpu_label": "1 GPU",
+            "gpu": _hpc_ollama_gpu_count(),
+            "gpu_label": _hpc_ollama_gpu_label(),
             "runtime": HPC_OLLAMA_RUNTIME,
             "hours": "無制限",
         },

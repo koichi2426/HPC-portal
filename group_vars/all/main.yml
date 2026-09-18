@@ -84,7 +84,10 @@ ollama_slurm_default_cpus: 8
 ollama_slurm_default_memory: 64G
 ollama_slurm_allowed_cpus: [4, 8, 12, 16, 20]
 ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
-ollama_slurm_gpus: 1
+# 共有OllamaはGPUをGRES予約しない。ノードのGPUは1枚しかないため、常駐ジョブが
+# --gres=gpu:1 を保持すると利用者のGPUジョブが永久にPENDINGになる。
+# cgroup.conf が無く ConstrainDevices=no のため、予約なしでもGPUは利用できる。
+ollama_slurm_gpus: 0
 ollama_slurm_time: "INFINITE"
 ollama_default_parallel: 2
 ollama_allowed_parallel: [1, 2, 4]

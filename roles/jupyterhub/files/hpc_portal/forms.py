@@ -37,7 +37,7 @@ from .common import (
     url_escape_path,
     url_path_join,
 )
-from .ollama import _hpc_shared_ollama_detail_context
+from .ollama import _hpc_ollama_gpu_label, _hpc_shared_ollama_detail_context
 from .resources import _hpc_resource_snapshot
 from .users import _hpc_is_portal_admin
 
@@ -225,7 +225,7 @@ def make_options_form(spawner):
                 f'<a class="hpc-page-link" href="/hub/apps/shared-ollama">詳細 →</a>'
                 f'</div></div>'
                 f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;">割り当て: '
-                f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · 1 GPU · {html.escape(str(shared["allocation"]["hours"]))}</span>'
+                f'{html.escape(str(shared["allocation"]["cpu"]))} vCPU · {html.escape(str(shared["allocation"]["memory"]))} RAM · {html.escape(str(shared["allocation"]["gpu_label"]))} · {html.escape(str(shared["allocation"]["hours"]))}</span>'
                 f'<span class="hpc-app-version" style="display:block;">バージョン: '
                 f'<strong data-hpc-ollama-running-version>{"v" + html.escape(str(shared.get("version") or "")) if shared.get("version") else "確認中"}</strong>'
                 f'<span class="hpc-version-update" data-hpc-ollama-version-update{"" if shared.get("update_available") else " hidden"}>再起動で更新</span></span>'
@@ -381,6 +381,8 @@ def make_options_form(spawner):
         {"1": "ON", "0": "OFF"},
     )
 
+    shared_ollama_gpu_label = _hpc_ollama_gpu_label()
+
     header_html = f"""
     <div id="resource-dashboard" data-hpc-resource-meter data-hpc-user="{html.escape(user.name, quote=True)}">
         <div class="gx10-card">
@@ -442,7 +444,7 @@ def make_options_form(spawner):
                     <div class="hpc-form-grid-3">
                         <div><label class="label">vCPU</label><select class="form-control input-dark" name="ollama_cpus">{shared_cpu_options}</select></div>
                         <div><label class="label">メモリ割り当て</label><select class="form-control input-dark" name="ollama_memory">{shared_memory_options}</select></div>
-                        <div><label class="label">GPU</label><input type="text" class="form-control input-dark" value="1" readonly></div>
+                        <div><label class="label">GPU</label><input type="text" class="form-control input-dark" value="{html.escape(shared_ollama_gpu_label, quote=True)}" readonly></div>
                     </div>
                     <div class="hpc-form-grid-2">
                         <div><label class="label">同時処理数</label><select class="form-control input-dark" name="ollama_parallel">{shared_parallel_options}</select></div>
