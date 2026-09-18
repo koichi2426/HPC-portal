@@ -168,3 +168,33 @@ def test_spawn_script_applies_selected_recommendation_to_form_values():
     assert 'setFormValue("cpu", recommendation.cpu)' in script
     assert 'setFormValue("ollama_cpus", recommendation.cpu)' in script
     assert '"[data-recommendation-summary]": recommendation.summary' in script
+
+
+def _resource_meter_sources():
+    """リソースメーターを描画しているファイルを列挙する。"""
+    root = Path(__file__).resolve().parents[1] / "roles/jupyterhub"
+    candidates = list((root / "templates").glob("*.j2"))
+    candidates.append(root / "files/hpc_portal/forms.py")
+    return [
+        path
+        for path in candidates
+        if "data-resource-width" in path.read_text(encoding="utf-8")
+    ]
+
+
+def test_every_resource_meter_uses_slurm_backed_values():
+    """メーターを持つ全ての描画元がSlurm割当ベースの値を使うことを確認する。
+
+    ホーム画面・アプリ詳細・起動フォームがそれぞれ同じマークアップを複製して
+    いるため、片方だけ直すとOS実空きを表示したままになる。
+    """
+    sources = _resource_meter_sources()
+
+    assert len(sources) >= 3, f"描画元の検出漏れ: {[p.name for p in sources]}"
+    for path in sources:
+        body = path.read_text(encoding="utf-8")
+        assert 'data-resource-width="mem_available"' not in body, (
+            f"{path.name} がOS実空きをメーターに使っている"
+        )
+        assert 'data-resource-width="mem_slurm_available"' in body, path.name
+        assert 'data-resource-width="gpu_available"' in body, path.name
