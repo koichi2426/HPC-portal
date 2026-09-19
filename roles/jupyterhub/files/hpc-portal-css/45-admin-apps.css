@@ -228,28 +228,3 @@
     grid-template-columns: 1fr;
   }
 }
-
-
-/* メモリ超過の表示。ConstrainRAMSpace=no のため超過しても停止せず、
-   統合メモリではGPU確保分がcgroupに出ないため、表示だけが気付く手段になる。 */
-.hpc-memory-overuse-caution {
-  color: var(--hpc-warning);
-  font-weight: 600;
-}
-
-.hpc-memory-overuse-warning {
-  color: var(--hpc-danger);
-  font-weight: 600;
-}
-
-.hpc-memory-overuse-note {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  background: var(--hpc-warning-bg);
-}
-
-.hpc-memory-overuse-note.hpc-memory-overuse-warning {
-  background: var(--hpc-danger-bg);
-}

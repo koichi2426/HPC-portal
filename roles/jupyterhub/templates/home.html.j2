@@ -103,9 +103,9 @@
       </div>
       <div class="hpc-admin-apps-table-wrap">
         <table class="gx10-admin-table hpc-admin-apps-table" aria-label="全ユーザーの起動中アプリケーション一覧">
-          <thead><tr><th>ユーザー</th><th>アプリ</th><th>状態</th><th>CPU割当</th><th>メモリ上限</th><th>GPU</th><th>実行時間</th><th>詳細</th></tr></thead>
+          <thead><tr><th>ユーザー</th><th>アプリ</th><th>状態</th><th>CPU割当</th><th>メモリ上限</th><th>実使用メモリ</th><th>GPU</th><th>実行時間</th><th>詳細</th></tr></thead>
           <tbody data-hpc-admin-apps-body>
-            <tr class="hpc-admin-apps-empty"><td colspan="8">取得中…</td></tr>
+            <tr class="hpc-admin-apps-empty"><td colspan="9">取得中…</td></tr>
           </tbody>
         </table>
       </div>
@@ -212,6 +212,16 @@
             <div>
               <div class="hpc-section-title">{{ app_label }}{% if spawner.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
               <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ alloc_line }}</div>
+              {% set _overuse = (hpc_memory_overuse or {}).get(spawner.job_id|string) %}
+              {% if _overuse and _overuse.memory_used_label %}
+              <div class="hpc-muted" style="font-size:11px; margin-top:2px;">実使用:
+                <span{% if _overuse.memory_overuse_level %} class="hpc-memory-overuse-{{ _overuse.memory_overuse_level }}"{% endif %}>{{ _overuse.memory_used_label }}</span>
+                {% if _overuse.gpu_memory_label %}<span class="hpc-muted">（うちGPU {{ _overuse.gpu_memory_label }}）</span>{% endif %}
+              </div>
+              {% endif %}
+              {% if _overuse and _overuse.memory_overuse_label %}
+              <div class="hpc-memory-overuse-{{ _overuse.memory_overuse_level }}" style="font-size:11px; margin-top:4px;">メモリ超過: {{ _overuse.memory_overuse_label }}</div>
+              {% endif %}
               {% if is_openwebui and not spawn_error %}
               <div class="hpc-app-version" data-hpc-openwebui-version-url="/hub/apps/{{ sn_path }}/version">
                 バージョン:

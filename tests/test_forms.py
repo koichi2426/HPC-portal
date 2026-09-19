@@ -515,3 +515,30 @@ def test_jupyterhub_role_detects_gpu_without_slurm_role():
 
     assert "slurm_effective_gpu_count is not defined" in tasks
     assert "nvidia-smi" in tasks
+
+
+def test_home_shows_own_memory_overuse():
+    """ホーム画面のアプリカードから自分の超過が見えることを確認する。
+
+    直すのは利用者自身であり、詳細画面を開かないと分からないのでは遅い。
+    """
+    home = (
+        REPOSITORY_ROOT / "roles/jupyterhub/templates/home.html.j2"
+    ).read_text(encoding="utf-8")
+
+    assert "hpc_memory_overuse" in home
+    assert "メモリ超過:" in home
+    assert "hpc-memory-overuse-" in home
+
+
+def test_memory_overuse_styles_are_shared():
+    """超過表示のスタイルが管理画面専用ファイルに閉じていないことを確認する。
+
+    ホーム・アプリ詳細・管理者一覧の3箇所で使うため、共通のCSS断片へ置く。
+    """
+    css_dir = REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-css"
+    shared = (css_dir / "10-layout-and-cards.css").read_text(encoding="utf-8")
+    admin = (css_dir / "45-admin-apps.css").read_text(encoding="utf-8")
+
+    assert ".hpc-memory-overuse-warning" in shared
+    assert ".hpc-memory-overuse-warning" not in admin

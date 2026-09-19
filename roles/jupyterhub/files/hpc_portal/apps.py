@@ -13,6 +13,7 @@ from .common import (
     HPC_JUPYTER_UBUNTU_VERSION,
     HPC_OPENWEBUI_VERSION,
     HPC_PUBLIC_SCHEME,
+    c,
     url_escape_path,
     url_path_join,
     web,
@@ -429,6 +430,60 @@ def _hpc_spawner_job_url(spawner, server_name: str, user) -> str:
     return url_path_join(f"/user/{user.name}", "/")
 
 
+def _hpc_user_memory_overuse(user=None) -> dict:
+    """ログインユーザーの各アプリについてメモリ超過状況をまとめて取得する。
+
+    JupyterHub の template_vars は callable を ``value(user)`` として呼び出す。
+    ホーム画面はアプリを複数並べるため、nvidia-smi と sstat をアプリごとに
+    叩かないよう一度の取得で全ジョブ分を求める。
+
+    Args:
+        user: JupyterHubが渡すログインユーザー。
+
+    Returns:
+        Job IDをキー、超過状況を値とする辞書。取得できない場合は空。
+    """
+    spawners = getattr(user, "spawners", None) or {}
+    targets = {}
+    for spawner in spawners.values():
+        job_id = str(_spawner_job_id(spawner) or getattr(spawner, "job_id", "") or "")
+        if not job_id:
+            continue
+        options = getattr(spawner, "user_options", None) or {}
+        targets[job_id] = str(options.get("memory", "") or "")
+    if not targets:
+        return {}
+    try:
+        from .handlers.admin_apps import (
+            _hpc_format_storage_bytes,
+            _hpc_job_gpu_memory_bytes,
+            _hpc_memory_overuse,
+            _hpc_slurm_max_rss,
+        )
+
+        rss = _hpc_slurm_max_rss(list(targets))
+        gpu = _hpc_job_gpu_memory_bytes()
+    except Exception:
+        return {}
+    result = {}
+    for job_id, requested in targets.items():
+        cpu_bytes = rss.get(job_id)
+        gpu_bytes = gpu.get(job_id)
+        if cpu_bytes is None and gpu_bytes is None:
+            continue
+        used = (cpu_bytes or 0) + (gpu_bytes or 0)
+        overuse = _hpc_memory_overuse(used, requested)
+        result[job_id] = {
+            "memory_used_label": _hpc_format_storage_bytes(used),
+            "gpu_memory_label": (
+                _hpc_format_storage_bytes(gpu_bytes) if gpu_bytes else ""
+            ),
+            "memory_overuse_level": overuse["memory_overuse_level"],
+            "memory_overuse_label": overuse["memory_overuse_label"],
+        }
+    return result
+
+
 def _hpc_spawner_memory_usage(job_id: str, requested: str) -> dict:
     """自分のアプリのメモリ実使用量と超過状況を取得する。
 
@@ -526,3 +581,7 @@ def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
         # 気付けるよう、自分のアプリの使用状況を渡す。
         **_hpc_spawner_memory_usage(jid, alloc.get("memory", "")),
     }
+
+
+# ホーム画面のアプリカードから自分のメモリ超過を見えるようにする
+c.JupyterHub.template_vars["hpc_memory_overuse"] = _hpc_user_memory_overuse

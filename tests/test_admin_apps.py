@@ -295,3 +295,27 @@ def test_admin_apps_js_renders_overuse_warning():
 
     assert "memory_overuse_label" in script
     assert "hpc-memory-overuse-" in script
+
+
+def test_admin_apps_list_shows_actual_usage_column():
+    """一覧の時点で実使用メモリが見えることを確認する。
+
+    詳細を開かないと超過に気付けないと、管理者が一覧を眺めても見落とす。
+    """
+    from pathlib import Path
+
+    js = (
+        Path(__file__).resolve().parents[1]
+        / "roles/jupyterhub/files/hpc-portal-js/admin-apps.js"
+    ).read_text(encoding="utf-8")
+    home = (
+        Path(__file__).resolve().parents[1]
+        / "roles/jupyterhub/templates/home.html.j2"
+    ).read_text(encoding="utf-8")
+
+    assert '"実使用メモリ"' in js
+    assert "<th>実使用メモリ</th>" in home
+    # 列を増やしたので、詳細行と空行のcolspanも揃っていること
+    assert "detailCell.colSpan = 9;" in js
+    assert "emptyCell.colSpan = 9;" in js
+    assert 'colspan="9"' in home

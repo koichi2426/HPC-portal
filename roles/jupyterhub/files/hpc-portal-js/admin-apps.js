@@ -39,7 +39,7 @@
     detailRow.setAttribute("data-detail-job-id", jobId);
     detailRow.hidden = !isOpen;
     var detailCell = global.document.createElement("td");
-    detailCell.colSpan = 8;
+    detailCell.colSpan = 9;
     var panel = global.document.createElement("div");
     panel.className = "hpc-admin-app-details-panel";
     var list = global.document.createElement("dl");
@@ -93,7 +93,7 @@
       var emptyRow = global.document.createElement("tr");
       emptyRow.className = "hpc-admin-apps-empty";
       var emptyCell = global.document.createElement("td");
-      emptyCell.colSpan = 8;
+      emptyCell.colSpan = 9;
       emptyCell.textContent = error
         ? "取得できません: " + error
         : "起動中のアプリケーションはありません";
@@ -124,6 +124,13 @@
       );
       appendCell(row, "CPU割当", String(app.cpus || "—") + " vCPU");
       appendCell(row, "メモリ上限", String(app.memory || "—"));
+      // 超過は誰も止めない（ConstrainRAMSpace=no）。一覧の時点で見えるようにする。
+      appendCell(
+        row,
+        "実使用メモリ",
+        String(app.memory_used_label || "—"),
+        app.memory_overuse_level ? "hpc-memory-overuse-" + app.memory_overuse_level : ""
+      );
       appendCell(row, "GPU", String(app.gpus || 0));
       appendCell(row, "実行時間", String(app.elapsed || "—"));
       var detailsCell = appendCell(row, "詳細", "");
