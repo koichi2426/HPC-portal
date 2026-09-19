@@ -115,6 +115,15 @@
     - not ansible_check_mode
     - slurm_effective_gpu_count | int == 0
 
+- name: cgroup.conf候補設定を生成
+  ansible.builtin.template:
+    src: cgroup.conf.j2
+    dest: /etc/slurm/.hpc-deploy/cgroup.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: not ansible_check_mode
+
 - name: slurm.conf候補設定を生成
   ansible.builtin.template:
     src: slurm.conf.j2
@@ -155,6 +164,15 @@
   register: slurm_main_candidate_check
   when: not ansible_check_mode
 
+- name: cgroup.conf候補設定と現行設定の差分を確認
+  ansible.builtin.copy:
+    src: /etc/slurm/.hpc-deploy/cgroup.conf
+    dest: /etc/slurm/cgroup.conf
+    remote_src: true
+  check_mode: true
+  register: slurm_cgroup_candidate_check
+  when: not ansible_check_mode
+
 - name: ドライランでGPU GRES設定の差分を確認
   ansible.builtin.template:
     src: gres.conf.j2
@@ -177,6 +195,16 @@
   register: slurm_main_dry_run_check
   when: ansible_check_mode
 
+- name: ドライランでcgroup.confの差分を確認
+  ansible.builtin.template:
+    src: cgroup.conf.j2
+    dest: /etc/slurm/cgroup.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: slurm_cgroup_dry_run_check
+  when: ansible_check_mode
+
 - name: Slurm設定の変更要否を記録
   ansible.builtin.set_fact:
     slurm_gres_change_required: >-
@@ -195,6 +223,12 @@
         if ansible_check_mode
         else slurm_main_candidate_check.changed
       }}
+    slurm_cgroup_change_required: >-
+      {{
+        slurm_cgroup_dry_run_check.changed
+        if ansible_check_mode
+        else slurm_cgroup_candidate_check.changed
+      }}
 
 - name: Slurm設定の未反映状態を記録
   ansible.builtin.set_fact:
@@ -204,6 +238,7 @@
         and (
           (slurm_gres_change_required | bool)
           or (slurm_main_change_required | bool)
+          or (slurm_cgroup_change_required | bool)
         )
       }}
 
@@ -221,7 +256,10 @@
   when:
     - not ansible_check_mode
     - slurm_can_apply_config | bool
-    - (slurm_gres_change_required | bool) or (slurm_main_change_required | bool)
+    - >-
+      (slurm_gres_change_required | bool)
+      or (slurm_main_change_required | bool)
+      or (slurm_cgroup_change_required | bool)
 
 - name: mungeを有効化して起動
   ansible.builtin.systemd:

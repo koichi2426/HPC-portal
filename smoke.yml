@@ -254,6 +254,79 @@
         quiet: true
       when: smoke_ollama_status.running | default(false) | bool
 
+    - name: 共有OllamaのGRES予約状況を取得
+      ansible.builtin.command:
+        argv:
+          - squeue
+          - --noheader
+          - --name={{ ollama_slurm_job_name | default('shared-ollama') }}
+          - --states=RUNNING
+          - -o
+          - "%b"
+      register: smoke_ollama_gres_command
+      changed_when: false
+      when: smoke_ollama_status.running | default(false) | bool
+
+    - name: 共有OllamaがGPUをGRES予約していないことを確認
+      ansible.builtin.assert:
+        that:
+          - "'gpu' not in (smoke_ollama_gres_command.stdout | default('') | lower)"
+        fail_msg: >-
+          共有OllamaがGPUをGRES予約しています（{{ smoke_ollama_gres_command.stdout | default('') | trim }}）。
+          ノードのGPUは1枚のため、この状態では利用者のGPUジョブが永久にPENDINGとなり
+          起動に失敗します。ollama_slurm_gpus を 0 に戻し、共有Ollamaを再起動してください。
+        success_msg: 共有OllamaはGPUをGRES予約しておらず、利用者のGPUジョブを妨げていません
+        quiet: true
+      when: smoke_ollama_status.running | default(false) | bool
+
+    - name: GPU要求ジョブが即時にスケジュールされることを確認
+      ansible.builtin.command:
+        argv:
+          - sbatch
+          - --test-only
+          - --gres=gpu:1
+          - --cpus-per-task=1
+          - --mem=1G
+          - --wrap=true
+      register: smoke_gpu_schedulable
+      changed_when: false
+      failed_when: false
+      when:
+        - smoke_ollama_status.running | default(false) | bool
+        - "'GPU ' in (smoke_gpu.stdout | default(''))"
+
+    - name: GPU要求ジョブの開始予定時刻を抽出
+      ansible.builtin.set_fact:
+        smoke_gpu_start_at: >-
+          {{
+            (smoke_gpu_schedulable.stderr | default(''))
+            | regex_search('\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}')
+            | default('', true)
+          }}
+      when:
+        - smoke_ollama_status.running | default(false) | bool
+        - "'GPU ' in (smoke_gpu.stdout | default(''))"
+        - smoke_gpu_schedulable.skipped is not defined
+
+    - name: GPU要求ジョブがすぐに開始できることを確認
+      ansible.builtin.assert:
+        that:
+          - smoke_gpu_schedulable.rc == 0
+          - smoke_gpu_start_at | length > 0
+          - >-
+            ((smoke_gpu_start_at | to_datetime('%Y-%m-%dT%H:%M:%S')).strftime('%s') | int)
+            - (ansible_date_time.epoch | int) < 86400
+        fail_msg: >-
+          GPUを1枚要求する最小ジョブの開始予定が24時間以上先です
+          （{{ smoke_gpu_schedulable.stderr | default('') | trim }}）。
+          GPU枠を無期限に占有しているジョブがないか squeue で確認してください。
+        success_msg: "GPU要求ジョブはすぐに開始できます: {{ smoke_gpu_start_at }}"
+        quiet: true
+      when:
+        - smoke_ollama_status.running | default(false) | bool
+        - "'GPU ' in (smoke_gpu.stdout | default(''))"
+        - smoke_gpu_schedulable.skipped is not defined
+
     - name: 停止中の共有OllamaをSKIPとして表示
       ansible.builtin.debug:
         msg: "[SKIP] 共有Ollamaは停止中です"

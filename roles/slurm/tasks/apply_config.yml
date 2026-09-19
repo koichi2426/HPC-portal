@@ -5,6 +5,7 @@
   loop:
     - /etc/slurm/slurm.conf.hpc-deploy.bak
     - /etc/slurm/gres.conf.hpc-deploy.bak
+    - /etc/slurm/cgroup.conf.hpc-deploy.bak
   register: slurm_config_backup_stats
 
 - name: 未復旧のSlurm設定バックアップがある場合は中断
@@ -20,6 +21,7 @@
   loop:
     - /etc/slurm/slurm.conf
     - /etc/slurm/gres.conf
+    - /etc/slurm/cgroup.conf
   register: slurm_live_config_stats
 
 - name: 現行slurm.confを固定名でバックアップ
@@ -42,6 +44,16 @@
     mode: "0600"
   when: slurm_live_config_stats.results[1].stat.exists
 
+- name: 現行cgroup.confを固定名でバックアップ
+  ansible.builtin.copy:
+    src: /etc/slurm/cgroup.conf
+    dest: /etc/slurm/cgroup.conf.hpc-deploy.bak
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when: slurm_live_config_stats.results[2].stat.exists
+
 - name: 検証済みSlurm設定を一組として反映
   block:
     - name: 検証済みGPU GRES設定を配置
@@ -60,6 +72,16 @@
         path: /etc/slurm/gres.conf
         state: absent
       when: slurm_effective_gpu_count | int == 0
+      notify: Slurm再起動を要求
+
+    - name: 検証済みcgroup.confを配置
+      ansible.builtin.copy:
+        src: /etc/slurm/.hpc-deploy/cgroup.conf
+        dest: /etc/slurm/cgroup.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
       notify: Slurm再起動を要求
 
     - name: 検証済みslurm.confを配置
@@ -109,6 +131,22 @@
         state: absent
       when: not slurm_live_config_stats.results[1].stat.exists
 
+    - name: 旧cgroup.confを復元
+      ansible.builtin.copy:
+        src: /etc/slurm/cgroup.conf.hpc-deploy.bak
+        dest: /etc/slurm/cgroup.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: slurm_live_config_stats.results[2].stat.exists
+
+    - name: 旧cgroup.confが存在しなかった場合は削除
+      ansible.builtin.file:
+        path: /etc/slurm/cgroup.conf
+        state: absent
+      when: not slurm_live_config_stats.results[2].stat.exists
+
     - name: 復元成功後にSlurm設定バックアップを削除
       ansible.builtin.file:
         path: "{{ item }}"
@@ -116,6 +154,7 @@
       loop:
         - /etc/slurm/slurm.conf.hpc-deploy.bak
         - /etc/slurm/gres.conf.hpc-deploy.bak
+        - /etc/slurm/cgroup.conf.hpc-deploy.bak
 
     - name: Slurm設定を復元してデプロイを中断
       ansible.builtin.fail:
@@ -130,3 +169,4 @@
   loop:
     - /etc/slurm/slurm.conf.hpc-deploy.bak
     - /etc/slurm/gres.conf.hpc-deploy.bak
+    - /etc/slurm/cgroup.conf.hpc-deploy.bak
