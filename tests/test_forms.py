@@ -253,32 +253,34 @@ def _free(cpu=12.0, mem_mb=56970, gpu=1):
 def test_requested_resources_pass_when_within_free_capacity(monkeypatch):
     monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
 
-    assert forms._hpc_requested_resources_error("8", "32G", 1) == ""
+    assert forms._hpc_requested_resources_error("8", "32G") == ""
 
 
 def test_requested_resources_reject_memory_over_capacity(monkeypatch):
     """空き55.6GBに対する96G要求は、5分待たずに理由付きで弾く。"""
     monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
 
-    error = forms._hpc_requested_resources_error("4", "96G", 0)
+    error = forms._hpc_requested_resources_error("4", "96G")
 
     assert "メモリ" in error
     assert "96" in error and "55.6" in error
 
 
-def test_requested_resources_reject_gpu_when_none_free(monkeypatch):
-    """他の利用者がGPUを保持している間はGPU要求を弾く。"""
+def test_requested_resources_ignore_gpu_availability(monkeypatch):
+    """GPUはGRES予約せず共有するため、空き枚数では弾かない。
+
+    枚数で弾くと、実際には起動できる構成まで拒否してしまう。
+    GPUの確保分は統合メモリから出ていくため、メモリ判定が実質的な歯止めになる。
+    """
     monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(gpu=0))
 
-    error = forms._hpc_requested_resources_error("2", "4G", 1)
-
-    assert "GPU" in error
+    assert forms._hpc_requested_resources_error("2", "4G") == ""
 
 
 def test_requested_resources_reject_cpu_over_capacity(monkeypatch):
     monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(cpu=4.0))
 
-    error = forms._hpc_requested_resources_error("16", "4G", 0)
+    error = forms._hpc_requested_resources_error("16", "4G")
 
     assert "vCPU" in error
 
@@ -287,7 +289,7 @@ def test_requested_resources_allow_when_slurm_unavailable(monkeypatch):
     """Slurmへ問い合わせられないときは判断材料が無いため通す。"""
     monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: None)
 
-    assert forms._hpc_requested_resources_error("20", "999G", 8) == ""
+    assert forms._hpc_requested_resources_error("20", "999G") == ""
 
 
 def test_options_from_form_rejects_request_over_capacity(monkeypatch):
@@ -299,3 +301,141 @@ def test_options_from_form_rejects_request_over_capacity(monkeypatch):
 
     assert excinfo.value.status_code == 400
     assert "メモリ" in str(excinfo.value.log_message)
+
+
+def test_user_jobs_no_longer_reserve_gpu_gres():
+    """利用者ジョブはGRES予約しない。
+
+    ノードのGPUは1枚しかなく、予約すると2人目以降が永久にPENDINGになる。
+    起動スクリプトは常に apptainer exec --nv で実行するため、予約が無くてもGPUは使える。
+    """
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": ["1"], "mem": ["16"]}
+    )
+
+    assert user_options["gres_line"] == ""
+    assert user_options["gpu"] == "1"
+    # 「使う」を選んだジョブはGPUを隠さない
+    assert user_options["gpu_visibility_line"] == ""
+
+
+def test_jobs_without_gpu_hide_cuda_devices():
+    """「使わない」を選んだジョブはCUDAからGPUを隠す。
+
+    GRES予約をやめた以上スケジューラ側では締め出せず、統合メモリのため
+    意図しないGPU確保がそのまま要求メモリの枠を圧迫する。
+    """
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": ["0"], "mem": ["4"]}
+    )
+
+    assert user_options["gres_line"] == ""
+    assert user_options["gpu_visibility_line"] == 'export CUDA_VISIBLE_DEVICES=""'
+
+
+def test_batch_script_applies_gpu_visibility():
+    """起動スクリプトがGPUの可視性設定を展開することを確認する。"""
+    script = (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc_portal/batch.py"
+    ).read_text(encoding="utf-8")
+
+    assert "gpu_visibility_line" in script
+    # --nv は常に付く（GPUの可視性は CUDA_VISIBLE_DEVICES だけで決まる）
+    assert script.count("apptainer exec --nv") >= 2
+
+
+def test_spawn_form_offers_shared_gpu_choice(monkeypatch):
+    """GPU欄が枚数ではなく共有の可否になっていることを確認する。"""
+    resource = {
+        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
+        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 24.5,
+        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり", "gpu_max": 1, "gpu_available": 100.0,
+        "gpu_available_count": 1, "gpu_status": "余裕あり",
+        "gpu_processes": [], "gpu_processes_available": True,
+    }
+    user = SimpleNamespace(name="user01", spawners={})
+    spawner = SimpleNamespace(
+        user=user, notebook_dir="/home/user01", homedir="/home/user01"
+    )
+    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+
+    rendered = forms.make_options_form(spawner)
+
+    assert '<option value="1">使う（全員で共有）</option>' in rendered
+    assert 'name="gpu"' in rendered
+    # 枚数入力は残さない（1枚を取り合う形ではなくなったため）
+    assert 'type="number" class="form-control input-dark" name="gpu"' not in rendered
+    # GPU確保分もメモリ枠から出ることを画面で伝える
+    assert "GPUが確保した分も上のRAMから消費されます" in rendered
+
+
+def test_spawn_script_raises_memory_when_gpu_selected():
+    """GPUを選んだときに推奨メモリを引き上げることを確認する。
+
+    既定の4GBのままGPUを使うと、モデルの確保分で要求を大きく超える。
+    弾かずに既定値で誘導する（意図的に小さくする利用者は下げられる）。
+    """
+    script = (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/spawn-form.js"
+    ).read_text(encoding="utf-8")
+
+    assert "GPU_RECOMMENDED_MEMORY_GB = 16" in script
+    assert "function applyGpuMemoryFloor()" in script
+
+
+def test_spawn_script_announces_memory_change():
+    """メモリを自動変更したことを利用者へ示すことを確認する。
+
+    利用者が自分で入れた値を黙って書き換えると「あれ？」となるため、
+    変更前後の値と、変更できることを伝える。
+    """
+    script = (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/spawn-form.js"
+    ).read_text(encoding="utf-8")
+
+    assert "function announceMemoryBump(" in script
+    assert "hpc-field-bumped" in script
+    assert "data-mem-bump-hint" in script
+
+
+def test_spawn_form_has_memory_hint_slot(monkeypatch):
+    """メモリ欄に変更通知の表示枠があることを確認する。"""
+    resource = {
+        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
+        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 24.5,
+        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり", "gpu_max": 1, "gpu_available": 100.0,
+        "gpu_available_count": 1, "gpu_status": "余裕あり",
+        "gpu_processes": [], "gpu_processes_available": True,
+    }
+    user = SimpleNamespace(name="user01", spawners={})
+    spawner = SimpleNamespace(
+        user=user, notebook_dir="/home/user01", homedir="/home/user01"
+    )
+    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+
+    rendered = forms.make_options_form(spawner)
+
+    assert "data-mem-bump-hint" in rendered
+    assert 'aria-live="polite"' in rendered
+
+
+def test_form_styles_respect_reduced_motion():
+    """アニメーションが reduced-motion 設定を尊重することを確認する。"""
+    css = (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-css/60-app-forms.css"
+    ).read_text(encoding="utf-8")
+
+    assert "@keyframes hpc-field-bump" in css
+    assert "prefers-reduced-motion" in css

@@ -141,3 +141,41 @@
 .hpc-recommendation-guidance {
   color: var(--hpc-muted);
 }
+
+/* GPUを選んだとき、推奨メモリの自動変更に気付けるようにする。
+   利用者が自分で入れた値を黙って書き換えると混乱するため、
+   変わった瞬間を示してから通常表示へ戻す。 */
+@keyframes hpc-field-bump {
+  0% {
+    border-color: var(--hpc-primary);
+    background-color: var(--hpc-info-bg);
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.04);
+  }
+  100% {
+    border-color: var(--hpc-border);
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+.hpc-field-bumped {
+  animation: hpc-field-bump 1.2s ease-out;
+}
+
+.hpc-field-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--hpc-link);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hpc-field-bumped {
+    animation: none;
+    border-color: var(--hpc-primary);
+  }
+}
