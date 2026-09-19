@@ -393,6 +393,27 @@ def make_options_form(spawner):
 
     shared_ollama_gpu_label = _hpc_ollama_gpu_label()
 
+    # GPUを持たないノードでは選択肢を出さない。出したうえで無効化すると、
+    # 選べたのに効かない状態になり原因が分からなくなる。
+    if gpu_max > 0:
+        gpu_field_html = (
+            '<div><label class="label">GPU</label>'
+            '<select class="form-control input-dark" name="gpu">'
+            '<option value="0" selected>使わない</option>'
+            '<option value="1">使う（全員で共有）</option></select>'
+            '<span class="hpc-muted" style="display:block;margin-top:4px;font-size:0.75rem;">'
+            'GPUは予約せず全員で共有します。統合メモリのためGPU専用のメモリはなく、'
+            'GPUが確保した分も上のRAMから消費されます。モデルのサイズを含めて指定してください。'
+            '</span></div>'
+        )
+    else:
+        gpu_field_html = (
+            '<div><label class="label">GPU</label>'
+            '<input type="hidden" name="gpu" value="0">'
+            '<p class="hpc-muted" style="margin:6px 0 0;font-size:0.75rem;">'
+            'このノードでは利用できません</p></div>'
+        )
+
     header_html = f"""
     <div id="resource-dashboard" data-hpc-resource-meter data-hpc-user="{html.escape(user.name, quote=True)}">
         <div class="gx10-card">
@@ -485,8 +506,7 @@ def make_options_form(spawner):
                             <span class="hpc-field-hint" data-mem-bump-hint role="status" aria-live="polite" hidden></span></div>
                     </div>
                     <div class="hpc-form-grid-2">
-                        <div><label class="label">GPU</label><select class="form-control input-dark" name="gpu"><option value="0" selected>使わない</option><option value="1">使う（全員で共有）</option></select>
-                            <span class="hpc-muted" style="display:block;margin-top:4px;font-size:0.75rem;">GPUは予約せず全員で共有します。統合メモリのためGPU専用のメモリはなく、GPUが確保した分も上のRAMから消費されます。モデルのサイズを含めて指定してください。</span></div>
+                        {gpu_field_html}
                         <div><label class="label">最大実行時間</label>
                             <select class="form-control input-dark" name="hours">
                                 <option value="1">1 時間</option>
@@ -618,12 +638,16 @@ def options_from_form(formdata):
     recommendation = recommendations.get(app_choice, recommendations["ubuntu-cli"])
     h = formdata.get("hours", [recommendation["hours"]])[0]
     runtime, runtime_line = _hpc_runtime_from_hours_choice(h)
-    gpu_max = HPC_GPU_COUNT
     try:
         g = int(formdata.get("gpu", [recommendation["gpu"]])[0] or 0)
     except ValueError:
         g = 0
-    g = max(0, min(gpu_max, g))
+    # GPUはGRES予約せず全員で共有するため、値は「使う/使わない」の2値。
+    # HPC_GPU_COUNT でクランプしない。この値は slurm ロールが set_fact する
+    # slurm_effective_gpu_count に由来し、--tags jupyterhub のようにslurmロールを
+    # 飛ばすデプロイでは 0 になる。枚数として扱うと、その場合に利用者の選択が
+    # 黙って 0 へ潰され、CUDA_VISIBLE_DEVICES="" でGPUが使えなくなる。
+    g = 1 if g > 0 else 0
     memory = str(formdata.get("mem", [recommendation["memory"]])[0]).strip()
     if not memory.upper().endswith("G"):
         memory = f"{memory}G"

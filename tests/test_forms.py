@@ -439,3 +439,79 @@ def test_form_styles_respect_reduced_motion():
 
     assert "@keyframes hpc-field-bump" in css
     assert "prefers-reduced-motion" in css
+
+
+def test_gpu_choice_survives_missing_gpu_count(monkeypatch):
+    """HPC_GPU_COUNT が 0 でも GPU の選択を潰さないことを確認する。
+
+    HPC_GPU_COUNT は slurm ロールが set_fact する slurm_effective_gpu_count に
+    由来する。--tags jupyterhub のように slurm ロールを飛ばすデプロイでは
+    この fact が無く 0 になる。枚数としてクランプすると利用者の選択が黙って
+    0 へ潰され、CUDA_VISIBLE_DEVICES="" でGPUが使えなくなる。
+    """
+    monkeypatch.setattr(forms, "HPC_GPU_COUNT", 0)
+
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": ["1"], "mem": ["16"]}
+    )
+
+    assert user_options["gpu"] == "1"
+    assert user_options["gpu_visibility_line"] == ""
+
+
+@pytest.mark.parametrize("raw", ["2", "5", "true"])
+def test_gpu_choice_is_normalized_to_boolean(raw):
+    """GPUは枚数ではなく使う/使わないの2値として正規化する。"""
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": [raw], "mem": ["16"]}
+    )
+
+    assert user_options["gpu"] in {"0", "1"}
+
+
+def _resource_fixture(gpu_max):
+    return {
+        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
+        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 0.0,
+        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり", "gpu_max": gpu_max, "gpu_available": 100.0,
+        "gpu_available_count": gpu_max, "gpu_status": "余裕あり",
+        "gpu_processes": [], "gpu_processes_available": True,
+    }
+
+
+def test_spawn_form_hides_gpu_choice_without_gpu(monkeypatch):
+    """GPUを持たないノードでは選択肢を出さない。
+
+    出したうえで無効化すると、選べたのに効かない状態になり原因が分からない。
+    """
+    user = SimpleNamespace(name="user01", spawners={})
+    spawner = SimpleNamespace(
+        user=user, notebook_dir="/home/user01", homedir="/home/user01"
+    )
+    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: _resource_fixture(0))
+    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+
+    rendered = forms.make_options_form(spawner)
+
+    assert "このノードでは利用できません" in rendered
+    assert "使う（全員で共有）" not in rendered
+    # 送信値は欠けさせない（options_from_form が推奨値へ落ちないようにする）
+    assert '<input type="hidden" name="gpu" value="0">' in rendered
+
+
+def test_jupyterhub_role_detects_gpu_without_slurm_role():
+    """slurmロールを経由しないデプロイでもGPU数を検出することを確認する。
+
+    未検出だと jupyterhub.env の HPC_GPU_COUNT が 0 になる。
+    """
+    tasks = (
+        REPOSITORY_ROOT / "roles/jupyterhub/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "slurm_effective_gpu_count is not defined" in tasks
+    assert "nvidia-smi" in tasks
