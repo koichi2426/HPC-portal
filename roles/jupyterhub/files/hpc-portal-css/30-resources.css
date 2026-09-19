@@ -210,6 +210,14 @@
   list-style: none;
 }
 
+/* GPUメーターを持つsummaryは、統合メモリと同じ縦積みレイアウトにする */
+.hpc-gpu-processes > summary.hpc-gpu-summary {
+  display: block;
+  min-height: 88px;
+  padding: 12px;
+  border-radius: 9px;
+}
+
 .hpc-gpu-processes > summary::-webkit-details-marker {
   display: none;
 }

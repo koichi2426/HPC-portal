@@ -27,11 +27,19 @@ class HpcResourceSnapshot(BaseModel):
     mem_used_gb: float
     mem_total_gb: float
     mem_status: str
+    mem_slurm_available: float
+    mem_slurm_available_gb: float
+    mem_slurm_used_gb: float
+    mem_slurm_total_gb: float
+    mem_slurm_status: str
     disk_available: float
     disk_available_gb: float
     disk_total_gb: float
     disk_status: str
     gpu_max: int
+    gpu_available: float
+    gpu_available_count: int
+    gpu_status: str
     gpu_processes: list[HpcGpuProcess]
     gpu_process_count: int
     gpu_processes_available: bool

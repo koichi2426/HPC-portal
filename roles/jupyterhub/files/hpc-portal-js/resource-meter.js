@@ -9,8 +9,9 @@
   var API_URL = "/hub/hpc-resource-status";
   var CHANGE_THRESHOLDS = {
     cpu_available: 1,
-    mem_available: 0.5,
+    mem_slurm_available: 0.5,
     disk_available: 0.1,
+    gpu_available: 1,
   };
   var previousSnapshots = new WeakMap();
   var changeTimers = new WeakMap();
@@ -28,9 +29,16 @@
       mem_available_gb: "残り " + format1(data.mem_available_gb) + " GB",
       mem_used_gb: format1(data.mem_used_gb) + " GB",
       mem_total_gb: "最大 " + format1(data.mem_total_gb) + " GB",
+      mem_slurm_status: data.mem_slurm_status,
+      mem_slurm_available_gb: "残り " + format1(data.mem_slurm_available_gb) + " GB",
+      mem_slurm_used_gb: format1(data.mem_slurm_used_gb) + " GB",
+      mem_slurm_total_gb: "最大 " + format1(data.mem_slurm_total_gb) + " GB",
       disk_status: data.disk_status,
       disk_available_gb: "残り " + format1(data.disk_available_gb) + " GB",
       disk_total_gb: "最大 " + format1(data.disk_total_gb) + " GB",
+      gpu_status: data.gpu_status,
+      gpu_available_count:
+        "残り " + Number(data.gpu_available_count || 0) + " / " + Number(data.gpu_max || 0) + " 枚",
     };
   }
 
@@ -100,8 +108,11 @@
     if (hasMeaningfulChange(previous, current, "cpu_available", "cpu_status")) {
       changed.push("cpu_available");
     }
-    if (hasMeaningfulChange(previous, current, "mem_available", "mem_status")) {
-      changed.push("mem_available");
+    if (hasMeaningfulChange(previous, current, "mem_slurm_available", "mem_slurm_status")) {
+      changed.push("mem_slurm_available");
+    }
+    if (hasMeaningfulChange(previous, current, "gpu_available", "gpu_status")) {
+      changed.push("gpu_available");
     }
     if (hasMeaningfulChange(previous, current, "disk_available", "disk_status")) {
       changed.push("disk_available");
@@ -149,8 +160,10 @@
     return {
       cpu_available: Number(data.cpu_available),
       cpu_status: data.cpu_status,
-      mem_available: Number(data.mem_available),
-      mem_status: data.mem_status,
+      mem_slurm_available: Number(data.mem_slurm_available),
+      mem_slurm_status: data.mem_slurm_status,
+      gpu_available: Number(data.gpu_available),
+      gpu_status: data.gpu_status,
       disk_available: Number(data.disk_available),
       disk_status: data.disk_status,
       gpu_processes_available: data.gpu_processes_available !== false,

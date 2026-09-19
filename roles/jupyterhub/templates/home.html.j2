@@ -39,18 +39,18 @@
       </div>
       <details class="gx10-resource-meter hpc-unified-memory hpc-resource-menu">
         <summary class="hpc-unified-memory-summary" aria-label="統合メモリの説明を開く">
-          <div class="gx10-meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="gx10-meter-status" data-resource-text="mem_status">{{ res.mem_status }}</span></div>
-          <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="mem_available" style="width:{{ "%.0f"|format(res.mem_available) }}%;"></div></div>
+          <div class="gx10-meter-head"><span class="hpc-resource-label">統合メモリ 空き</span><span class="gx10-meter-status" data-resource-text="mem_slurm_status">{{ res.mem_slurm_status }}</span></div>
+          <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="mem_slurm_available" style="width:{{ "%.0f"|format(res.mem_slurm_available) }}%;"></div></div>
           <div class="gx10-meter-numbers">
-            <span data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</span>
-            <span data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</span>
+            <span data-resource-text="mem_slurm_available_gb">残り {{ "%.1f"|format(res.mem_slurm_available_gb) }} GB</span>
+            <span data-resource-text="mem_slurm_total_gb">最大 {{ "%.1f"|format(res.mem_slurm_total_gb) }} GB</span>
           </div>
         </summary>
         <div class="hpc-unified-memory-panel">
           <strong>統合メモリについて</strong>
           <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
-          <dl><div><dt>使用中</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>空き</dt><dd data-resource-text="mem_available_gb">残り {{ "%.1f"|format(res.mem_available_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_total_gb">最大 {{ "%.1f"|format(res.mem_total_gb) }} GB</dd></div></dl>
-          <p class="hpc-unified-memory-note">Slurmで指定するメモリは上限です。起動時に全容量が消費されるわけではありません。</p>
+          <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{{ "%.1f"|format(res.mem_slurm_used_gb) }} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {{ "%.1f"|format(res.mem_slurm_available_gb) }} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {{ "%.1f"|format(res.mem_slurm_total_gb) }} GB</dd></div></dl>
+          <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。</p>
         </div>
       </details>
       <div class="gx10-resource-meter">
@@ -62,7 +62,14 @@
         </div>
       </div>
       <details class="gx10-resource-meter hpc-gpu-processes">
-        <summary><span>GPU</span><span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{% if res.gpu_processes_available %}利用中 {{ res.gpu_process_count }}件{% else %}取得できません{% endif %}</span></summary>
+        <summary class="hpc-gpu-summary" aria-label="GPUを使用中のプロセスを開く">
+          <div class="gx10-meter-head"><span class="hpc-resource-label">GPU 空き</span><span class="gx10-meter-status" data-resource-text="gpu_status">{{ res.gpu_status }}</span></div>
+          <div class="gx10-meter-track"><div class="gx10-meter-fill" data-resource-width="gpu_available" style="width:{{ "%.0f"|format(res.gpu_available) }}%;"></div></div>
+          <div class="gx10-meter-numbers">
+            <span data-resource-text="gpu_available_count">残り {{ res.gpu_available_count }} / {{ res.gpu_max }} 枚</span>
+            <span class="hpc-gpu-process-summary" data-gpu-process-count aria-live="polite">{% if res.gpu_processes_available %}利用中 {{ res.gpu_process_count }}件{% else %}取得できません{% endif %}</span>
+          </div>
+        </summary>
         <ul class="hpc-gpu-process-list" data-gpu-process-list>
           {% if not res.gpu_processes_available %}
           <li class="hpc-gpu-process-empty">GPUプロセス情報を取得できません</li>
