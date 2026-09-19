@@ -16,7 +16,9 @@
     smoke_required_images:
       - /opt/images/jupyter-cpu.sif
       - /opt/images/openwebui.sif
-      - /opt/images/ollama.sif
+      # 共有Ollamaのイメージはバージョン別配置で、current.sif は実体への
+      # シンボリックリンク（#17 でこの構成へ移行した）。
+      - "{{ ollama_apptainer_image | default('/opt/images/ollama/current.sif') }}"
       - /opt/images/searxng.sif
     smoke_portal_assets:
       - hpc-portal.css
@@ -109,6 +111,7 @@
     - name: 必須Apptainerイメージを確認
       ansible.builtin.stat:
         path: "{{ item }}"
+        follow: true
       loop: "{{ smoke_required_images }}"
       register: smoke_image_stats
 
