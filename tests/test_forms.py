@@ -3,6 +3,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from tornado import web
+
 from hpc_portal import forms
 
 
@@ -226,3 +229,73 @@ def test_resource_meter_script_formats_gpu_share():
     ).read_text(encoding="utf-8")
 
     assert "mem_gpu_used_gb: format1(data.mem_gpu_used_gb)" in script
+
+
+@pytest.mark.parametrize(
+    ("raw", "gigabytes"),
+    [("40G", 40.0), ("4096M", 4.0), ("1T", 1024.0), ("8", 8.0), ("", None), ("bad", None)],
+)
+def test_parse_requested_memory_gb(raw, gigabytes):
+    assert forms._hpc_parse_requested_memory_gb(raw) == gigabytes
+
+
+def _free(cpu=12.0, mem_mb=56970, gpu=1):
+    return {
+        "cpu_total": 20,
+        "cpu_available_count": cpu,
+        "mem_total_mb": 122506,
+        "mem_available_mb": mem_mb,
+        "gpu_max": 1,
+        "gpu_available_count": gpu,
+    }
+
+
+def test_requested_resources_pass_when_within_free_capacity(monkeypatch):
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+
+    assert forms._hpc_requested_resources_error("8", "32G", 1) == ""
+
+
+def test_requested_resources_reject_memory_over_capacity(monkeypatch):
+    """空き55.6GBに対する96G要求は、5分待たずに理由付きで弾く。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+
+    error = forms._hpc_requested_resources_error("4", "96G", 0)
+
+    assert "メモリ" in error
+    assert "96" in error and "55.6" in error
+
+
+def test_requested_resources_reject_gpu_when_none_free(monkeypatch):
+    """他の利用者がGPUを保持している間はGPU要求を弾く。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(gpu=0))
+
+    error = forms._hpc_requested_resources_error("2", "4G", 1)
+
+    assert "GPU" in error
+
+
+def test_requested_resources_reject_cpu_over_capacity(monkeypatch):
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(cpu=4.0))
+
+    error = forms._hpc_requested_resources_error("16", "4G", 0)
+
+    assert "vCPU" in error
+
+
+def test_requested_resources_allow_when_slurm_unavailable(monkeypatch):
+    """Slurmへ問い合わせられないときは判断材料が無いため通す。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: None)
+
+    assert forms._hpc_requested_resources_error("20", "999G", 8) == ""
+
+
+def test_options_from_form_rejects_request_over_capacity(monkeypatch):
+    """sbatchへ渡す前に400で弾き、PENDINGの5分待ちを避ける。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+
+    with pytest.raises(web.HTTPError) as excinfo:
+        forms.options_from_form({"app_choice": ["ubuntu-cli"], "mem": ["96"], "cpu": ["2"]})
+
+    assert excinfo.value.status_code == 400
+    assert "メモリ" in str(excinfo.value.log_message)

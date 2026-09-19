@@ -2,6 +2,8 @@
 
 import html
 
+from tornado import web
+
 from .apps import (
     _hpc_allocation_html,
     _hpc_runtime_from_hours_choice,
@@ -38,7 +40,7 @@ from .common import (
     url_path_join,
 )
 from .ollama import _hpc_ollama_gpu_label, _hpc_shared_ollama_detail_context
-from .resources import _hpc_resource_snapshot
+from .resources import _hpc_resource_snapshot, _hpc_slurm_free_resources
 from .users import _hpc_is_portal_admin
 
 
@@ -532,6 +534,81 @@ def make_options_form(spawner):
     return header_html + static_js
 
 
+def _hpc_parse_requested_memory_gb(memory: str) -> float | None:
+    """フォームのメモリ指定(例: 40G)をGBへ変換する。
+
+    Args:
+        memory: ``40G`` や ``4096M`` のようなSlurmのメモリ表記。
+
+    Returns:
+        GB単位の要求量。解釈できなければNone。
+    """
+    raw = str(memory or "").strip().upper()
+    if not raw:
+        return None
+    multipliers = {"K": 1 / 1024**2, "M": 1 / 1024, "G": 1.0, "T": 1024.0}
+    suffix = raw[-1]
+    factor = multipliers.get(suffix)
+    number = raw[:-1] if factor is not None else raw
+    try:
+        return float(number) * (factor if factor is not None else 1.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hpc_requested_resources_error(nprocs, memory, gpu) -> str:
+    """要求リソースがノードの空きを超えていないか投入前に検証する。
+
+    Slurmの空きを超える要求は PENDING のまま start_timeout(5分)に達して失敗する。
+    利用者は理由の分からないまま5分待たされるため、sbatchへ渡す前に弾く。
+
+    Args:
+        nprocs: 要求vCPU数。
+        memory: 要求メモリ（Slurm表記）。
+        gpu: 要求GPU枚数。
+
+    Returns:
+        起動できない理由。起動できる場合、またはSlurmへ問い合わせられない場合は空文字列。
+    """
+    free = _hpc_slurm_free_resources()
+    if not free:
+        # Slurmへ問い合わせられないときは判断材料が無いため通す（従来どおりの挙動）。
+        return ""
+    reasons = []
+    try:
+        requested_cpu = int(str(nprocs).strip() or 0)
+    except (TypeError, ValueError):
+        requested_cpu = 0
+    available_cpu = float(free.get("cpu_available_count") or 0)
+    if requested_cpu > 0 and requested_cpu > available_cpu:
+        reasons.append(
+            f"vCPU {requested_cpu} を要求していますが、空きは {available_cpu:.0f} です"
+        )
+    requested_mem_gb = _hpc_parse_requested_memory_gb(memory)
+    available_mem_gb = float(free.get("mem_available_mb") or 0) / 1024
+    if requested_mem_gb and requested_mem_gb > available_mem_gb:
+        reasons.append(
+            f"メモリ {requested_mem_gb:.0f} GB を要求していますが、"
+            f"空きは {available_mem_gb:.1f} GB です"
+        )
+    try:
+        requested_gpu = int(str(gpu).strip() or 0)
+    except (TypeError, ValueError):
+        requested_gpu = 0
+    available_gpu = int(free.get("gpu_available_count") or 0)
+    if requested_gpu > 0 and requested_gpu > available_gpu:
+        reasons.append(
+            f"GPU {requested_gpu} 枚を要求していますが、空きは {available_gpu} 枚です"
+        )
+    if not reasons:
+        return ""
+    return (
+        "現在の空きリソースでは起動できません。"
+        + "、".join(reasons)
+        + "。構成を小さくするか、実行中のアプリが終了してからお試しください。"
+    )
+
+
 # 3. データの受け取り
 def options_from_form(formdata):
     """フォーム入力をSpawnerのuser_optionsへ変換する。
@@ -556,8 +633,12 @@ def options_from_form(formdata):
     memory = str(formdata.get("mem", [recommendation["memory"]])[0]).strip()
     if not memory.upper().endswith("G"):
         memory = f"{memory}G"
+    nprocs = str(formdata.get("cpu", [recommendation["cpu"]])[0])
+    error = _hpc_requested_resources_error(nprocs, memory, g)
+    if error:
+        raise web.HTTPError(400, error)
     return {
-        "nprocs": str(formdata.get("cpu", [recommendation["cpu"]])[0]),
+        "nprocs": nprocs,
         "memory": memory,
         "runtime": runtime,
         "runtime_line": runtime_line,

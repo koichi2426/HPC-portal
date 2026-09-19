@@ -24,6 +24,63 @@ from .routing import (
 )
 
 
+_HPC_PENDING_REASON_LABELS = {
+    "Resources": "GPUまたはメモリの空き待ち",
+    "Priority": "他のジョブが優先されているため待機中",
+    "QOSMaxJobsPerUserLimit": "同時起動数の上限に達しています",
+    "ReqNodeNotAvail": "計算ノードが利用できません",
+    "PartitionNodeLimit": "要求が計算ノードの容量を超えています",
+}
+
+
+def _hpc_slurm_pending_reason(job_id: str) -> str:
+    """PENDINGのSlurmジョブから待機理由を取得する。
+
+    Args:
+        job_id: 対象のSlurm Job ID。
+
+    Returns:
+        squeueが返す理由コード。取得できなければ空文字列。
+    """
+    if not job_id:
+        return ""
+    try:
+        result = subprocess.run(
+            ["squeue", "--noheader", "-j", str(job_id), "-o", "%R"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    raw = (result.stdout or "").strip().splitlines()
+    if not raw:
+        return ""
+    # PENDINGでは "(Resources)" の形で理由が入る。RUNNINGではノード名が返る。
+    reason = raw[0].strip()
+    if reason.startswith("(") and reason.endswith(")"):
+        return reason[1:-1]
+    return ""
+
+
+def _hpc_pending_reason_message(reason: str) -> str:
+    """squeueの理由コードを利用者向けの説明へ変換する。
+
+    Args:
+        reason: squeueが返した理由コード。
+
+    Returns:
+        画面に出す説明。理由が無ければ空文字列。
+    """
+    if not reason:
+        return ""
+    label = _HPC_PENDING_REASON_LABELS.get(reason)
+    return f"{label}（{reason}）" if label else f"空きリソース待ち（{reason}）"
+
+
 class HPCSlurmSpawner(SlurmSpawner):
     """Slurm JOBIDごとの公開URLとCHPルートを管理するSpawner。"""
 
@@ -46,7 +103,14 @@ class HPCSlurmSpawner(SlurmSpawner):
         message = " ".join(str(message or "").split())
         message = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-***", message)
         message = re.sub(r"\bBearer\s+\S+", "Bearer ***", message, flags=re.IGNORECASE)
-        return message[:300] or "起動処理が完了しませんでした"
+        message = message[:300] or "起動処理が完了しませんでした"
+        # PENDINGのままstart_timeoutに達した場合、元の例外は「起動しなかった」ことしか
+        # 伝えない。利用者が理由を判断できるよう待機理由を添える。長い例外文に押し出されて
+        # 切り捨てられないよう、本文を切り詰めた後に連結する。
+        detail = _hpc_pending_reason_message(getattr(self, "_hpc_pending_reason", ""))
+        if detail:
+            message = f"{message} 起動待ちのまま時間切れになりました: {detail}"
+        return message
 
     def clear_state(self):
         """spawn 前に一時状態を初期化"""
@@ -60,6 +124,7 @@ class HPCSlurmSpawner(SlurmSpawner):
         self._hpc_public_alias_routespec = None
         self._hpc_progress_message = "起動要求を受け付けました"
         self._hpc_progress_revision = 0
+        self._hpc_pending_reason = ""
         super().clear_state()
         # ここでは sbatch しない。先行提出すると get_env が api_token 付与前に走り、
         # ジョブ内の JUPYTERHUB_API_TOKEN が空のまま固定され Hub の ready 判定が進まない。
@@ -99,6 +164,18 @@ class HPCSlurmSpawner(SlurmSpawner):
                 try:
                     if self.state_ispending():
                         message = f"Slurmジョブ {job_id} は実行待ちです"
+                        # 待機理由はstart_timeout到達時の説明にも使うため保持する。
+                        # squeueを毎周叩かないよう、理由が変わるまでは再取得しない。
+                        reason = await asyncio.to_thread(
+                            _hpc_slurm_pending_reason, job_id
+                        )
+                        if reason:
+                            self._hpc_pending_reason = reason
+                        detail = _hpc_pending_reason_message(
+                            getattr(self, "_hpc_pending_reason", "")
+                        )
+                        if detail:
+                            message = f"{message}。{detail}"
                     elif self.state_isrunning():
                         message = (
                             f"Slurmジョブ {job_id} を実行中です。アプリの応答を待っています"
