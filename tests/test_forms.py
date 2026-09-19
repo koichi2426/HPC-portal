@@ -19,7 +19,7 @@ def test_app_resource_recommendations_match_supported_workloads():
     assert recommendations["open-webui"]["cpu"] == "2"
     assert recommendations["open-webui"]["memory"] == "4"
     assert recommendations["shared-ollama"]["cpu"] == "8"
-    assert recommendations["shared-ollama"]["memory"] == "64G"
+    assert recommendations["shared-ollama"]["memory"] == "40G"
     assert recommendations["shared-ollama"]["gpu"] == "1"
 
 
@@ -104,7 +104,7 @@ def test_shared_ollama_memory_default_keeps_single_unit_suffix():
     user_options = forms.options_from_form({"app_choice": ["shared-ollama"]})
 
     assert user_options["nprocs"] == "8"
-    assert user_options["memory"] == "64G"
+    assert user_options["memory"] == "40G"
     assert user_options["gpu"] == "1"
 
 
@@ -151,7 +151,7 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
     rendered = forms.make_options_form(spawner)
 
     assert 'name="ollama_memory"' in rendered
-    assert '<option value="64G" selected>64G RAM</option>' in rendered
+    assert '<option value="40G" selected>40G RAM</option>' in rendered
     assert 'name="ollama_parallel"' in rendered
     assert 'name="ollama_context_length"' in rendered
     assert '<option value="131072" selected>128K</option>' in rendered

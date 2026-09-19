@@ -44,7 +44,7 @@ def test_ollama_detail_skips_model_api_while_api_is_starting(monkeypatch):
 
 @pytest.mark.parametrize(
     ("cpus", "memory", "expected"),
-    [(None, None, ("8", "64G", None)), ("8", "32g", ("8", "32G", None))],
+    [(None, None, ("8", "40G", None)), ("8", "32g", ("8", "32G", None))],
 )
 def test_ollama_resources_accept_allowed_values(cpus, memory, expected):
     assert ollama._hpc_validate_ollama_resources(cpus, memory) == expected
@@ -81,7 +81,7 @@ def test_ollama_start_builds_fixed_command_arguments(monkeypatch):
         "--parallel",
         "2",
         "--max-loaded-models",
-        "2",
+        "1",
         "--context-length",
         "131072",
         "--kv-cache-type",
