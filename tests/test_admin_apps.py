@@ -111,6 +111,14 @@ def test_admin_apps_cache_returns_copy_without_refetch(monkeypatch):
 
 
 
+@pytest.fixture(autouse=True)
+def _clear_gpu_memory_cache():
+    """nvidia-smi の共有キャッシュがテスト間で漏れないようにする。"""
+    admin_apps._HPC_GPU_MEMORY_CACHE.update(expires_at=0.0, usage={})
+    yield
+    admin_apps._HPC_GPU_MEMORY_CACHE.update(expires_at=0.0, usage={})
+
+
 def test_job_gpu_memory_sums_processes_per_job(monkeypatch):
     """nvidia-smiのPIDをcgroup経由でSlurmジョブへ紐付けて集計する。"""
     monkeypatch.setattr(
@@ -319,3 +327,66 @@ def test_admin_apps_list_shows_actual_usage_column():
     assert "detailCell.colSpan = 9;" in js
     assert "emptyCell.colSpan = 9;" in js
     assert 'colspan="9"' in home
+
+
+def test_job_gpu_memory_is_cached_between_calls(monkeypatch):
+    """短時間の連続呼び出しでnvidia-smiを繰り返し起動しないことを確認する。
+
+    ホーム画面と管理画面が5秒間隔で参照するため、閲覧者の人数分だけ
+    プロセスを起動すると無駄が大きい。
+    """
+    calls = []
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: calls.append(command)
+        or SimpleNamespace(returncode=0, stdout="100, 1024\n", stderr=""),
+    )
+    monkeypatch.setattr(admin_apps, "_hpc_job_id_of_pid", lambda pid: "44")
+
+    first = admin_apps._hpc_job_gpu_memory_bytes()
+    second = admin_apps._hpc_job_gpu_memory_bytes()
+
+    assert first == second == {"44": 1024 * 1024**2}
+    assert len(calls) == 1, "2回目はキャッシュから返すこと"
+
+
+def test_job_gpu_memory_cache_expires(monkeypatch):
+    """キャッシュが切れれば取り直すことを確認する。"""
+    calls = []
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: calls.append(command)
+        or SimpleNamespace(returncode=0, stdout="100, 1024\n", stderr=""),
+    )
+    monkeypatch.setattr(admin_apps, "_hpc_job_id_of_pid", lambda pid: "44")
+
+    admin_apps._hpc_job_gpu_memory_bytes()
+    admin_apps._HPC_GPU_MEMORY_CACHE.update(expires_at=0.0)
+    admin_apps._hpc_job_gpu_memory_bytes()
+
+    assert len(calls) == 2
+
+
+def test_overuse_note_is_placed_below_detail_items():
+    """詳細パネルの超過注意書きが項目の幅を奪わないことを確認する。
+
+    パネルは横並びのflexで、注意書きを先に差し込むと項目側が圧縮される。
+    DOM上は項目の後ろに置き、CSSで全幅の下段へ回す。
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "roles/jupyterhub/files/hpc-portal-js/admin-apps.js").read_text(
+        encoding="utf-8"
+    )
+    css = (root / "roles/jupyterhub/files/hpc-portal-css/45-admin-apps.css").read_text(
+        encoding="utf-8"
+    )
+
+    # dl を先に追加してから注意書きを追加する
+    assert js.index("panel.appendChild(list);") < js.index("hpc-memory-overuse-note")
+    assert "flex-wrap: wrap;" in css
+    assert ".hpc-admin-app-details-panel .hpc-memory-overuse-note" in css
+    assert "flex: 1 0 100%;" in css

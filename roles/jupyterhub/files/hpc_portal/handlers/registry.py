@@ -6,6 +6,7 @@ from jupyterhub.handlers.pages import SpawnHandler
 
 from ..apps import (
     HpcAppDetailHandler,
+    HpcAppMemoryStatusHandler,
     HpcNewApplicationHandler,
     HpcOpenWebuiVersionHandler,
 )
@@ -42,6 +43,7 @@ def register_handlers() -> None:
         (r"/hpc-js/([a-z0-9-]+\.js)", HpcPortalJsHandler),
         (r"/hpc-portal.css", HpcPortalCssHandler),
         (r"/hpc-resource-status", HpcResourceStatusHandler),
+        (r"/hpc-app-memory", HpcAppMemoryStatusHandler),
         (r"/apps/([^/]+)/version", HpcOpenWebuiVersionHandler),
         (r"/apps/([^/]+)", HpcAppDetailHandler),
         (r"/llm-api/api", HpcLlmApiApiHandler),

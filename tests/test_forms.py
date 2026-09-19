@@ -542,3 +542,34 @@ def test_memory_overuse_styles_are_shared():
 
     assert ".hpc-memory-overuse-warning" in shared
     assert ".hpc-memory-overuse-warning" not in admin
+
+
+def test_home_memory_updates_without_reload():
+    """自分のアプリのメモリ表示が自動更新されることを確認する。
+
+    管理者の一覧は自動更新されるのに利用者のカードだけ再読み込みが要る、
+    という差をなくす。テンプレートのdata属性とJSの参照が揃っていること。
+    """
+    root = REPOSITORY_ROOT / "roles/jupyterhub"
+    home = (root / "templates/home.html.j2").read_text(encoding="utf-8")
+    js = (root / "files/hpc-portal-js/app-status.js").read_text(encoding="utf-8")
+    registry = (
+        root / "files/hpc_portal/handlers/registry.py"
+    ).read_text(encoding="utf-8")
+
+    for attr in (
+        "data-hpc-app-memory",
+        "data-hpc-app-memory-used",
+        "data-hpc-app-memory-gpu",
+        "data-hpc-app-memory-overuse",
+        "data-hpc-app-memory-overuse-text",
+    ):
+        assert attr in home, f"テンプレートに {attr} が無い"
+        assert attr in js, f"JSが {attr} を参照していない"
+
+    assert '"/hub/hpc-app-memory"' in js
+    assert 'r"/hpc-app-memory"' in registry
+    # 更新間隔はSlurmの収集間隔(30秒)より短くしても意味がないCPU側を含むため5秒
+    assert "MEMORY_INTERVAL_MS = 5000" in js
+    # タブが隠れている間は叩かない
+    assert "if (!global.document.hidden) refreshAppMemory();" in js

@@ -30,6 +30,14 @@ _HPC_ADMIN_APPS_RSS_CACHE: dict = {
     "job_ids": (),
     "usage": {},
 }
+# nvidia-smi の結果は利用者に依らないため全体で共有する。ホーム画面も5秒間隔で
+# 参照するため、閲覧者の人数分だけプロセスを起動しないよう短いキャッシュを置く。
+_HPC_GPU_MEMORY_CACHE_SECONDS = 3.0
+_HPC_GPU_MEMORY_CACHE_LOCK = threading.Lock()
+_HPC_GPU_MEMORY_CACHE: dict = {
+    "expires_at": 0.0,
+    "usage": {},
+}
 _HPC_PORTAL_SLURM_APPS = {
     "jhub-app": "JupyterLab",
     "jhub-openwebui": "Open WebUI",
@@ -189,6 +197,26 @@ def _hpc_job_gpu_memory_bytes() -> dict[str, int]:
     GB10は統合メモリ構成で、CUDAが確保した分はプロセスのRSSにもcgroupにも
     現れない。``sstat`` の MaxRSS だけでは実使用量を1/10ほどに見誤るため、
     プロセス単位の確保量をジョブへ足し戻す。
+
+    Returns:
+        Job IDをキー、GPU確保量のバイト数を値とする辞書。
+    """
+    with _HPC_GPU_MEMORY_CACHE_LOCK:
+        if time.monotonic() < _HPC_GPU_MEMORY_CACHE["expires_at"]:
+            return dict(_HPC_GPU_MEMORY_CACHE["usage"])
+    usage = _hpc_job_gpu_memory_bytes_uncached()
+    with _HPC_GPU_MEMORY_CACHE_LOCK:
+        _HPC_GPU_MEMORY_CACHE.update(
+            {
+                "expires_at": time.monotonic() + _HPC_GPU_MEMORY_CACHE_SECONDS,
+                "usage": dict(usage),
+            }
+        )
+    return usage
+
+
+def _hpc_job_gpu_memory_bytes_uncached() -> dict[str, int]:
+    """ジョブごとのGPU確保量を nvidia-smi から集計する（キャッシュなし）。
 
     Returns:
         Job IDをキー、GPU確保量のバイト数を値とする辞書。

@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import asyncio
 import json
 import secrets
 import time
@@ -20,6 +21,7 @@ from .common import (
 )
 from .ollama import _hpc_shared_ollama_detail_context
 from .resources import _hpc_resource_snapshot
+from .schemas import HpcAppMemoryResponse
 from .users import _hpc_is_portal_admin
 
 
@@ -581,6 +583,26 @@ def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
         # 気付けるよう、自分のアプリの使用状況を渡す。
         **_hpc_spawner_memory_usage(jid, alloc.get("memory", "")),
     }
+
+
+class HpcAppMemoryStatusHandler(BaseHandler):
+    """ホーム画面のアプリカードを定期更新するための JSON API
+
+    管理者の一覧は自動更新されるのに利用者のカードだけ再読み込みが要る、
+    という差をなくすために用意する。GPU側は nvidia-smi が現在値を返すため
+    実質リアルタイムに追随し、CPU側は JobAcctGatherFrequency=30 が下限となる。
+    """
+
+    @web.authenticated
+    async def get(self):
+        """ログインユーザーのアプリごとのメモリ使用状況を返す。"""
+        self.set_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        usage = await asyncio.to_thread(_hpc_user_memory_overuse, self.current_user)
+        self.write(
+            HpcAppMemoryResponse.model_validate(
+                {"apps": usage, "updated_at": time.time()}
+            ).model_dump()
+        )
 
 
 # ホーム画面のアプリカードから自分のメモリ超過を見えるようにする

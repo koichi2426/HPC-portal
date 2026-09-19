@@ -60,14 +60,15 @@
       line.appendChild(value);
       list.appendChild(line);
     });
+    panel.appendChild(list);
     // 超過は誰も止めないため（ConstrainRAMSpace=no）、気付けるよう明示する。
+    // パネルは横並びのflexなので、項目を圧迫しないよう全幅で下段へ回す。
     if (app.memory_overuse_label) {
       var overuse = global.document.createElement("p");
       overuse.className = "hpc-memory-overuse-note hpc-memory-overuse-" + app.memory_overuse_level;
       overuse.textContent = "メモリ超過: " + app.memory_overuse_label;
       panel.appendChild(overuse);
     }
-    panel.appendChild(list);
     detailCell.appendChild(panel);
     detailRow.appendChild(detailCell);
 
