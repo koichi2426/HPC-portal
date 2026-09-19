@@ -93,7 +93,27 @@ def test_ollama_start_builds_fixed_command_arguments(monkeypatch):
         "--flash-attention",
         "1",
     ]]
-    assert data["gpus"] == "1"
+    # 共有OllamaはGRESでGPUを予約しない（GPUは予約なしで共有する）
+    assert data["gpus"] == "0"
+
+
+@pytest.mark.parametrize(
+    ("gpus", "count", "label"),
+    [
+        ("0", 0, "GPU 共有（予約なし）"),
+        ("1", 1, "1 GPU"),
+        ("2", 2, "2 GPU"),
+        ("", 0, "GPU 共有（予約なし）"),
+        ("x", 0, "GPU 共有（予約なし）"),
+        ("-1", 0, "GPU 共有（予約なし）"),
+    ],
+)
+def test_ollama_gpu_label_reflects_reservation(monkeypatch, gpus, count, label):
+    """GRES予約の有無が画面表示の文言へ反映されることを確認する。"""
+    monkeypatch.setattr(ollama, "HPC_OLLAMA_GPUS", gpus)
+
+    assert ollama._hpc_ollama_gpu_count() == count
+    assert ollama._hpc_ollama_gpu_label() == label
 
 
 def test_ollama_start_rejects_runtime_values_outside_allowlist(monkeypatch):
