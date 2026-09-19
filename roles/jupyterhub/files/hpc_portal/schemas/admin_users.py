@@ -18,6 +18,8 @@ HpcAdminAction = Literal[
     "ollama_delete",
     "ollama_start",
     "ollama_stop",
+    "ollama_update_check",
+    "ollama_update",
     "ollama_status",
     "ollama_tags",
     "ollama_pull",

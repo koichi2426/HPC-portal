@@ -114,8 +114,10 @@
     global.document
       .querySelectorAll("[data-hpc-shared-ollama-status]")
       .forEach(function (root) {
-        var configuredTargetVersion =
-          root.getAttribute("data-hpc-ollama-target-version") || "";
+        var activeUpdateStates = ["queued", "downloading", "validating", "stopping", "starting", "waiting_api", "rolling_back"];
+        var previousUpdateState = root.getAttribute("data-hpc-ollama-update-state") || "";
+        var updating = activeUpdateStates.indexOf(data.update_state) !== -1;
+        root.setAttribute("data-hpc-ollama-update-state", data.update_state || "");
         if (root.hasAttribute("data-hpc-shared-ollama-home-card")) {
           root.hidden = !data.running;
         }
@@ -153,19 +155,51 @@
         root.querySelectorAll("[data-hpc-ollama-running-version]").forEach(function (version) {
           version.textContent = data.version ? "v" + data.version.replace(/^v/, "") : "確認中";
         });
-        root.querySelectorAll("[data-hpc-ollama-target-version]").forEach(function (version) {
-          var targetVersion = data.target_version || configuredTargetVersion;
-          if (targetVersion) {
-            version.textContent = "v" + targetVersion.replace(/^v/, "");
+        root.querySelectorAll("[data-hpc-ollama-latest-version]").forEach(function (version) {
+          if (data.latest_version) {
+            version.textContent = "v" + data.latest_version.replace(/^v/, "");
           }
         });
         root.querySelectorAll("[data-hpc-ollama-version-update]").forEach(function (badge) {
           var runningVersion = (data.version || "").replace(/^v/, "");
-          var targetVersion = (
-            data.target_version || configuredTargetVersion || ""
-          ).replace(/^v/, "");
+          var targetVersion = (data.latest_version || "").replace(/^v/, "");
           badge.hidden = !(runningVersion && targetVersion && runningVersion !== targetVersion);
         });
+        root.querySelectorAll("[data-hpc-ollama-update-button]").forEach(function (button) {
+          var runningVersion = (data.version || "").replace(/^v/, "");
+          var targetVersion = (data.latest_version || "").replace(/^v/, "");
+          button.hidden = updating || !(runningVersion && targetVersion && runningVersion !== targetVersion);
+          button.dataset.targetVersion = targetVersion;
+          if (targetVersion && !updating) {
+            button.textContent = "v" + targetVersion + "へ更新";
+          }
+        });
+        root.querySelectorAll("[data-hpc-ollama-check-button]").forEach(function (button) {
+          button.disabled = updating;
+        });
+        root.querySelectorAll("[data-hpc-ollama-stop-button]").forEach(function (button) {
+          button.disabled = updating;
+        });
+        root.querySelectorAll("#ollama-pull-button, #ollama-sync-button, [data-model]").forEach(function (button) {
+          button.disabled = updating;
+        });
+        root.querySelectorAll("[data-hpc-ollama-update-status-row]").forEach(function (row) {
+          row.hidden = !data.update_state;
+        });
+        root.querySelectorAll("[data-hpc-ollama-update-status]").forEach(function (status) {
+          status.textContent = data.update_message || data.update_error || "";
+          status.classList.toggle("hpc-status-ok", data.update_state === "completed");
+          status.classList.toggle("hpc-status-danger", ["failed", "rolled_back", "rollback_failed"].indexOf(data.update_state) !== -1);
+          status.classList.toggle("hpc-status-warn", ["completed", "failed", "rolled_back", "rollback_failed"].indexOf(data.update_state) === -1);
+        });
+        root.querySelectorAll("[data-hpc-ollama-update-error]").forEach(function (error) {
+          error.textContent = data.update_error || "";
+          error.hidden = !data.update_error;
+        });
+        if (activeUpdateStates.indexOf(previousUpdateState) !== -1 &&
+            ["completed", "rolled_back"].indexOf(data.update_state) !== -1) {
+          requestReload(750);
+        }
       });
   }
 

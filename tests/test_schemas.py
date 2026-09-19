@@ -59,6 +59,22 @@ def test_null_optional_text_is_normalized_to_empty_string():
     assert request.model == ""
 
 
+def test_admin_request_accepts_ollama_update_without_version_input():
+    request = parse_json_request(
+        b'{"action":"ollama_update","model":"ignored"}', HpcAdminUsersRequest
+    )
+
+    assert request.action == "ollama_update"
+
+
+def test_admin_request_accepts_ollama_update_check():
+    request = parse_json_request(
+        b'{"action":"ollama_update_check"}', HpcAdminUsersRequest
+    )
+
+    assert request.action == "ollama_update_check"
+
+
 def test_llm_api_request_normalizes_regenerate_action():
     request = parse_json_request(b'{"action":" REGENERATE "}', HpcLlmApiRequest)
 

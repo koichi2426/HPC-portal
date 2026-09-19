@@ -130,6 +130,119 @@ def test_ollama_status_preserves_non_json_output_as_raw(monkeypatch):
     assert ollama._hpc_ollama_cmd("status") == ({"raw": "not-json"}, None)
 
 
+def test_ollama_update_builds_fixed_command_and_parses_json(monkeypatch):
+    """Web更新がクライアント入力の版を受け取らず管理コマンドだけを実行する。"""
+    commands = []
+    monkeypatch.setattr(
+        ollama,
+        "_hpc_run_cmd",
+        lambda command: commands.append(command)
+        or SimpleNamespace(
+            returncode=0,
+            stdout='{"status":"started","job_ids":"43"}',
+            stderr="",
+        ),
+    )
+
+    data, error = ollama._hpc_ollama_cmd("update")
+
+    assert error is None
+    assert data == {"status": "started", "job_ids": "43"}
+    assert commands == [["/usr/local/sbin/hpc-ollama", "update"]]
+
+
+def test_ollama_update_check_builds_fixed_command_and_parses_json(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        ollama,
+        "_hpc_run_cmd",
+        lambda command: commands.append(command)
+        or SimpleNamespace(
+            returncode=0,
+            stdout='{"latest_version":"0.33.0","update_available":true}',
+            stderr="",
+        ),
+    )
+
+    data, error = ollama._hpc_ollama_cmd("update-check")
+
+    assert error is None
+    assert data["latest_version"] == "0.33.0"
+    assert commands == [["/usr/local/sbin/hpc-ollama", "update-check"]]
+
+
+def test_ollama_update_script_downloads_before_stopping_and_rolls_back():
+    """新イメージを先に検証し、起動失敗時に旧イメージへ戻す。"""
+    script = (REPOSITORY_ROOT / "roles/ollama/templates/hpc-ollama.j2").read_text()
+    worker_block = script.split("  _update-worker)", 1)[1].split("  start)", 1)[0]
+
+    assert worker_block.index('docker://ollama/ollama:${target}') < worker_block.index("scancel $ids")
+    assert "apptainer build --disable-cache" in worker_block
+    assert worker_block.index('verified_version="$(image_version') < worker_block.index("scancel $ids")
+    assert worker_block.index('sudo -u "$SERVICE_USER" test -r "$new_image"') < worker_block.index("scancel $ids")
+    assert 'chmod 0644 "$new_image"' in worker_block
+    assert 'mv -Tf "$rollback_link" "$OLLAMA_IMAGE"' in worker_block
+    assert "rolled_back" in worker_block
+    for option in (
+        "--cpus",
+        "--memory",
+        "--parallel",
+        "--max-loaded-models",
+        "--context-length",
+        "--kv-cache-type",
+        "--keep-alive",
+        "--max-queue",
+        "--flash-attention",
+    ):
+        assert option in worker_block
+
+
+def test_ollama_update_keeps_only_current_and_previous_images():
+    script = (REPOSITORY_ROOT / "roles/ollama/templates/hpc-ollama.j2").read_text()
+    worker_block = script.split("  _update-worker)", 1)[1].split("  start)", 1)[0]
+
+    assert '"$image" != "$new_image"' in worker_block
+    assert '"$image" != "$old_image"' in worker_block
+    assert 'rm -f -- "$image"' in worker_block
+
+
+def test_ollama_update_state_umask_does_not_leak_to_image_build():
+    script = (REPOSITORY_ROOT / "roles/ollama/templates/hpc-ollama.j2").read_text()
+    state_block = script.split("write_update_state()", 1)[1].split(
+        "update_state_value()", 1
+    )[0]
+
+    assert "(\n    umask 077" in state_block
+    assert ")\n  mv -f" in state_block
+
+
+def test_ollama_detail_renders_latest_check_and_progress():
+    """共有Ollama詳細に最新版確認、更新、段階表示がある。"""
+    template = (
+        REPOSITORY_ROOT / "roles/jupyterhub/templates/app_detail.html.j2"
+    ).read_text()
+
+    assert "data-hpc-ollama-check-button" in template
+    assert "data-hpc-ollama-update-button" in template
+    assert "data-hpc-ollama-update-status" in template
+    assert "d.latest_version" in template
+    admin_js = (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/ollama-admin.js"
+    ).read_text()
+    assert 'hpcOllamaPost({action: "ollama_update_check"})' in admin_js
+    assert 'hpcOllamaPost({action: "ollama_update"})' in (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/ollama-admin.js"
+    ).read_text()
+
+
+def test_ollama_apptainer_uses_bootstrap_only_for_initial_selection():
+    tasks = (REPOSITORY_ROOT / "roles/apptainer/tasks/main.yml").read_text()
+
+    assert "初回のみOllama基準イメージを選択" in tasks
+    assert "when: not selected_ollama_image.stat.exists" in tasks
+    assert "ollama-{{ ollama_version }}.sif" in tasks
+
+
 @pytest.mark.parametrize(
     ("payload", "model", "state"),
     [

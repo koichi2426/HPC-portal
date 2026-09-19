@@ -488,10 +488,12 @@ class HpcAdminUsersApiHandler(BaseHandler):
             self.write({"ok": True, "data": {"model": model, "deleted": True}})
             return
 
-        if action in {"ollama_start", "ollama_stop", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_cancel", "ollama_pull_status"}:
+        if action in {"ollama_start", "ollama_stop", "ollama_update_check", "ollama_update", "ollama_status", "ollama_tags", "ollama_pull", "ollama_pull_cancel", "ollama_pull_status"}:
             mapping = {
                 "ollama_start": "start",
                 "ollama_stop": "stop",
+                "ollama_update_check": "update-check",
+                "ollama_update": "update",
                 "ollama_status": "status",
                 "ollama_tags": "tags",
                 "ollama_pull": "pull",

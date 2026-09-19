@@ -212,6 +212,44 @@ async def test_ollama_sync_models_returns_sync_summary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ollama_update_runs_fixed_management_action(monkeypatch):
+    """管理APIの更新操作が固定のupdateコマンドだけを呼ぶことを確認する。"""
+    handler = _FakeHandler(b'{"action":"ollama_update"}')
+    calls = []
+    monkeypatch.setattr(
+        admin_users,
+        "_hpc_ollama_cmd",
+        lambda action, *args: calls.append((action, args))
+        or ({"status": "started", "job_ids": "43"}, None),
+    )
+
+    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
+
+    assert calls == [("update", (None, None, None, None, None, None, None, None, None, None))]
+    assert handler.response == {
+        "ok": True,
+        "data": {"status": "started", "job_ids": "43"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ollama_update_check_runs_server_side_latest_lookup(monkeypatch):
+    handler = _FakeHandler(b'{"action":"ollama_update_check"}')
+    calls = []
+    monkeypatch.setattr(
+        admin_users,
+        "_hpc_ollama_cmd",
+        lambda action, *args: calls.append((action, args))
+        or ({"latest_version": "0.33.0", "update_available": True}, None),
+    )
+
+    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
+
+    assert calls == [("update-check", (None, None, None, None, None, None, None, None, None, None))]
+    assert handler.response["data"]["latest_version"] == "0.33.0"
+
+
+@pytest.mark.asyncio
 async def test_password_change_updates_only_logged_in_user_after_verification(monkeypatch):
     handler = _FakeHandler(
         b'{"current_password":"OldPass12","new_password":"NewPass34","confirm_password":"NewPass34"}',
