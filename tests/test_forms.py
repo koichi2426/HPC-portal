@@ -47,6 +47,7 @@ def test_spawn_form_renders_recommendation_card(monkeypatch):
         "mem_available_gb": 90.0,
         "mem_total_gb": 120.0,
         "mem_used_gb": 30.0,
+        "mem_gpu_used_gb": 24.5,
         "mem_status": "余裕あり",
         "mem_slurm_available": 46.0,
         "mem_slurm_available_gb": 55.6,
@@ -119,6 +120,7 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
         "mem_available_gb": 90.0,
         "mem_total_gb": 120.0,
         "mem_used_gb": 30.0,
+        "mem_gpu_used_gb": 24.5,
         "mem_status": "余裕あり",
         "mem_slurm_available": 46.0,
         "mem_slurm_available_gb": 55.6,
@@ -198,3 +200,29 @@ def test_every_resource_meter_uses_slurm_backed_values():
         )
         assert 'data-resource-width="mem_slurm_available"' in body, path.name
         assert 'data-resource-width="gpu_available"' in body, path.name
+
+
+def test_every_resource_meter_shows_gpu_share_of_unified_memory():
+    """統合メモリの内訳にGPU確保分を出す描画元が揃っていることを確認する。
+
+    GB10ではGPUの確保分がOS実使用に現れないため、内訳が無い画面は実態の
+    1/10ほどしか示さない。3箇所が同じマークアップを複製しているので、
+    片方だけ直しても気付けない。
+    """
+    sources = _resource_meter_sources()
+
+    assert len(sources) >= 3, f"描画元の検出漏れ: {[p.name for p in sources]}"
+    for path in sources:
+        body = path.read_text(encoding="utf-8")
+        assert 'data-resource-text="mem_gpu_used_gb"' in body, (
+            f"{path.name} が統合メモリのGPU内訳を表示していない"
+        )
+
+
+def test_resource_meter_script_formats_gpu_share():
+    """定期更新のJavaScript側もGPU内訳を描き替えることを確認する。"""
+    script = (
+        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/resource-meter.js"
+    ).read_text(encoding="utf-8")
+
+    assert "mem_gpu_used_gb: format1(data.mem_gpu_used_gb)" in script

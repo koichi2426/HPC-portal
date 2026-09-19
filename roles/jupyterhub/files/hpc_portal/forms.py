@@ -184,6 +184,7 @@ def make_options_form(spawner):
     mem_available_gb = resource["mem_available_gb"]
     mem_total_gb = resource["mem_total_gb"]
     mem_used_gb = resource["mem_used_gb"]
+    mem_gpu_used_gb = resource["mem_gpu_used_gb"]
     mem_slurm_available = resource["mem_slurm_available"]
     mem_slurm_available_gb = resource["mem_slurm_available_gb"]
     mem_slurm_used_gb = resource["mem_slurm_used_gb"]
@@ -415,8 +416,8 @@ def make_options_form(spawner):
                     <div class="hpc-unified-memory-panel">
                         <strong>統合メモリについて</strong>
                         <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
-                        <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{mem_slurm_used_gb:.1f} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {mem_slurm_available_gb:.1f} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{mem_used_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {mem_slurm_total_gb:.1f} GB</dd></div></dl>
-                        <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。</p>
+                        <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{mem_slurm_used_gb:.1f} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {mem_slurm_available_gb:.1f} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{mem_used_gb:.1f} GB</dd></div><div><dt>うちGPU確保分</dt><dd data-resource-text="mem_gpu_used_gb">{mem_gpu_used_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {mem_slurm_total_gb:.1f} GB</dd></div></dl>
+                        <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。GPUが確保した分は専用VRAMではなくこの統合メモリの内数ですが、OS実使用には現れないため別に示しています。</p>
                     </div>
                 </details>
                 <div class="resource-meter">

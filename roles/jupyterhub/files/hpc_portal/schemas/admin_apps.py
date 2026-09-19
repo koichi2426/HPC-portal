@@ -21,6 +21,10 @@ class HpcAdminApp(BaseModel):
     started_at: str
     max_rss_bytes: int | None
     max_rss_label: str
+    gpu_memory_bytes: int | None = None
+    gpu_memory_label: str = "—"
+    memory_used_bytes: int | None = None
+    memory_used_label: str = "取得不可"
 
 
 class HpcAdminAppsResponse(BaseModel):

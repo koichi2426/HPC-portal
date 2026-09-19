@@ -116,6 +116,64 @@ def _hpc_slurm_max_rss(job_ids: list[str]) -> dict[str, int]:
     )
     return usage
 
+def _hpc_job_id_of_pid(pid: int) -> str:
+    """PIDが属するSlurmジョブのIDを cgroup から逆引きする。
+
+    Args:
+        pid: 対象プロセスのPID。
+
+    Returns:
+        Slurm Job ID。ジョブに属していなければ空文字列。
+    """
+    try:
+        with open(f"/proc/{pid}/cgroup", encoding="utf-8") as handle:
+            content = handle.read()
+    except OSError:
+        return ""
+    match = re.search(r"/job_(\d+)\b", content)
+    return match.group(1) if match else ""
+
+
+def _hpc_job_gpu_memory_bytes() -> dict[str, int]:
+    """ジョブごとのGPU確保量を nvidia-smi から集計する。
+
+    GB10は統合メモリ構成で、CUDAが確保した分はプロセスのRSSにもcgroupにも
+    現れない。``sstat`` の MaxRSS だけでは実使用量を1/10ほどに見誤るため、
+    プロセス単位の確保量をジョブへ足し戻す。
+
+    Returns:
+        Job IDをキー、GPU確保量のバイト数を値とする辞書。
+    """
+    try:
+        result = _hpc_run_cmd(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+    usage: dict[str, int] = {}
+    for line in result.stdout.splitlines():
+        pid_raw, separator, memory_raw = line.partition(",")
+        if not separator:
+            continue
+        try:
+            pid = int(pid_raw.strip())
+            megabytes = int(float(memory_raw.strip()))
+        except (TypeError, ValueError):
+            continue
+        job_id = _hpc_job_id_of_pid(pid)
+        if not job_id:
+            continue
+        usage[job_id] = usage.get(job_id, 0) + max(0, megabytes) * 1024**2
+    return usage
+
+
 def _hpc_admin_apps_snapshot() -> tuple[list[dict], str]:
     """ポータルから起動したSlurmアプリの割当と利用状況を取得する。
 
@@ -197,6 +255,7 @@ def _hpc_admin_apps_snapshot_uncached() -> tuple[list[dict], str]:
             }
         )
     max_rss = _hpc_slurm_max_rss([row["job_id"] for row in rows if row["state"] == "RUNNING"])
+    gpu_memory = _hpc_job_gpu_memory_bytes()
     for row in rows:
         rss_bytes = max_rss.get(row["job_id"])
         row["max_rss_bytes"] = rss_bytes
@@ -206,6 +265,19 @@ def _hpc_admin_apps_snapshot_uncached() -> tuple[list[dict], str]:
             row["max_rss_label"] = "取得不可"
         else:
             row["max_rss_label"] = "計測待ち"
+        gpu_bytes = gpu_memory.get(row["job_id"])
+        row["gpu_memory_bytes"] = gpu_bytes
+        row["gpu_memory_label"] = (
+            _hpc_format_storage_bytes(gpu_bytes) if gpu_bytes else "—"
+        )
+        # CPU側(MaxRSS)とGPU側(nvidia-smi)は会計が重複しないため、合計が実使用量になる。
+        if rss_bytes is None and gpu_bytes is None:
+            row["memory_used_bytes"] = None
+            row["memory_used_label"] = row["max_rss_label"]
+        else:
+            total = (rss_bytes or 0) + (gpu_bytes or 0)
+            row["memory_used_bytes"] = total
+            row["memory_used_label"] = _hpc_format_storage_bytes(total)
     rows.sort(key=lambda row: (row["username"], row["app"], row["job_id"]))
     return rows, ""
 

@@ -45,7 +45,9 @@
     var list = global.document.createElement("dl");
     [
       ["Job ID", String(app.job_id || "—")],
-      ["最大実使用メモリ", String(app.max_rss_label || "取得不可")],
+      ["実使用メモリ", String(app.memory_used_label || "取得不可")],
+      ["うちCPU側(最大)", String(app.max_rss_label || "取得不可")],
+      ["うちGPU確保分", String(app.gpu_memory_label || "—")],
       ["開始日時", String(app.started_at || "—")],
     ].forEach(function (entry) {
       var line = global.document.createElement("div");

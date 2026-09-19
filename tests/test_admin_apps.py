@@ -109,3 +109,111 @@ def test_admin_apps_cache_returns_copy_without_refetch(monkeypatch):
     assert len(calls) == 1
     assert second == [{"job_id": "42"}]
 
+
+
+def test_job_gpu_memory_sums_processes_per_job(monkeypatch):
+    """nvidia-smiのPIDをcgroup経由でSlurmジョブへ紐付けて集計する。"""
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=0,
+            stdout="100, 25053\n101, 1024\n102, 512\nmalformed\n",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_job_id_of_pid",
+        lambda pid: {100: "44", 101: "44", 102: ""}.get(pid, ""),
+    )
+
+    usage = admin_apps._hpc_job_gpu_memory_bytes()
+
+    # ジョブに属さないPID(102)は除外し、同一ジョブのPIDは合算する
+    assert usage == {"44": (25053 + 1024) * 1024**2}
+
+
+def test_job_gpu_memory_returns_empty_on_command_failure(monkeypatch):
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: SimpleNamespace(returncode=1, stdout="", stderr="no gpu"),
+    )
+
+    assert admin_apps._hpc_job_gpu_memory_bytes() == {}
+
+
+def test_job_id_of_pid_reads_slurm_cgroup(tmp_path, monkeypatch):
+    """/proc/<pid>/cgroup の job_<ID> からジョブを特定する。"""
+    proc_dir = tmp_path / "1234"
+    proc_dir.mkdir()
+    (proc_dir / "cgroup").write_text(
+        "0::/system.slice/gx10-ac12_slurmstepd.scope/job_12/step_batch/user/task_0\n",
+        encoding="utf-8",
+    )
+    real_open = admin_apps.open if hasattr(admin_apps, "open") else open
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda path, *args, **kwargs: real_open(
+            str(proc_dir / "cgroup") if str(path).startswith("/proc/") else path,
+            *args,
+            **kwargs,
+        ),
+    )
+
+    assert admin_apps._hpc_job_id_of_pid(1234) == "12"
+
+
+def test_job_id_of_pid_returns_empty_when_unreadable(monkeypatch):
+    def raise_oserror(path, *args, **kwargs):
+        raise OSError("no such process")
+
+    monkeypatch.setattr("builtins.open", raise_oserror)
+
+    assert admin_apps._hpc_job_id_of_pid(999999) == ""
+
+
+def test_admin_apps_snapshot_adds_gpu_memory_to_used_total(monkeypatch):
+    """統合メモリではGPU確保分がMaxRSSに現れないため、合算して表示する。"""
+    stdout = "44|hpc-ollama|shared-ollama|RUNNING|8|40G|N/A|10:00|2026-01-01T00:00:00"
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    )
+    monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(
+        admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {"44": 2 * 1024**3}
+    )
+    monkeypatch.setattr(
+        admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
+    )
+
+    rows, error = admin_apps._hpc_admin_apps_snapshot_uncached()
+
+    assert error == ""
+    row = rows[0]
+    assert row["max_rss_bytes"] == 2 * 1024**3
+    assert row["gpu_memory_bytes"] == 24 * 1024**3
+    assert row["memory_used_bytes"] == 26 * 1024**3
+    assert row["memory_used_label"] == "26.0 GB"
+
+
+def test_admin_apps_snapshot_keeps_label_when_nothing_measurable(monkeypatch):
+    """CPU側もGPU側も取得できない場合は従来どおりの文言を保つ。"""
+    stdout = "43|user02|jhub-openwebui|PENDING|4|8G|N/A|00:00|N/A"
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    )
+    monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {})
+    monkeypatch.setattr(admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {})
+
+    rows, _ = admin_apps._hpc_admin_apps_snapshot_uncached()
+
+    assert rows[0]["memory_used_bytes"] is None
+    assert rows[0]["memory_used_label"] == "計測待ち"
+    assert rows[0]["gpu_memory_label"] == "—"

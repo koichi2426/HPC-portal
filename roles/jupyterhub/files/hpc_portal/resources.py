@@ -227,8 +227,29 @@ def _hpc_slurm_free_resources():
         return None
 
 
+def _parse_nvidia_smi_memory_mb(value: str) -> int | None:
+    """nvidia-smi の used_gpu_memory 列をMBへ変換する。
+
+    Args:
+        value: ``--format=csv,nounits`` が返す数値文字列。``[N/A]`` のこともある。
+
+    Returns:
+        MB単位の確保量。取得できなければNone。
+    """
+    raw = str(value or "").strip().rstrip("MiB").strip()
+    if not raw or raw.startswith("["):
+        return None
+    try:
+        return max(0, int(float(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _hpc_gpu_process_snapshot() -> tuple[list[dict], bool]:
-    """NVIDIA GPUを使用中の計算プロセスを取得する。
+    """NVIDIA GPUを使用中の計算プロセスと、その確保量を取得する。
+
+    GB10は統合メモリ構成で、CUDAが確保した分はプロセスのRSSにもcgroupにも
+    現れない。nvidia-smi のプロセス単位の問い合わせだけが実際の確保量を返す。
 
     Returns:
         プロセス情報のリストと、取得に成功したかどうか。
@@ -237,7 +258,7 @@ def _hpc_gpu_process_snapshot() -> tuple[list[dict], bool]:
         proc = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-compute-apps=pid,process_name",
+                "--query-compute-apps=pid,process_name,used_memory",
                 "--format=csv,noheader,nounits",
             ],
             check=False,
@@ -253,17 +274,20 @@ def _hpc_gpu_process_snapshot() -> tuple[list[dict], bool]:
             line = line.strip()
             if not line:
                 continue
-            parts = [part.strip() for part in line.split(",", 1)]
-            if len(parts) < 2:
+            # process_name にカンマが含まれても壊れないよう両端から切り出す。
+            head, _, memory_raw = line.rpartition(",")
+            pid_raw, _, name_raw = head.partition(",")
+            if not head:
                 continue
             try:
-                pid = int(parts[0])
+                pid = int(pid_raw.strip())
             except (TypeError, ValueError):
                 continue
             if pid in seen_pids:
                 continue
             seen_pids.add(pid)
-            raw_name = parts[1].rsplit("/", 1)[-1] or "不明"
+            memory_mb = _parse_nvidia_smi_memory_mb(memory_raw)
+            raw_name = name_raw.strip().rsplit("/", 1)[-1] or "不明"
             username = "不明"
             try:
                 process = psutil.Process(pid)
@@ -272,7 +296,14 @@ def _hpc_gpu_process_snapshot() -> tuple[list[dict], bool]:
             except (psutil.Error, OSError):
                 pass
             name = "Ollama" if "ollama" in raw_name.lower() else raw_name
-            processes.append({"pid": pid, "name": name, "username": username})
+            processes.append(
+                {
+                    "pid": pid,
+                    "name": name,
+                    "username": username,
+                    "memory_mb": memory_mb,
+                }
+            )
         processes.sort(key=lambda item: (item["username"], item["name"], item["pid"]))
         return processes, True
     except Exception:
@@ -339,6 +370,11 @@ def _hpc_resource_snapshot(disk_path="/home"):
         max(0, min(100, gpu_available_count / gpu_max * 100)) if gpu_max else 0
     )
     gpu_processes, gpu_processes_available = _hpc_gpu_process_snapshot()
+    # GB10は統合メモリのため、GPUの確保分は mem_total_gb の内数であり別枠ではない。
+    # OSの実使用(mem_used_gb)にも現れないので、内訳として併記する。
+    mem_gpu_used_gb = sum(
+        (process["memory_mb"] or 0) for process in gpu_processes
+    ) / 1024
     return {
         "cpu_available": cpu_available,
         "cpu_available_count": cpu_available_count,
@@ -348,6 +384,7 @@ def _hpc_resource_snapshot(disk_path="/home"):
         "mem_available_gb": mem_available_gb,
         "mem_used_gb": mem_used_gb,
         "mem_total_gb": mem_total_gb,
+        "mem_gpu_used_gb": mem_gpu_used_gb,
         "mem_status": _hpc_resource_status(mem_available),
         "mem_slurm_available": mem_slurm_available,
         "mem_slurm_available_gb": mem_slurm_available_gb,

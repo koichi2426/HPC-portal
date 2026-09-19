@@ -169,3 +169,98 @@ def test_resource_snapshot_exposes_slurm_backed_memory_and_gpu(monkeypatch):
     assert snapshot["mem_slurm_available"] < snapshot["mem_available"]
     # Schema検証を通ること（キー欠落は実行時に例外となるため）
     HpcResourceSnapshot.model_validate(snapshot)
+
+
+@pytest.mark.parametrize(
+    ("raw", "megabytes"),
+    [
+        ("25053", 25053),
+        (" 25053 ", 25053),
+        ("25053 MiB", 25053),
+        ("[N/A]", None),
+        ("", None),
+        ("-", None),
+    ],
+)
+def test_parse_nvidia_smi_memory(raw, megabytes):
+    assert resources._parse_nvidia_smi_memory_mb(raw) == megabytes
+
+
+def _fake_nvidia_smi(monkeypatch, stdout, returncode=0):
+    """nvidia-smi の compute-apps 問い合わせだけを差し替える。"""
+
+    def run(command, **kwargs):
+        assert command[0] == "nvidia-smi"
+        assert "--query-compute-apps=pid,process_name,used_memory" in command
+        return SimpleNamespace(returncode=returncode, stdout=stdout)
+
+    monkeypatch.setattr(resources.subprocess, "run", run)
+    monkeypatch.setattr(
+        resources.psutil,
+        "Process",
+        lambda pid: SimpleNamespace(name=lambda: "ollama", username=lambda: "hpc-ollama"),
+    )
+
+
+def test_gpu_process_snapshot_reads_used_memory(monkeypatch):
+    """GB10ではnvidia-smiだけがGPU確保量を返すため、プロセスごとに保持する。"""
+    _fake_nvidia_smi(monkeypatch, "2275817, /usr/lib/ollama/llama-server, 25053\n")
+
+    processes, available = resources._hpc_gpu_process_snapshot()
+
+    assert available is True
+    assert processes == [
+        {
+            "pid": 2275817,
+            "name": "Ollama",
+            "username": "hpc-ollama",
+            "memory_mb": 25053,
+        }
+    ]
+
+
+def test_gpu_process_snapshot_tolerates_unavailable_memory(monkeypatch):
+    """used_memoryが[N/A]でもプロセス一覧そのものは失わない。"""
+    _fake_nvidia_smi(monkeypatch, "100, /usr/lib/ollama/llama-server, [N/A]\n")
+
+    processes, available = resources._hpc_gpu_process_snapshot()
+
+    assert available is True
+    assert processes[0]["memory_mb"] is None
+
+
+def test_resource_snapshot_reports_gpu_share_of_unified_memory(monkeypatch):
+    """統合メモリの内訳としてGPU確保分を返すことを確認する。
+
+    GB10ではCUDAの確保分がRSSにもcgroupにも現れず、OS実使用(mem_used_gb)から
+    漏れる。内訳を持たないと画面が実態の1/10を示してしまう。
+    """
+    monkeypatch.setattr(resources, "_hpc_slurm_free_resources", lambda: None)
+    monkeypatch.setattr(
+        resources,
+        "_hpc_gpu_process_snapshot",
+        lambda: (
+            [
+                {"pid": 1, "name": "Ollama", "username": "hpc-ollama", "memory_mb": 25053},
+                {"pid": 2, "name": "python", "username": "user01", "memory_mb": None},
+            ],
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        resources.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=128 * 1024 ** 3, available=96 * 1024 ** 3),
+    )
+    monkeypatch.setattr(
+        resources.psutil,
+        "disk_usage",
+        lambda path: SimpleNamespace(total=1000 * 1024 ** 3, free=500 * 1024 ** 3),
+    )
+
+    snapshot = resources._hpc_resource_snapshot()
+
+    assert round(snapshot["mem_gpu_used_gb"], 1) == 24.5
+    # 統合メモリの内数であり、総量を超えない
+    assert snapshot["mem_gpu_used_gb"] <= snapshot["mem_total_gb"]
+    HpcResourceSnapshot.model_validate(snapshot)

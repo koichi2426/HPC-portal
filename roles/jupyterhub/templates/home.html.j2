@@ -49,8 +49,8 @@
         <div class="hpc-unified-memory-panel">
           <strong>統合メモリについて</strong>
           <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
-          <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{{ "%.1f"|format(res.mem_slurm_used_gb) }} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {{ "%.1f"|format(res.mem_slurm_available_gb) }} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {{ "%.1f"|format(res.mem_slurm_total_gb) }} GB</dd></div></dl>
-          <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。</p>
+          <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{{ "%.1f"|format(res.mem_slurm_used_gb) }} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {{ "%.1f"|format(res.mem_slurm_available_gb) }} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{{ "%.1f"|format(res.mem_used_gb) }} GB</dd></div><div><dt>うちGPU確保分</dt><dd data-resource-text="mem_gpu_used_gb">{{ "%.1f"|format(res.mem_gpu_used_gb) }} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {{ "%.1f"|format(res.mem_slurm_total_gb) }} GB</dd></div></dl>
+          <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。GPUが確保した分は専用VRAMではなくこの統合メモリの内数ですが、OS実使用には現れないため別に示しています。</p>
         </div>
       </details>
       <div class="gx10-resource-meter">
@@ -109,7 +109,7 @@
           </tbody>
         </table>
       </div>
-      <div class="hpc-muted" style="font-size:12px; margin-top:10px;">メモリ上限はSlurmの割当値です。最大実使用メモリは30秒間隔で収集されます。</div>
+      <div class="hpc-muted" style="font-size:12px; margin-top:10px;">メモリ上限はSlurmの割当値です。実使用メモリはCPU側の最大値(30秒間隔で収集)と、GPUが確保した統合メモリの合計です。統合メモリ構成のためGPU確保分はCPU側の値に現れず、別に集計しています。</div>
       <div data-hpc-admin-apps-message class="gx10-admin-msg"></div>
     </section>
   {% endif %}
