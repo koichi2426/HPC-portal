@@ -300,12 +300,55 @@
 
     - name: GPU要求ジョブの開始予定時刻を抽出
       ansible.builtin.set_fact:
+        # sbatch --test-only は "Job N to start at <ISO8601> using ..." を stderr へ返す。
+        # 正規表現はYAMLとJinjaでエスケープが二重になり空振りするため、split で取り出す。
         smoke_gpu_start_at: >-
           {{
-            (smoke_gpu_schedulable.stderr | default(''))
-            | regex_search('\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}')
-            | default('', true)
+            (smoke_gpu_schedulable.stderr | default('')).split('to start at ')[1].split(' ')[0]
+            if 'to start at ' in (smoke_gpu_schedulable.stderr | default('')) else ''
           }}
+      when:
+        - smoke_ollama_status.running | default(false) | bool
+        - "'GPU ' in (smoke_gpu.stdout | default(''))"
+        - smoke_gpu_schedulable.skipped is not defined
+
+    - name: GPU要求ジョブを試算できたことを確認
+      ansible.builtin.assert:
+        that:
+          - smoke_gpu_schedulable.rc == 0
+          - smoke_gpu_start_at | length > 0
+        fail_msg: >-
+          GPUを1枚要求する最小ジョブの開始予定を読み取れませんでした
+          （{{ smoke_gpu_schedulable.stderr | default('') | trim }}）。
+        success_msg: "GPU要求ジョブの開始予定: {{ smoke_gpu_start_at }}"
+        quiet: true
+      when:
+        - smoke_ollama_status.running | default(false) | bool
+        - "'GPU ' in (smoke_gpu.stdout | default(''))"
+        - smoke_gpu_schedulable.skipped is not defined
+
+    - name: 開始予定までの秒数を計算
+      ansible.builtin.command:
+        # 時刻の解釈は対象ノード上で完結させる（制御ノードとタイムゾーンが異なりうるため）。
+        argv:
+          - date
+          - -d
+          - "{{ smoke_gpu_start_at }}"
+          - +%s
+      register: smoke_gpu_start_epoch
+      changed_when: false
+      when:
+        - smoke_ollama_status.running | default(false) | bool
+        - "'GPU ' in (smoke_gpu.stdout | default(''))"
+        - smoke_gpu_schedulable.skipped is not defined
+
+    - name: 対象ノードの現在時刻を取得
+      ansible.builtin.command:
+        argv:
+          - date
+          - +%s
+      register: smoke_now_epoch
+      changed_when: false
       when:
         - smoke_ollama_status.running | default(false) | bool
         - "'GPU ' in (smoke_gpu.stdout | default(''))"
@@ -314,14 +357,9 @@
     - name: GPU要求ジョブがすぐに開始できることを確認
       ansible.builtin.assert:
         that:
-          - smoke_gpu_schedulable.rc == 0
-          - smoke_gpu_start_at | length > 0
-          - >-
-            ((smoke_gpu_start_at | to_datetime('%Y-%m-%dT%H:%M:%S')).strftime('%s') | int)
-            - (ansible_date_time.epoch | int) < 86400
+          - (smoke_gpu_start_epoch.stdout | int) - (smoke_now_epoch.stdout | int) < 86400
         fail_msg: >-
-          GPUを1枚要求する最小ジョブの開始予定が24時間以上先です
-          （{{ smoke_gpu_schedulable.stderr | default('') | trim }}）。
+          GPUを1枚要求する最小ジョブの開始予定が24時間以上先です（{{ smoke_gpu_start_at }}）。
           GPU枠を無期限に占有しているジョブがないか squeue で確認してください。
         success_msg: "GPU要求ジョブはすぐに開始できます: {{ smoke_gpu_start_at }}"
         quiet: true
