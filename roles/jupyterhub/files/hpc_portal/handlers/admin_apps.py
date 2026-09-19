@@ -116,6 +116,55 @@ def _hpc_slurm_max_rss(job_ids: list[str]) -> dict[str, int]:
     )
     return usage
 
+_HPC_MEMORY_OVERUSE_WARN_RATIO = 1.2
+
+
+def _hpc_memory_overuse(used_bytes: int | None, requested: str) -> dict:
+    """要求メモリに対する実使用量の超過状況を判定する。
+
+    ConstrainRAMSpace=no のため --mem は物理的な上限ではなく、統合メモリ構成では
+    GPUが確保した分もこの枠から出ていく。超過していても誰も止めないため、
+    利用者と管理者が気付けるよう状態だけを返す。
+
+    Args:
+        used_bytes: CPU側とGPU側を合算した実使用量。取得できなければNone。
+        requested: ``squeue`` が返す要求メモリ（``40G`` など）。
+
+    Returns:
+        使用率と警告レベルを含む辞書。判定できない場合は使用率をNoneにする。
+    """
+    limit_bytes = _hpc_slurm_memory_bytes(requested)
+    if not used_bytes or not limit_bytes:
+        return {
+            "memory_limit_bytes": limit_bytes,
+            "memory_usage_ratio": None,
+            "memory_overuse_level": "",
+            "memory_overuse_label": "",
+        }
+    ratio = used_bytes / limit_bytes
+    if ratio > _HPC_MEMORY_OVERUSE_WARN_RATIO:
+        level = "warning"
+    elif ratio > 1.0:
+        level = "caution"
+    else:
+        level = ""
+    return {
+        "memory_limit_bytes": limit_bytes,
+        "memory_usage_ratio": ratio,
+        "memory_overuse_level": level,
+        # 割合だけでは「あとどれだけ要求を増やせばよいか」が分からないため、
+        # 実使用量と超過量を実数で示す。
+        "memory_overuse_label": (
+            f"要求 {_hpc_format_storage_bytes(limit_bytes)} に対して "
+            f"{_hpc_format_storage_bytes(used_bytes)} を使用しています"
+            f"（{_hpc_format_storage_bytes(used_bytes - limit_bytes)} 超過 / "
+            f"{ratio * 100:.0f}%）"
+            if level
+            else ""
+        ),
+    }
+
+
 def _hpc_job_id_of_pid(pid: int) -> str:
     """PIDが属するSlurmジョブのIDを cgroup から逆引きする。
 
@@ -278,6 +327,7 @@ def _hpc_admin_apps_snapshot_uncached() -> tuple[list[dict], str]:
             total = (rss_bytes or 0) + (gpu_bytes or 0)
             row["memory_used_bytes"] = total
             row["memory_used_label"] = _hpc_format_storage_bytes(total)
+        row.update(_hpc_memory_overuse(row["memory_used_bytes"], row["memory"]))
     rows.sort(key=lambda row: (row["username"], row["app"], row["job_id"]))
     return rows, ""
 

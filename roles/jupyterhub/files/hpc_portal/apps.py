@@ -429,6 +429,48 @@ def _hpc_spawner_job_url(spawner, server_name: str, user) -> str:
     return url_path_join(f"/user/{user.name}", "/")
 
 
+def _hpc_spawner_memory_usage(job_id: str, requested: str) -> dict:
+    """自分のアプリのメモリ実使用量と超過状況を取得する。
+
+    Args:
+        job_id: 対象のSlurm Job ID。
+        requested: 要求メモリ（``16G`` などの表記）。
+
+    Returns:
+        実使用量と超過状況。取得できない場合は空の値を返す。
+    """
+    empty = {
+        "memory_used_label": "",
+        "gpu_memory_label": "",
+        "memory_overuse_level": "",
+        "memory_overuse_label": "",
+    }
+    if not job_id:
+        return empty
+    try:
+        from .handlers.admin_apps import (
+            _hpc_format_storage_bytes,
+            _hpc_job_gpu_memory_bytes,
+            _hpc_memory_overuse,
+            _hpc_slurm_max_rss,
+        )
+
+        rss = _hpc_slurm_max_rss([str(job_id)]).get(str(job_id))
+        gpu = _hpc_job_gpu_memory_bytes().get(str(job_id))
+        if rss is None and gpu is None:
+            return empty
+        used = (rss or 0) + (gpu or 0)
+        overuse = _hpc_memory_overuse(used, requested)
+        return {
+            "memory_used_label": _hpc_format_storage_bytes(used),
+            "gpu_memory_label": _hpc_format_storage_bytes(gpu) if gpu else "",
+            "memory_overuse_level": overuse["memory_overuse_level"],
+            "memory_overuse_label": overuse["memory_overuse_label"],
+        }
+    except Exception:
+        return empty
+
+
 def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
     """アプリ詳細画面用の表示データ
 
@@ -479,4 +521,8 @@ def _hpc_spawner_detail_context(spawner, server_name: str, user) -> dict:
             uo.get("ubuntu_version") or HPC_JUPYTER_UBUNTU_VERSION
         ),
         "ubuntu_target_version": HPC_JUPYTER_UBUNTU_VERSION,
+        # 統合メモリ構成ではGPUが確保した分も要求メモリの枠から出ていくが、
+        # ConstrainRAMSpace=no のため超過しても停止しない。利用者自身が
+        # 気付けるよう、自分のアプリの使用状況を渡す。
+        **_hpc_spawner_memory_usage(jid, alloc.get("memory", "")),
     }

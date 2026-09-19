@@ -25,6 +25,10 @@ class HpcAdminApp(BaseModel):
     gpu_memory_label: str = "—"
     memory_used_bytes: int | None = None
     memory_used_label: str = "取得不可"
+    memory_limit_bytes: int | None = None
+    memory_usage_ratio: float | None = None
+    memory_overuse_level: str = ""
+    memory_overuse_label: str = ""
 
 
 class HpcAdminAppsResponse(BaseModel):

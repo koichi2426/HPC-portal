@@ -217,3 +217,81 @@ def test_admin_apps_snapshot_keeps_label_when_nothing_measurable(monkeypatch):
     assert rows[0]["memory_used_bytes"] is None
     assert rows[0]["memory_used_label"] == "計測待ち"
     assert rows[0]["gpu_memory_label"] == "—"
+
+
+@pytest.mark.parametrize(
+    ("used", "requested", "level"),
+    [
+        (8 * 1024**3, "16G", ""),            # 要求内
+        (16 * 1024**3, "16G", ""),           # ちょうど
+        (18 * 1024**3, "16G", "caution"),    # 超過だが2割以内
+        (26 * 1024**3, "16G", "warning"),    # 2割超
+        (None, "16G", ""),                   # 実使用を取得できない
+        (8 * 1024**3, "", ""),               # 要求を解釈できない
+    ],
+)
+def test_memory_overuse_levels(used, requested, level):
+    result = admin_apps._hpc_memory_overuse(used, requested)
+
+    assert result["memory_overuse_level"] == level
+    if level:
+        assert "要求" in result["memory_overuse_label"]
+    else:
+        assert result["memory_overuse_label"] == ""
+
+
+def test_memory_overuse_reports_concrete_amounts():
+    """割合だけでなく実使用量と超過量を実数で示す。
+
+    「何%超過」だけでは、次にどれだけ要求を増やせばよいか分からない。
+    """
+    result = admin_apps._hpc_memory_overuse(32 * 1024**3, "8G")
+
+    assert result["memory_limit_bytes"] == 8 * 1024**3
+    assert result["memory_usage_ratio"] == 4.0
+    label = result["memory_overuse_label"]
+    assert "8.0 GB" in label      # 要求
+    assert "32.0 GB" in label     # 実使用
+    assert "24.0 GB 超過" in label  # 差分
+    assert "400%" in label
+
+
+def test_admin_apps_snapshot_flags_memory_overuse(monkeypatch):
+    """GPU確保分を含めた実使用が要求を超えたジョブへ警告を付ける。
+
+    ConstrainRAMSpace=no のため超過しても停止しない。統合メモリでは
+    GPU確保分がcgroupにも現れないため、表示だけが気付く手段になる。
+    """
+    stdout = "44|user01|jhub-app|RUNNING|2|8G|N/A|10:00|2026-01-01T00:00:00"
+    monkeypatch.setattr(
+        admin_apps,
+        "_hpc_run_cmd",
+        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    )
+    monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(
+        admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {"44": 2 * 1024**3}
+    )
+    monkeypatch.setattr(
+        admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
+    )
+
+    rows, _ = admin_apps._hpc_admin_apps_snapshot_uncached()
+
+    row = rows[0]
+    assert row["memory_used_bytes"] == 26 * 1024**3
+    assert row["memory_overuse_level"] == "warning"
+    assert "8.0 GB" in row["memory_overuse_label"]
+
+
+def test_admin_apps_js_renders_overuse_warning():
+    """管理画面のJavaScriptが超過を描画することを確認する。"""
+    from pathlib import Path
+
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "roles/jupyterhub/files/hpc-portal-js/admin-apps.js"
+    ).read_text(encoding="utf-8")
+
+    assert "memory_overuse_label" in script
+    assert "hpc-memory-overuse-" in script

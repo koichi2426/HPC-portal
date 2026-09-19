@@ -89,10 +89,25 @@
 
   <div class="gx10-detail-card">
     <div class="hpc-section-title" style="margin-bottom:12px;">このアプリの割り当て（Slurm 要求値）</div>
+    {% if d.memory_overuse_label %}
+    <p class="hpc-memory-overuse-note hpc-memory-overuse-{{ d.memory_overuse_level }}">
+      メモリ超過: {{ d.memory_overuse_label }}
+      統合メモリのためGPUが確保した分も要求メモリから消費されます。次回の起動では要求を増やしてください。
+    </p>
+    {% endif %}
     <table class="gx10-detail-table" aria-label="割り当てリソース">
       <tr><th>アプリ種別</th><td>{{ d.app_label }} <span class="hpc-muted">({{ d.app_choice }})</span></td></tr>
       <tr><th>vCPU</th><td>{{ d.allocation['cpu'] }}</td></tr>
       <tr><th>メモリ</th><td>{{ d.allocation['memory'] }}</td></tr>
+      {% if d.memory_used_label %}
+      <tr>
+        <th>実使用メモリ</th>
+        <td>
+          <span{% if d.memory_overuse_level %} class="hpc-memory-overuse-{{ d.memory_overuse_level }}"{% endif %}>{{ d.memory_used_label }}</span>
+          {% if d.gpu_memory_label %}<span class="hpc-muted">（うちGPU確保分 {{ d.gpu_memory_label }}）</span>{% endif %}
+        </td>
+      </tr>
+      {% endif %}
       <tr><th>GPU</th><td>{{ d.allocation['gpu_label'] }}</td></tr>
       <tr><th>最大実行時間</th><td>{{ d.allocation['runtime'] }} <span class="hpc-muted">({{ d.allocation['hours'] }})</span></td></tr>
       {% if d.shared_ollama %}

@@ -45,7 +45,7 @@
     var list = global.document.createElement("dl");
     [
       ["Job ID", String(app.job_id || "—")],
-      ["実使用メモリ", String(app.memory_used_label || "取得不可")],
+      ["実使用メモリ", String(app.memory_used_label || "取得不可"), app.memory_overuse_level],
       ["うちCPU側(最大)", String(app.max_rss_label || "取得不可")],
       ["うちGPU確保分", String(app.gpu_memory_label || "—")],
       ["開始日時", String(app.started_at || "—")],
@@ -55,10 +55,18 @@
       var value = global.document.createElement("dd");
       term.textContent = entry[0];
       value.textContent = entry[1];
+      if (entry[2]) value.className = "hpc-memory-overuse-" + entry[2];
       line.appendChild(term);
       line.appendChild(value);
       list.appendChild(line);
     });
+    // 超過は誰も止めないため（ConstrainRAMSpace=no）、気付けるよう明示する。
+    if (app.memory_overuse_label) {
+      var overuse = global.document.createElement("p");
+      overuse.className = "hpc-memory-overuse-note hpc-memory-overuse-" + app.memory_overuse_level;
+      overuse.textContent = "メモリ超過: " + app.memory_overuse_label;
+      panel.appendChild(overuse);
+    }
     panel.appendChild(list);
     detailCell.appendChild(panel);
     detailRow.appendChild(detailCell);
