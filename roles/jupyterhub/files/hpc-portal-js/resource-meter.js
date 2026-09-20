@@ -28,6 +28,7 @@
       mem_status: data.mem_status,
       mem_available_gb: "残り " + format1(data.mem_available_gb) + " GB",
       mem_used_gb: format1(data.mem_used_gb) + " GB",
+      mem_gpu_used_gb: format1(data.mem_gpu_used_gb) + " GB",
       mem_total_gb: "最大 " + format1(data.mem_total_gb) + " GB",
       mem_slurm_status: data.mem_slurm_status,
       mem_slurm_available_gb: "残り " + format1(data.mem_slurm_available_gb) + " GB",

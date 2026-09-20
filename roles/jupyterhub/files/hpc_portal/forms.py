@@ -2,6 +2,8 @@
 
 import html
 
+from tornado import web
+
 from .apps import (
     _hpc_allocation_html,
     _hpc_runtime_from_hours_choice,
@@ -38,7 +40,7 @@ from .common import (
     url_path_join,
 )
 from .ollama import _hpc_ollama_gpu_label, _hpc_shared_ollama_detail_context
-from .resources import _hpc_resource_snapshot
+from .resources import _hpc_resource_snapshot, _hpc_slurm_free_resources
 from .users import _hpc_is_portal_admin
 
 
@@ -184,6 +186,7 @@ def make_options_form(spawner):
     mem_available_gb = resource["mem_available_gb"]
     mem_total_gb = resource["mem_total_gb"]
     mem_used_gb = resource["mem_used_gb"]
+    mem_gpu_used_gb = resource["mem_gpu_used_gb"]
     mem_slurm_available = resource["mem_slurm_available"]
     mem_slurm_available_gb = resource["mem_slurm_available_gb"]
     mem_slurm_used_gb = resource["mem_slurm_used_gb"]
@@ -390,6 +393,27 @@ def make_options_form(spawner):
 
     shared_ollama_gpu_label = _hpc_ollama_gpu_label()
 
+    # GPUを持たないノードでは選択肢を出さない。出したうえで無効化すると、
+    # 選べたのに効かない状態になり原因が分からなくなる。
+    if gpu_max > 0:
+        gpu_field_html = (
+            '<div><label class="label">GPU</label>'
+            '<select class="form-control input-dark" name="gpu">'
+            '<option value="0" selected>使わない</option>'
+            '<option value="1">使う（全員で共有）</option></select>'
+            '<span class="hpc-muted" style="display:block;margin-top:4px;font-size:0.75rem;">'
+            'GPUは予約せず全員で共有します。統合メモリのためGPU専用のメモリはなく、'
+            'GPUが確保した分も上のRAMから消費されます。モデルのサイズを含めて指定してください。'
+            '</span></div>'
+        )
+    else:
+        gpu_field_html = (
+            '<div><label class="label">GPU</label>'
+            '<input type="hidden" name="gpu" value="0">'
+            '<p class="hpc-muted" style="margin:6px 0 0;font-size:0.75rem;">'
+            'このノードでは利用できません</p></div>'
+        )
+
     header_html = f"""
     <div id="resource-dashboard" data-hpc-resource-meter data-hpc-user="{html.escape(user.name, quote=True)}">
         <div class="gx10-card">
@@ -415,8 +439,8 @@ def make_options_form(spawner):
                     <div class="hpc-unified-memory-panel">
                         <strong>統合メモリについて</strong>
                         <p>CPUとGPUが共有して使用するメモリです。GPU専用VRAMはありません。</p>
-                        <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{mem_slurm_used_gb:.1f} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {mem_slurm_available_gb:.1f} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{mem_used_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {mem_slurm_total_gb:.1f} GB</dd></div></dl>
-                        <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。</p>
+                        <dl><div><dt>Slurm予約済み</dt><dd data-resource-text="mem_slurm_used_gb">{mem_slurm_used_gb:.1f} GB</dd></div><div><dt>割り当て可能</dt><dd data-resource-text="mem_slurm_available_gb">残り {mem_slurm_available_gb:.1f} GB</dd></div><div><dt>OS実使用</dt><dd data-resource-text="mem_used_gb">{mem_used_gb:.1f} GB</dd></div><div><dt>うちGPU確保分</dt><dd data-resource-text="mem_gpu_used_gb">{mem_gpu_used_gb:.1f} GB</dd></div><div><dt>最大</dt><dd data-resource-text="mem_slurm_total_gb">最大 {mem_slurm_total_gb:.1f} GB</dd></div></dl>
+                        <p class="hpc-unified-memory-note">メーターはSlurmが割り当て可能な残量です。他のジョブが予約したメモリはOS上まだ未使用でも割り当てられないため、OS実使用とは一致しません。GPUが確保した分は専用VRAMではなくこの統合メモリの内数ですが、OS実使用には現れないため別に示しています。</p>
                     </div>
                 </details>
                 <div class="resource-meter">
@@ -478,10 +502,11 @@ def make_options_form(spawner):
                 <div id="standard-resource-options">
                     <div class="hpc-form-grid-2">
                         <div><label class="label">vCPUs</label><input type="number" class="form-control input-dark" name="cpu" value="2" min="1"></div>
-                        <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1"></div>
+                        <div><label class="label">RAM (GB)</label><input type="number" class="form-control input-dark" name="mem" value="4" min="1">
+                            <span class="hpc-field-hint" data-mem-bump-hint role="status" aria-live="polite" hidden></span></div>
                     </div>
                     <div class="hpc-form-grid-2">
-                        <div><label class="label">GPUs</label><input type="number" class="form-control input-dark" name="gpu" value="0" min="0" max="{gpu_max}"></div>
+                        {gpu_field_html}
                         <div><label class="label">最大実行時間</label>
                             <select class="form-control input-dark" name="hours">
                                 <option value="1">1 時間</option>
@@ -531,6 +556,73 @@ def make_options_form(spawner):
     return header_html + static_js
 
 
+def _hpc_parse_requested_memory_gb(memory: str) -> float | None:
+    """フォームのメモリ指定(例: 40G)をGBへ変換する。
+
+    Args:
+        memory: ``40G`` や ``4096M`` のようなSlurmのメモリ表記。
+
+    Returns:
+        GB単位の要求量。解釈できなければNone。
+    """
+    raw = str(memory or "").strip().upper()
+    if not raw:
+        return None
+    multipliers = {"K": 1 / 1024**2, "M": 1 / 1024, "G": 1.0, "T": 1024.0}
+    suffix = raw[-1]
+    factor = multipliers.get(suffix)
+    number = raw[:-1] if factor is not None else raw
+    try:
+        return float(number) * (factor if factor is not None else 1.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hpc_requested_resources_error(nprocs, memory) -> str:
+    """要求リソースがノードの空きを超えていないか投入前に検証する。
+
+    Slurmの空きを超える要求は PENDING のまま start_timeout(5分)に達して失敗する。
+    利用者は理由の分からないまま5分待たされるため、sbatchへ渡す前に弾く。
+
+    Args:
+        nprocs: 要求vCPU数。
+        memory: 要求メモリ（Slurm表記）。
+
+    Returns:
+        起動できない理由。起動できる場合、またはSlurmへ問い合わせられない場合は空文字列。
+    """
+    free = _hpc_slurm_free_resources()
+    if not free:
+        # Slurmへ問い合わせられないときは判断材料が無いため通す（従来どおりの挙動）。
+        return ""
+    reasons = []
+    try:
+        requested_cpu = int(str(nprocs).strip() or 0)
+    except (TypeError, ValueError):
+        requested_cpu = 0
+    available_cpu = float(free.get("cpu_available_count") or 0)
+    if requested_cpu > 0 and requested_cpu > available_cpu:
+        reasons.append(
+            f"vCPU {requested_cpu} を要求していますが、空きは {available_cpu:.0f} です"
+        )
+    requested_mem_gb = _hpc_parse_requested_memory_gb(memory)
+    available_mem_gb = float(free.get("mem_available_mb") or 0) / 1024
+    if requested_mem_gb and requested_mem_gb > available_mem_gb:
+        reasons.append(
+            f"メモリ {requested_mem_gb:.0f} GB を要求していますが、"
+            f"空きは {available_mem_gb:.1f} GB です"
+        )
+    # GPUはGRES予約せず全ジョブで共有するため、枚数の空き判定はしない。
+    # 統合メモリ構成ではGPUの確保分もメモリから出ていくため、上のメモリ判定が効く。
+    if not reasons:
+        return ""
+    return (
+        "現在の空きリソースでは起動できません。"
+        + "、".join(reasons)
+        + "。構成を小さくするか、実行中のアプリが終了してからお試しください。"
+    )
+
+
 # 3. データの受け取り
 def options_from_form(formdata):
     """フォーム入力をSpawnerのuser_optionsへ変換する。
@@ -546,21 +638,36 @@ def options_from_form(formdata):
     recommendation = recommendations.get(app_choice, recommendations["ubuntu-cli"])
     h = formdata.get("hours", [recommendation["hours"]])[0]
     runtime, runtime_line = _hpc_runtime_from_hours_choice(h)
-    gpu_max = HPC_GPU_COUNT
     try:
         g = int(formdata.get("gpu", [recommendation["gpu"]])[0] or 0)
     except ValueError:
         g = 0
-    g = max(0, min(gpu_max, g))
+    # GPUはGRES予約せず全員で共有するため、値は「使う/使わない」の2値。
+    # HPC_GPU_COUNT でクランプしない。この値は slurm ロールが set_fact する
+    # slurm_effective_gpu_count に由来し、--tags jupyterhub のようにslurmロールを
+    # 飛ばすデプロイでは 0 になる。枚数として扱うと、その場合に利用者の選択が
+    # 黙って 0 へ潰され、CUDA_VISIBLE_DEVICES="" でGPUが使えなくなる。
+    g = 1 if g > 0 else 0
     memory = str(formdata.get("mem", [recommendation["memory"]])[0]).strip()
     if not memory.upper().endswith("G"):
         memory = f"{memory}G"
+    nprocs = str(formdata.get("cpu", [recommendation["cpu"]])[0])
+    error = _hpc_requested_resources_error(nprocs, memory)
+    if error:
+        raise web.HTTPError(400, error)
     return {
-        "nprocs": str(formdata.get("cpu", [recommendation["cpu"]])[0]),
+        "nprocs": nprocs,
         "memory": memory,
         "runtime": runtime,
         "runtime_line": runtime_line,
-        "gres_line": f"#SBATCH --gres=gpu:{g}" if g > 0 else "",
+        # GRES予約はしない。ノードのGPUは1枚しかなく、予約すると2人目以降が
+        # 永久にPENDINGになる。cgroup.conf で ConstrainDevices=no を明示しており、
+        # 起動スクリプトは常に apptainer exec --nv で実行するため、予約が無くても
+        # GPUは使える（共有Ollamaと同じ方式）。
+        "gres_line": "",
+        # 「GPUなし」を選んだジョブがGPUメモリを確保しないよう、CUDAから隠す。
+        # 予約で締め出せない以上、ここが唯一の「使わない」の表明手段になる。
+        "gpu_visibility_line": "" if g > 0 else 'export CUDA_VISIBLE_DEVICES=""',
         "gpu": str(g),
         "app_choice": app_choice,
         "job_name": "jhub-openwebui" if app_choice == "open-webui" else "jhub-app",

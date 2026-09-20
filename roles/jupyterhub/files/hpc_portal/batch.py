@@ -112,6 +112,10 @@ c.HPCSlurmSpawner.batch_script = f"""#!/bin/bash
 set -euo pipefail
 export PATH=/opt/jupyterhub/venv/bin:$PATH
 
+# GPUを使わない構成では CUDA から GPU を隠す。GRES予約をしない方針のため、
+# スケジューラ側では締め出せず、ここが唯一の「使わない」の表明手段になる。
+{js} gpu_visibility_line {je}
+
 # 環境によっては JUPYTERHUB_API_TOKEN が空で JPY_API_TOKEN のみ渡るため補完する
 _hub_token="$(printenv JUPYTERHUB_API_TOKEN || true)"
 _jpy_token="$(printenv JPY_API_TOKEN || true)"

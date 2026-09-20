@@ -115,6 +115,8 @@
 
 .hpc-admin-app-details-panel {
   display: flex;
+  /* メモリ超過の注意書きを下段へ回すため折り返しを許可する */
+  flex-wrap: wrap;
   width: 100%;
   padding: 12px 14px;
   align-items: end;
@@ -229,3 +231,8 @@
   }
 }
 
+/* 超過の注意書きは項目の幅を奪わないよう、パネル内の全幅で下段に置く */
+.hpc-admin-app-details-panel .hpc-memory-overuse-note {
+  flex: 1 0 100%;
+  margin: 0;
+}

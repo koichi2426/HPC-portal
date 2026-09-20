@@ -1,3 +1,28 @@
+# slurm_effective_gpu_count は通常 slurm ロールが set_fact で設定する。
+# --tags jupyterhub のようにslurmロールを飛ばすデプロイではこの fact が無く、
+# jupyterhub.env の HPC_GPU_COUNT が 0 になってGPUを選べなくなる。
+# そのため、未定義のときはここでも検出する。
+- name: GPU数を検出（slurmロールを経由しないデプロイ向け）
+  ansible.builtin.command: nvidia-smi -L
+  register: jupyterhub_nvidia_smi
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: slurm_effective_gpu_count is not defined
+
+- name: 検出したGPU数を設定
+  ansible.builtin.set_fact:
+    slurm_effective_gpu_count: >-
+      {{
+        slurm_gpu_count
+        | default(
+            (jupyterhub_nvidia_smi.stdout_lines | default([]))
+            | select('match', '^GPU ') | list | length
+          )
+        | int
+      }}
+  when: slurm_effective_gpu_count is not defined
+
 - name: 必要なOSパッケージをインストール
   ansible.builtin.package:
     name:

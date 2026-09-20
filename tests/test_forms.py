@@ -3,6 +3,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from tornado import web
+
 from hpc_portal import forms
 
 
@@ -19,7 +22,7 @@ def test_app_resource_recommendations_match_supported_workloads():
     assert recommendations["open-webui"]["cpu"] == "2"
     assert recommendations["open-webui"]["memory"] == "4"
     assert recommendations["shared-ollama"]["cpu"] == "8"
-    assert recommendations["shared-ollama"]["memory"] == "64G"
+    assert recommendations["shared-ollama"]["memory"] == "40G"
     assert recommendations["shared-ollama"]["gpu"] == "1"
 
 
@@ -47,6 +50,7 @@ def test_spawn_form_renders_recommendation_card(monkeypatch):
         "mem_available_gb": 90.0,
         "mem_total_gb": 120.0,
         "mem_used_gb": 30.0,
+        "mem_gpu_used_gb": 24.5,
         "mem_status": "余裕あり",
         "mem_slurm_available": 46.0,
         "mem_slurm_available_gb": 55.6,
@@ -104,7 +108,7 @@ def test_shared_ollama_memory_default_keeps_single_unit_suffix():
     user_options = forms.options_from_form({"app_choice": ["shared-ollama"]})
 
     assert user_options["nprocs"] == "8"
-    assert user_options["memory"] == "64G"
+    assert user_options["memory"] == "40G"
     assert user_options["gpu"] == "1"
 
 
@@ -119,6 +123,7 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
         "mem_available_gb": 90.0,
         "mem_total_gb": 120.0,
         "mem_used_gb": 30.0,
+        "mem_gpu_used_gb": 24.5,
         "mem_status": "余裕あり",
         "mem_slurm_available": 46.0,
         "mem_slurm_available_gb": 55.6,
@@ -151,7 +156,7 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
     rendered = forms.make_options_form(spawner)
 
     assert 'name="ollama_memory"' in rendered
-    assert '<option value="64G" selected>64G RAM</option>' in rendered
+    assert '<option value="40G" selected>40G RAM</option>' in rendered
     assert 'name="ollama_parallel"' in rendered
     assert 'name="ollama_context_length"' in rendered
     assert '<option value="131072" selected>128K</option>' in rendered
@@ -198,3 +203,234 @@ def test_every_resource_meter_uses_slurm_backed_values():
         )
         assert 'data-resource-width="mem_slurm_available"' in body, path.name
         assert 'data-resource-width="gpu_available"' in body, path.name
+
+
+def test_every_resource_meter_shows_gpu_share_of_unified_memory():
+    """統合メモリの内訳にGPU確保分を出す描画元が揃っていることを確認する。
+
+    GB10ではGPUの確保分がOS実使用に現れないため、内訳が無い画面は実態の
+    1/10ほどしか示さない。3箇所が同じマークアップを複製しているので、
+    片方だけ直しても気付けない。
+    """
+    sources = _resource_meter_sources()
+
+
+@pytest.mark.parametrize(
+    ("raw", "gigabytes"),
+    [("40G", 40.0), ("4096M", 4.0), ("1T", 1024.0), ("8", 8.0), ("", None), ("bad", None)],
+)
+def test_parse_requested_memory_gb(raw, gigabytes):
+    assert forms._hpc_parse_requested_memory_gb(raw) == gigabytes
+
+
+def _free(cpu=12.0, mem_mb=56970, gpu=1):
+    return {
+        "cpu_total": 20,
+        "cpu_available_count": cpu,
+        "mem_total_mb": 122506,
+        "mem_available_mb": mem_mb,
+        "gpu_max": 1,
+        "gpu_available_count": gpu,
+    }
+
+
+def test_requested_resources_pass_when_within_free_capacity(monkeypatch):
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+
+    assert forms._hpc_requested_resources_error("8", "32G") == ""
+
+
+def test_requested_resources_reject_memory_over_capacity(monkeypatch):
+    """空き55.6GBに対する96G要求は、5分待たずに理由付きで弾く。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+
+    error = forms._hpc_requested_resources_error("4", "96G")
+
+    assert "メモリ" in error
+    assert "96" in error and "55.6" in error
+
+
+def test_requested_resources_ignore_gpu_availability(monkeypatch):
+    """GPUはGRES予約せず共有するため、空き枚数では弾かない。
+
+    枚数で弾くと、実際には起動できる構成まで拒否してしまう。
+    GPUの確保分は統合メモリから出ていくため、メモリ判定が実質的な歯止めになる。
+    """
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(gpu=0))
+
+    assert forms._hpc_requested_resources_error("2", "4G") == ""
+
+
+def test_requested_resources_reject_cpu_over_capacity(monkeypatch):
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(cpu=4.0))
+
+    error = forms._hpc_requested_resources_error("16", "4G")
+
+    assert "vCPU" in error
+
+
+def test_requested_resources_allow_when_slurm_unavailable(monkeypatch):
+    """Slurmへ問い合わせられないときは判断材料が無いため通す。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: None)
+
+    assert forms._hpc_requested_resources_error("20", "999G") == ""
+
+
+def test_options_from_form_rejects_request_over_capacity(monkeypatch):
+    """sbatchへ渡す前に400で弾き、PENDINGの5分待ちを避ける。"""
+    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+
+    with pytest.raises(web.HTTPError) as excinfo:
+        forms.options_from_form({"app_choice": ["ubuntu-cli"], "mem": ["96"], "cpu": ["2"]})
+
+    assert excinfo.value.status_code == 400
+    assert "メモリ" in str(excinfo.value.log_message)
+
+
+def test_user_jobs_no_longer_reserve_gpu_gres():
+    """利用者ジョブはGRES予約しない。
+
+    ノードのGPUは1枚しかなく、予約すると2人目以降が永久にPENDINGになる。
+    起動スクリプトは常に apptainer exec --nv で実行するため、予約が無くてもGPUは使える。
+    """
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": ["1"], "mem": ["16"]}
+    )
+
+    assert user_options["gres_line"] == ""
+    assert user_options["gpu"] == "1"
+    # 「使う」を選んだジョブはGPUを隠さない
+    assert user_options["gpu_visibility_line"] == ""
+
+
+def test_jobs_without_gpu_hide_cuda_devices():
+    """「使わない」を選んだジョブはCUDAからGPUを隠す。
+
+    GRES予約をやめた以上スケジューラ側では締め出せず、統合メモリのため
+    意図しないGPU確保がそのまま要求メモリの枠を圧迫する。
+    """
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": ["0"], "mem": ["4"]}
+    )
+
+    assert user_options["gres_line"] == ""
+    assert user_options["gpu_visibility_line"] == 'export CUDA_VISIBLE_DEVICES=""'
+
+
+def test_spawn_form_offers_shared_gpu_choice(monkeypatch):
+    """GPU欄が枚数ではなく共有の可否になっていることを確認する。"""
+    resource = {
+        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
+        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 24.5,
+        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり", "gpu_max": 1, "gpu_available": 100.0,
+        "gpu_available_count": 1, "gpu_status": "余裕あり",
+        "gpu_processes": [], "gpu_processes_available": True,
+    }
+    user = SimpleNamespace(name="user01", spawners={})
+    spawner = SimpleNamespace(
+        user=user, notebook_dir="/home/user01", homedir="/home/user01"
+    )
+    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+
+    rendered = forms.make_options_form(spawner)
+
+    assert '<option value="1">使う（全員で共有）</option>' in rendered
+    assert 'name="gpu"' in rendered
+    # 枚数入力は残さない（1枚を取り合う形ではなくなったため）
+    assert 'type="number" class="form-control input-dark" name="gpu"' not in rendered
+    # GPU確保分もメモリ枠から出ることを画面で伝える
+    assert "GPUが確保した分も上のRAMから消費されます" in rendered
+
+
+def test_gpu_choice_survives_missing_gpu_count(monkeypatch):
+    """HPC_GPU_COUNT が 0 でも GPU の選択を潰さないことを確認する。
+
+    HPC_GPU_COUNT は slurm ロールが set_fact する slurm_effective_gpu_count に
+    由来する。--tags jupyterhub のように slurm ロールを飛ばすデプロイでは
+    この fact が無く 0 になる。枚数としてクランプすると利用者の選択が黙って
+    0 へ潰され、CUDA_VISIBLE_DEVICES="" でGPUが使えなくなる。
+    """
+    monkeypatch.setattr(forms, "HPC_GPU_COUNT", 0)
+
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": ["1"], "mem": ["16"]}
+    )
+
+    assert user_options["gpu"] == "1"
+    assert user_options["gpu_visibility_line"] == ""
+
+
+@pytest.mark.parametrize("raw", ["2", "5", "true"])
+def test_gpu_choice_is_normalized_to_boolean(raw):
+    """GPUは枚数ではなく使う/使わないの2値として正規化する。"""
+    user_options = forms.options_from_form(
+        {"app_choice": ["ubuntu-cli"], "gpu": [raw], "mem": ["16"]}
+    )
+
+    assert user_options["gpu"] in {"0", "1"}
+
+
+def _resource_fixture(gpu_max):
+    return {
+        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
+        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 0.0,
+        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり", "gpu_max": gpu_max, "gpu_available": 100.0,
+        "gpu_available_count": gpu_max, "gpu_status": "余裕あり",
+        "gpu_processes": [], "gpu_processes_available": True,
+    }
+
+
+def test_spawn_form_hides_gpu_choice_without_gpu(monkeypatch):
+    """GPUを持たないノードでは選択肢を出さない。
+
+    出したうえで無効化すると、選べたのに効かない状態になり原因が分からない。
+    """
+    user = SimpleNamespace(name="user01", spawners={})
+    spawner = SimpleNamespace(
+        user=user, notebook_dir="/home/user01", homedir="/home/user01"
+    )
+    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: _resource_fixture(0))
+    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+
+    rendered = forms.make_options_form(spawner)
+
+
+def test_memory_overuse_is_keyed_by_server_name(monkeypatch):
+    """job_id が属性から消えても表示が出るよう server_name をキーにする。
+
+    _spawner_job_id は job_id が空のとき他のソースから回収するが、
+    テンプレートからは同じ回収ができない。キーが噛み合わないと無表示になる。
+    """
+    from hpc_portal import apps
+
+    spawner = SimpleNamespace(
+        job_id="",                    # 属性からは消えている
+        _hpc_job_id="44",             # 回収元にはある
+        user_options={"memory": "8G"},
+        get_state=lambda: {},
+    )
+    user = SimpleNamespace(spawners={"app-20260920-0001": spawner})
+    monkeypatch.setattr(
+        "hpc_portal.handlers.admin_apps._hpc_job_cpu_memory_bytes",
+        lambda: {"44": 1024**3},
+    )
+    monkeypatch.setattr(
+        "hpc_portal.handlers.admin_apps._hpc_job_gpu_memory_bytes",
+        lambda: {"44": 12 * 1024**3},
+    )
+
+    result = apps._hpc_user_memory_overuse(user)
+
+    assert list(result) == ["app-20260920-0001"]
+    assert result["app-20260920-0001"]["memory_used_label"]

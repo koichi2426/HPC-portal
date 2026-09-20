@@ -10,6 +10,9 @@ slurmd_port: 6818
 slurm_cluster_name: hpc
 slurm_control_host: 127.0.0.1
 slurm_node_name: localhost
+# OSとSlurm管理外のsystemdサービス(LiteLLM/SearXNG/JupyterHub等、実機計測で約1.5GB)の
+# ための予約。これが無いとSlurmは物理メモリ全量をジョブへ配ってしまう。
+slurm_mem_spec_limit_mb: 4096
 
 # DNS 設定（inventory 側で上書き可能）
 # 例: hpc_base_domain=example.com, hpc_hub_subdomain=hub
@@ -72,7 +75,8 @@ litellm_initial_models: []
 
 # shared Ollama
 # 新規構築・復旧用の動作確認済みバージョン。Web更新後の実行版は上書きしない。
-ollama_version: "0.32.4"
+# 0.33.3 は qwen3.8 系のレンダラーに対応する（0.32.4 では unknown renderer で失敗した）。
+ollama_version: "0.33.3"
 ollama_service_user: hpc-ollama
 ollama_service_home: /var/lib/hpc-ollama
 ollama_host: "127.0.0.1"
@@ -87,9 +91,13 @@ ollama_update_start_timeout_seconds: 300
 ollama_slurm_job_name: shared-ollama
 ollama_slurm_partition: debug
 ollama_slurm_default_cpus: 8
-ollama_slurm_default_memory: 64G
+# 実機計測: 最大モデル(qwen3.5:35b 23.7GB)を1つ読み込んだ状態で約25.6GB、
+# プロンプトキャッシュ(上限8GB)が育つと約34GBに達する。40Gはそこへ約6GBの余裕を足した値。
+# ConstrainRAMSpace=no のため --mem は物理上限ではなく割り当ての帳簿であり、
+# 実消費より小さく設定するとSlurmが利用者へ配り過ぎてノードが飽和する。
+ollama_slurm_default_memory: 40G
 ollama_slurm_allowed_cpus: [4, 8, 12, 16, 20]
-ollama_slurm_allowed_memory: ["16G", "32G", "64G", "96G", "112G"]
+ollama_slurm_allowed_memory: ["16G", "24G", "32G", "40G", "48G", "56G", "64G", "80G", "96G", "112G"]
 # 共有OllamaはGPUをGRES予約しない。ノードのGPUは1枚しかないため、常駐ジョブが
 # --gres=gpu:1 を保持すると利用者のGPUジョブが永久にPENDINGになる。
 # cgroup.conf が無く ConstrainDevices=no のため、予約なしでもGPUは利用できる。
@@ -97,8 +105,10 @@ ollama_slurm_gpus: 0
 ollama_slurm_time: "INFINITE"
 ollama_default_parallel: 2
 ollama_allowed_parallel: [1, 2, 4]
-ollama_default_max_loaded_models: 2
-ollama_allowed_max_loaded_models: [1, 2, 3]
+# 2モデル同時読み込みは実機計測で約52.7GBを要し、既定の40Gに収まらない。
+# 3モデルは64Gでも足りないため選択肢から外す。
+ollama_default_max_loaded_models: 1
+ollama_allowed_max_loaded_models: [1, 2]
 # Web検索やツール利用に必要な長さを確保する。
 ollama_default_context_length: 131072
 ollama_allowed_context_lengths: [32768, 65536, 131072, 262144]

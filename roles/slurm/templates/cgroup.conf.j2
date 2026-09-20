@@ -1,0 +1,26 @@
+# このファイルが存在しない場合、Slurmは全てのConstrain*を既定値のnoとして扱う。
+# 共有Ollamaはその既定値に依存しているため、暗黙の前提にせず明示する。
+#
+# ConstrainDevices=no を変更してはならない。
+# 共有OllamaはGRES予約なし（ollama_slurm_gpus: 0）でGPUを使用する。yesにすると
+# 割り当てられたGRESのデバイスしか開けなくなり、共有Ollamaから /dev/nvidia0 が
+# 見えなくなってLLM基盤が停止する。ノードのGPUは1枚しかなく、共有Ollamaが
+# --gres=gpu:1 を保持すると利用者のGPUジョブが永久にPENDINGになるため、
+# GRES予約をやめる方針を採っている。
+ConstrainDevices=no
+
+# ConstrainRAMSpace / ConstrainCores は意図的に無効のままとする。
+#
+# 有効にしても、この環境で守りたいものを守れない。GB10は統合メモリ構成で、
+# CUDAが確保したメモリはcgroupのmemory.currentに計上されない。実機計測では
+# 最大モデル1つを読み込んだ状態で cgroup 2.1GB に対し実消費 25.6GB だった
+# （差分はnvidia-smiのused_gpu_memoryにのみ現れる）。したがって
+# ConstrainRAMSpace=yes にしてもGPUメモリの使い過ぎは一切防げない。
+#
+# 一方で副作用は生じる。CPU側のメモリが --mem を超えたジョブはOOM killされ、
+# 共有Ollamaも対象になる。守れないものと引き換えに停止リスクだけを負うため、
+# 有効にしない。GPUメモリの上限が必要ならMPSの
+# CUDA_MPS_PINNED_DEVICE_MEM_LIMIT が唯一の手段だが、GB10では
+# nvmlDeviceGetMemoryInfo が NVML_ERROR_NOT_SUPPORTED を返すため動作は未検証。
+ConstrainRAMSpace=no
+ConstrainCores=no

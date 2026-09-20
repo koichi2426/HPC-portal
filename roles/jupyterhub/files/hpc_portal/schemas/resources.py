@@ -11,6 +11,7 @@ class HpcGpuProcess(BaseModel):
     pid: int
     name: str
     username: str
+    memory_mb: int | None = None
 
 
 class HpcResourceSnapshot(BaseModel):
@@ -26,6 +27,7 @@ class HpcResourceSnapshot(BaseModel):
     mem_available_gb: float
     mem_used_gb: float
     mem_total_gb: float
+    mem_gpu_used_gb: float
     mem_status: str
     mem_slurm_available: float
     mem_slurm_available_gb: float

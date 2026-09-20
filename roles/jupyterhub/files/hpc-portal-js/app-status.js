@@ -8,6 +8,12 @@
   var INTERVAL_MS = 2500;
   var USER_API_URL = "/hub/api/user";
   var ADMIN_API_URL = "/hub/admin/users/api";
+  // 自分のアプリのメモリ使用状況。状態表示(2.5秒)より遅いのは、GPU側は
+  // nvidia-smi が現在値を返すものの、CPU側は JobAcctGatherFrequency=30 が
+  // 下限で、これより短くしても値が変わらないため。
+  var MEMORY_INTERVAL_MS = 5000;
+  var MEMORY_API_URL = "/hub/hpc-app-memory";
+  var memoryInFlight = false;
   var timer = null;
   var inFlight = false;
   var reloadPending = false;
@@ -306,16 +312,86 @@
     }
     refresh();
     refreshOpenWebuiVersions();
+    refreshAppMemory();
+    global.setInterval(function () {
+      if (!global.document.hidden) refreshAppMemory();
+    }, MEMORY_INTERVAL_MS);
     global.document.addEventListener("visibilitychange", function () {
       if (!global.document.hidden) {
         refresh();
+        refreshAppMemory();
       }
     });
+  }
+
+  // --- 自分のアプリのメモリ使用状況 ---
+  function clearOveruseClasses(element) {
+    element.classList.remove("hpc-memory-overuse-caution");
+    element.classList.remove("hpc-memory-overuse-warning");
+  }
+
+  function applyAppMemory(apps) {
+    global.document.querySelectorAll("[data-hpc-app-memory]").forEach(function (row) {
+      var jobId = row.getAttribute("data-hpc-app-memory") || "";
+      var usage = apps[jobId];
+      var used = row.querySelector("[data-hpc-app-memory-used]");
+      var gpu = row.querySelector("[data-hpc-app-memory-gpu]");
+      if (!usage || !usage.memory_used_label) {
+        row.hidden = true;
+        return;
+      }
+      row.hidden = false;
+      if (used) {
+        used.textContent = usage.memory_used_label;
+        clearOveruseClasses(used);
+        if (usage.memory_overuse_level) {
+          used.classList.add("hpc-memory-overuse-" + usage.memory_overuse_level);
+        }
+      }
+      if (gpu) {
+        gpu.hidden = !usage.gpu_memory_label;
+        gpu.textContent = usage.gpu_memory_label
+          ? "（うちGPU " + usage.gpu_memory_label + "）"
+          : "";
+      }
+    });
+    global.document
+      .querySelectorAll("[data-hpc-app-memory-overuse]")
+      .forEach(function (note) {
+        var jobId = note.getAttribute("data-hpc-app-memory-overuse") || "";
+        var usage = apps[jobId];
+        var text = note.querySelector("[data-hpc-app-memory-overuse-text]");
+        clearOveruseClasses(note);
+        if (!usage || !usage.memory_overuse_label) {
+          note.hidden = true;
+          return;
+        }
+        note.hidden = false;
+        note.classList.add("hpc-memory-overuse-" + usage.memory_overuse_level);
+        if (text) text.textContent = usage.memory_overuse_label;
+      });
+  }
+
+  function refreshAppMemory() {
+    if (memoryInFlight) return;
+    if (!global.document.querySelector("[data-hpc-app-memory]")) return;
+    memoryInFlight = true;
+    portal.requestJson(MEMORY_API_URL)
+      .then(function (data) {
+        applyAppMemory((data && data.apps) || {});
+      })
+      .catch(function () {
+        // 取得に失敗しても直前の値を残す。消すと「使っていない」と誤読される。
+      })
+      .then(function () {
+        memoryInFlight = false;
+      });
   }
 
   global.HpcAppStatus = {
     refresh: refresh,
     refreshOpenWebuiVersions: refreshOpenWebuiVersions,
+    refreshAppMemory: refreshAppMemory,
     start: start,
   };
   if (global.document.readyState === "loading") {

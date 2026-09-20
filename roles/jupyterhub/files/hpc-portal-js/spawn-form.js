@@ -45,9 +45,46 @@
     var appVersionHelp = global.document.getElementById("app-version-help");
     var recommendationCard = global.document.getElementById("app-resource-recommendation");
 
+    // GPUはGRES予約せず全員で共有する。統合メモリ構成のためGPUが確保した分も
+    // 要求メモリの枠から消費されるが、利用者からは見えない。既定のまま「使う」を
+    // 選ぶと小さすぎる要求で起動してしまうため、推奨メモリを引き上げる。
+    var GPU_RECOMMENDED_MEMORY_GB = 16;
+
     function setFormValue(name, value) {
       var element = global.document.querySelector('[name="' + name + '"]');
       if (element && value !== undefined) element.value = value;
+    }
+
+    var memBumpHintTimer = null;
+
+    // 利用者が自分で入れた値を黙って書き換えると「あれ？」となるため、
+    // 変わったこと・理由・元に戻せることを一時的に示す。
+    function announceMemoryBump(memField, previous) {
+      memField.classList.remove("hpc-field-bumped");
+      // アニメーションを確実に再生し直すためリフローを挟む
+      void memField.offsetWidth;
+      memField.classList.add("hpc-field-bumped");
+      var hint = global.document.querySelector("[data-mem-bump-hint]");
+      if (!hint) return;
+      hint.textContent =
+        "GPU用に " + previous + " GB → " + GPU_RECOMMENDED_MEMORY_GB +
+        " GB へ変更しました。変更できます";
+      hint.hidden = false;
+      if (memBumpHintTimer) global.clearTimeout(memBumpHintTimer);
+      memBumpHintTimer = global.setTimeout(function () {
+        hint.hidden = true;
+      }, 8000);
+    }
+
+    function applyGpuMemoryFloor() {
+      var gpuField = global.document.querySelector('[name="gpu"]');
+      var memField = global.document.querySelector('[name="mem"]');
+      if (!gpuField || !memField) return;
+      if (Number(gpuField.value || 0) <= 0) return;
+      var previous = Number(memField.value || 0);
+      if (previous >= GPU_RECOMMENDED_MEMORY_GB) return;
+      memField.value = String(GPU_RECOMMENDED_MEMORY_GB);
+      announceMemoryBump(memField, previous);
     }
 
     function applyRecommendation(option, isSharedOllama) {
@@ -61,6 +98,7 @@
         setFormValue("mem", recommendation.memory);
         setFormValue("gpu", recommendation.gpu);
         setFormValue("hours", recommendation.hours);
+        applyGpuMemoryFloor();
       }
       if (!recommendationCard) return;
       var values = {
@@ -99,6 +137,8 @@
       applyRecommendation(selectedOption, isSharedOllama);
     }
 
+    var gpuField = global.document.querySelector('[name="gpu"]');
+    if (gpuField) gpuField.addEventListener("change", applyGpuMemoryFloor);
     if (appChoice) {
       appChoice.addEventListener("change", refreshAppChoice);
       refreshAppChoice();
