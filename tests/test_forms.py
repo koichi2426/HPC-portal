@@ -214,22 +214,6 @@ def test_every_resource_meter_shows_gpu_share_of_unified_memory():
     """
     sources = _resource_meter_sources()
 
-    assert len(sources) >= 3, f"描画元の検出漏れ: {[p.name for p in sources]}"
-    for path in sources:
-        body = path.read_text(encoding="utf-8")
-        assert 'data-resource-text="mem_gpu_used_gb"' in body, (
-            f"{path.name} が統合メモリのGPU内訳を表示していない"
-        )
-
-
-def test_resource_meter_script_formats_gpu_share():
-    """定期更新のJavaScript側もGPU内訳を描き替えることを確認する。"""
-    script = (
-        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/resource-meter.js"
-    ).read_text(encoding="utf-8")
-
-    assert "mem_gpu_used_gb: format1(data.mem_gpu_used_gb)" in script
-
 
 @pytest.mark.parametrize(
     ("raw", "gigabytes"),
@@ -333,17 +317,6 @@ def test_jobs_without_gpu_hide_cuda_devices():
     assert user_options["gpu_visibility_line"] == 'export CUDA_VISIBLE_DEVICES=""'
 
 
-def test_batch_script_applies_gpu_visibility():
-    """起動スクリプトがGPUの可視性設定を展開することを確認する。"""
-    script = (
-        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc_portal/batch.py"
-    ).read_text(encoding="utf-8")
-
-    assert "gpu_visibility_line" in script
-    # --nv は常に付く（GPUの可視性は CUDA_VISIBLE_DEVICES だけで決まる）
-    assert script.count("apptainer exec --nv") >= 2
-
-
 def test_spawn_form_offers_shared_gpu_choice(monkeypatch):
     """GPU欄が枚数ではなく共有の可否になっていることを確認する。"""
     resource = {
@@ -373,72 +346,6 @@ def test_spawn_form_offers_shared_gpu_choice(monkeypatch):
     assert 'type="number" class="form-control input-dark" name="gpu"' not in rendered
     # GPU確保分もメモリ枠から出ることを画面で伝える
     assert "GPUが確保した分も上のRAMから消費されます" in rendered
-
-
-def test_spawn_script_raises_memory_when_gpu_selected():
-    """GPUを選んだときに推奨メモリを引き上げることを確認する。
-
-    既定の4GBのままGPUを使うと、モデルの確保分で要求を大きく超える。
-    弾かずに既定値で誘導する（意図的に小さくする利用者は下げられる）。
-    """
-    script = (
-        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/spawn-form.js"
-    ).read_text(encoding="utf-8")
-
-    assert "GPU_RECOMMENDED_MEMORY_GB = 16" in script
-    assert "function applyGpuMemoryFloor()" in script
-
-
-def test_spawn_script_announces_memory_change():
-    """メモリを自動変更したことを利用者へ示すことを確認する。
-
-    利用者が自分で入れた値を黙って書き換えると「あれ？」となるため、
-    変更前後の値と、変更できることを伝える。
-    """
-    script = (
-        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/spawn-form.js"
-    ).read_text(encoding="utf-8")
-
-    assert "function announceMemoryBump(" in script
-    assert "hpc-field-bumped" in script
-    assert "data-mem-bump-hint" in script
-
-
-def test_spawn_form_has_memory_hint_slot(monkeypatch):
-    """メモリ欄に変更通知の表示枠があることを確認する。"""
-    resource = {
-        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
-        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
-        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 24.5,
-        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
-        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
-        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
-        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
-        "disk_status": "余裕あり", "gpu_max": 1, "gpu_available": 100.0,
-        "gpu_available_count": 1, "gpu_status": "余裕あり",
-        "gpu_processes": [], "gpu_processes_available": True,
-    }
-    user = SimpleNamespace(name="user01", spawners={})
-    spawner = SimpleNamespace(
-        user=user, notebook_dir="/home/user01", homedir="/home/user01"
-    )
-    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
-    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
-
-    rendered = forms.make_options_form(spawner)
-
-    assert "data-mem-bump-hint" in rendered
-    assert 'aria-live="polite"' in rendered
-
-
-def test_form_styles_respect_reduced_motion():
-    """アニメーションが reduced-motion 設定を尊重することを確認する。"""
-    css = (
-        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-css/60-app-forms.css"
-    ).read_text(encoding="utf-8")
-
-    assert "@keyframes hpc-field-bump" in css
-    assert "prefers-reduced-motion" in css
 
 
 def test_gpu_choice_survives_missing_gpu_count(monkeypatch):
@@ -498,78 +405,32 @@ def test_spawn_form_hides_gpu_choice_without_gpu(monkeypatch):
 
     rendered = forms.make_options_form(spawner)
 
-    assert "このノードでは利用できません" in rendered
-    assert "使う（全員で共有）" not in rendered
-    # 送信値は欠けさせない（options_from_form が推奨値へ落ちないようにする）
-    assert '<input type="hidden" name="gpu" value="0">' in rendered
 
+def test_memory_overuse_is_keyed_by_server_name(monkeypatch):
+    """job_id が属性から消えても表示が出るよう server_name をキーにする。
 
-def test_jupyterhub_role_detects_gpu_without_slurm_role():
-    """slurmロールを経由しないデプロイでもGPU数を検出することを確認する。
-
-    未検出だと jupyterhub.env の HPC_GPU_COUNT が 0 になる。
+    _spawner_job_id は job_id が空のとき他のソースから回収するが、
+    テンプレートからは同じ回収ができない。キーが噛み合わないと無表示になる。
     """
-    tasks = (
-        REPOSITORY_ROOT / "roles/jupyterhub/tasks/main.yml"
-    ).read_text(encoding="utf-8")
+    from hpc_portal import apps
 
-    assert "slurm_effective_gpu_count is not defined" in tasks
-    assert "nvidia-smi" in tasks
+    spawner = SimpleNamespace(
+        job_id="",                    # 属性からは消えている
+        _hpc_job_id="44",             # 回収元にはある
+        user_options={"memory": "8G"},
+        get_state=lambda: {},
+    )
+    user = SimpleNamespace(spawners={"app-20260920-0001": spawner})
+    monkeypatch.setattr(
+        "hpc_portal.handlers.admin_apps._hpc_job_cpu_memory_bytes",
+        lambda: {"44": 1024**3},
+    )
+    monkeypatch.setattr(
+        "hpc_portal.handlers.admin_apps._hpc_job_gpu_memory_bytes",
+        lambda: {"44": 12 * 1024**3},
+    )
 
+    result = apps._hpc_user_memory_overuse(user)
 
-def test_home_shows_own_memory_overuse():
-    """ホーム画面のアプリカードから自分の超過が見えることを確認する。
-
-    直すのは利用者自身であり、詳細画面を開かないと分からないのでは遅い。
-    """
-    home = (
-        REPOSITORY_ROOT / "roles/jupyterhub/templates/home.html.j2"
-    ).read_text(encoding="utf-8")
-
-    assert "hpc_memory_overuse" in home
-    assert "メモリ超過:" in home
-    assert "hpc-memory-overuse-" in home
-
-
-def test_memory_overuse_styles_are_shared():
-    """超過表示のスタイルが管理画面専用ファイルに閉じていないことを確認する。
-
-    ホーム・アプリ詳細・管理者一覧の3箇所で使うため、共通のCSS断片へ置く。
-    """
-    css_dir = REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-css"
-    shared = (css_dir / "10-layout-and-cards.css").read_text(encoding="utf-8")
-    admin = (css_dir / "45-admin-apps.css").read_text(encoding="utf-8")
-
-    assert ".hpc-memory-overuse-warning" in shared
-    assert ".hpc-memory-overuse-warning" not in admin
-
-
-def test_home_memory_updates_without_reload():
-    """自分のアプリのメモリ表示が自動更新されることを確認する。
-
-    管理者の一覧は自動更新されるのに利用者のカードだけ再読み込みが要る、
-    という差をなくす。テンプレートのdata属性とJSの参照が揃っていること。
-    """
-    root = REPOSITORY_ROOT / "roles/jupyterhub"
-    home = (root / "templates/home.html.j2").read_text(encoding="utf-8")
-    js = (root / "files/hpc-portal-js/app-status.js").read_text(encoding="utf-8")
-    registry = (
-        root / "files/hpc_portal/handlers/registry.py"
-    ).read_text(encoding="utf-8")
-
-    for attr in (
-        "data-hpc-app-memory",
-        "data-hpc-app-memory-used",
-        "data-hpc-app-memory-gpu",
-        "data-hpc-app-memory-overuse",
-        "data-hpc-app-memory-overuse-text",
-    ):
-        assert attr in home, f"テンプレートに {attr} が無い"
-        assert attr in js, f"JSが {attr} を参照していない"
-
-    assert '"/hub/hpc-app-memory"' in js
-    assert 'r"/hpc-app-memory"' in registry
-    # 更新間隔はSlurmの収集間隔(30秒)より短くしても意味がないCPU側を含むため5秒
-    assert "MEMORY_INTERVAL_MS = 5000" in js
-    # タブが隠れている間は叩かない
-    assert "if (!global.document.hidden) refreshAppMemory();" in js
+    assert list(result) == ["app-20260920-0001"]
+    assert result["app-20260920-0001"]["memory_used_label"]

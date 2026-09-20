@@ -2,7 +2,6 @@
 
 import asyncio
 import html
-import asyncio
 import json
 import secrets
 import time
@@ -443,42 +442,43 @@ def _hpc_user_memory_overuse(user=None) -> dict:
         user: JupyterHubが渡すログインユーザー。
 
     Returns:
-        Job IDをキー、超過状況を値とする辞書。取得できない場合は空。
+        server_nameをキー、超過状況を値とする辞書。取得できない場合は空。
     """
     spawners = getattr(user, "spawners", None) or {}
     targets = {}
-    for spawner in spawners.values():
-        job_id = str(_spawner_job_id(spawner) or getattr(spawner, "job_id", "") or "")
+    for server_name, spawner in spawners.items():
+        # job_id は実行中に属性から消えることがあるため _spawner_job_id で回収する。
+        # 一方でテンプレートからは同じ回収ができないので、返す辞書のキーには
+        # 常に取得できる server_name を使う（キーが噛み合わず無表示になるのを防ぐ）。
+        job_id = str(_spawner_job_id(spawner) or "")
         if not job_id:
             continue
         options = getattr(spawner, "user_options", None) or {}
-        targets[job_id] = str(options.get("memory", "") or "")
+        targets[str(server_name)] = (job_id, str(options.get("memory", "") or ""))
     if not targets:
         return {}
     try:
         from .handlers.admin_apps import (
-            _hpc_format_storage_bytes,
+            _hpc_job_cpu_memory_bytes,
             _hpc_job_gpu_memory_bytes,
+            _hpc_job_memory_usage,
             _hpc_memory_overuse,
-            _hpc_slurm_max_rss,
         )
 
-        rss = _hpc_slurm_max_rss(list(targets))
+        cpu = _hpc_job_cpu_memory_bytes()
         gpu = _hpc_job_gpu_memory_bytes()
     except Exception:
         return {}
     result = {}
-    for job_id, requested in targets.items():
-        cpu_bytes = rss.get(job_id)
-        gpu_bytes = gpu.get(job_id)
-        if cpu_bytes is None and gpu_bytes is None:
+    for server_name, (job_id, requested) in targets.items():
+        usage = _hpc_job_memory_usage(job_id, cpu, gpu)
+        if usage["memory_used_bytes"] is None:
             continue
-        used = (cpu_bytes or 0) + (gpu_bytes or 0)
-        overuse = _hpc_memory_overuse(used, requested)
-        result[job_id] = {
-            "memory_used_label": _hpc_format_storage_bytes(used),
+        overuse = _hpc_memory_overuse(usage["memory_used_bytes"], requested)
+        result[server_name] = {
+            "memory_used_label": usage["memory_used_label"],
             "gpu_memory_label": (
-                _hpc_format_storage_bytes(gpu_bytes) if gpu_bytes else ""
+                usage["gpu_memory_label"] if usage["gpu_memory_bytes"] else ""
             ),
             "memory_overuse_level": overuse["memory_overuse_level"],
             "memory_overuse_label": overuse["memory_overuse_label"],
@@ -506,21 +506,23 @@ def _hpc_spawner_memory_usage(job_id: str, requested: str) -> dict:
         return empty
     try:
         from .handlers.admin_apps import (
-            _hpc_format_storage_bytes,
+            _hpc_job_cpu_memory_bytes,
             _hpc_job_gpu_memory_bytes,
+            _hpc_job_memory_usage,
             _hpc_memory_overuse,
-            _hpc_slurm_max_rss,
         )
 
-        rss = _hpc_slurm_max_rss([str(job_id)]).get(str(job_id))
-        gpu = _hpc_job_gpu_memory_bytes().get(str(job_id))
-        if rss is None and gpu is None:
+        usage = _hpc_job_memory_usage(
+            str(job_id), _hpc_job_cpu_memory_bytes(), _hpc_job_gpu_memory_bytes()
+        )
+        if usage["memory_used_bytes"] is None:
             return empty
-        used = (rss or 0) + (gpu or 0)
-        overuse = _hpc_memory_overuse(used, requested)
+        overuse = _hpc_memory_overuse(usage["memory_used_bytes"], requested)
         return {
-            "memory_used_label": _hpc_format_storage_bytes(used),
-            "gpu_memory_label": _hpc_format_storage_bytes(gpu) if gpu else "",
+            "memory_used_label": usage["memory_used_label"],
+            "gpu_memory_label": (
+                usage["gpu_memory_label"] if usage["gpu_memory_bytes"] else ""
+            ),
             "memory_overuse_level": overuse["memory_overuse_level"],
             "memory_overuse_label": overuse["memory_overuse_label"],
         }

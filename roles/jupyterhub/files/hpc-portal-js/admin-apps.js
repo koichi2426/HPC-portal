@@ -46,7 +46,7 @@
     [
       ["Job ID", String(app.job_id || "—")],
       ["実使用メモリ", String(app.memory_used_label || "取得不可"), app.memory_overuse_level],
-      ["うちCPU側(最大)", String(app.max_rss_label || "取得不可")],
+      ["うちCPU側", String(app.cpu_memory_label || "取得不可")],
       ["うちGPU確保分", String(app.gpu_memory_label || "—")],
       ["開始日時", String(app.started_at || "—")],
     ].forEach(function (entry) {

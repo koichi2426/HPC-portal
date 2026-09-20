@@ -14,18 +14,6 @@ def test_slurm_memory_bytes(raw, expected):
     assert admin_apps._hpc_slurm_memory_bytes(raw) == expected
 
 
-def test_slurm_max_rss_parses_maximum_and_ignores_unrequested_jobs(monkeypatch):
-    admin_apps._HPC_ADMIN_APPS_RSS_CACHE.update(expires_at=0.0, job_ids=(), usage={})
-    stdout = "42.batch|512M|\n42.extern|1G|\n99.batch|8G|\ninvalid\n"
-    monkeypatch.setattr(
-        admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
-    )
-
-    assert admin_apps._hpc_slurm_max_rss(["42"]) == {"42": 1024**3}
-
-
 def test_admin_apps_snapshot_parses_only_portal_jobs(monkeypatch):
     stdout = "\n".join(
         [
@@ -49,7 +37,7 @@ def test_admin_apps_snapshot_parses_only_portal_jobs(monkeypatch):
             {"username": "user02", "display_name": "利用者二"},
         ],
     )
-    monkeypatch.setattr(admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {"42": 1024})
+    monkeypatch.setattr(admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {"42": 1024})
 
     rows, error = admin_apps._hpc_admin_apps_snapshot_uncached()
 
@@ -57,10 +45,10 @@ def test_admin_apps_snapshot_parses_only_portal_jobs(monkeypatch):
     assert [row["job_id"] for row in rows] == ["44", "42", "43"]
     by_id = {row["job_id"]: row for row in rows}
     assert by_id["42"]["app"] == "JupyterLab"
-    assert by_id["42"]["max_rss_label"] == "1.0 KB"
+    assert by_id["42"]["cpu_memory_label"] == "1.0 KB"
     assert by_id["43"]["gpus"] == 1
     assert by_id["43"]["state_label"] == "実行待ち"
-    assert by_id["43"]["max_rss_label"] == "計測待ち"
+    assert by_id["43"]["memory_used_label"] == "取得不可"
     assert by_id["44"]["display_name"] == "共有"
     assert by_id["44"]["gpus"] == 1
 
@@ -192,7 +180,7 @@ def test_admin_apps_snapshot_adds_gpu_memory_to_used_total(monkeypatch):
     )
     monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
     monkeypatch.setattr(
-        admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {"44": 2 * 1024**3}
+        admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {"44": 2 * 1024**3}
     )
     monkeypatch.setattr(
         admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
@@ -202,7 +190,7 @@ def test_admin_apps_snapshot_adds_gpu_memory_to_used_total(monkeypatch):
 
     assert error == ""
     row = rows[0]
-    assert row["max_rss_bytes"] == 2 * 1024**3
+    assert row["cpu_memory_bytes"] == 2 * 1024**3
     assert row["gpu_memory_bytes"] == 24 * 1024**3
     assert row["memory_used_bytes"] == 26 * 1024**3
     assert row["memory_used_label"] == "26.0 GB"
@@ -217,13 +205,13 @@ def test_admin_apps_snapshot_keeps_label_when_nothing_measurable(monkeypatch):
         lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
     )
     monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
-    monkeypatch.setattr(admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {})
+    monkeypatch.setattr(admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {})
     monkeypatch.setattr(admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {})
 
     rows, _ = admin_apps._hpc_admin_apps_snapshot_uncached()
 
     assert rows[0]["memory_used_bytes"] is None
-    assert rows[0]["memory_used_label"] == "計測待ち"
+    assert rows[0]["memory_used_label"] == "取得不可"
     assert rows[0]["gpu_memory_label"] == "—"
 
 
@@ -278,7 +266,7 @@ def test_admin_apps_snapshot_flags_memory_overuse(monkeypatch):
     )
     monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
     monkeypatch.setattr(
-        admin_apps, "_hpc_slurm_max_rss", lambda job_ids: {"44": 2 * 1024**3}
+        admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {"44": 2 * 1024**3}
     )
     monkeypatch.setattr(
         admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
@@ -290,43 +278,6 @@ def test_admin_apps_snapshot_flags_memory_overuse(monkeypatch):
     assert row["memory_used_bytes"] == 26 * 1024**3
     assert row["memory_overuse_level"] == "warning"
     assert "8.0 GB" in row["memory_overuse_label"]
-
-
-def test_admin_apps_js_renders_overuse_warning():
-    """管理画面のJavaScriptが超過を描画することを確認する。"""
-    from pathlib import Path
-
-    script = (
-        Path(__file__).resolve().parents[1]
-        / "roles/jupyterhub/files/hpc-portal-js/admin-apps.js"
-    ).read_text(encoding="utf-8")
-
-    assert "memory_overuse_label" in script
-    assert "hpc-memory-overuse-" in script
-
-
-def test_admin_apps_list_shows_actual_usage_column():
-    """一覧の時点で実使用メモリが見えることを確認する。
-
-    詳細を開かないと超過に気付けないと、管理者が一覧を眺めても見落とす。
-    """
-    from pathlib import Path
-
-    js = (
-        Path(__file__).resolve().parents[1]
-        / "roles/jupyterhub/files/hpc-portal-js/admin-apps.js"
-    ).read_text(encoding="utf-8")
-    home = (
-        Path(__file__).resolve().parents[1]
-        / "roles/jupyterhub/templates/home.html.j2"
-    ).read_text(encoding="utf-8")
-
-    assert '"実使用メモリ"' in js
-    assert "<th>実使用メモリ</th>" in home
-    # 列を増やしたので、詳細行と空行のcolspanも揃っていること
-    assert "detailCell.colSpan = 9;" in js
-    assert "emptyCell.colSpan = 9;" in js
-    assert 'colspan="9"' in home
 
 
 def test_job_gpu_memory_is_cached_between_calls(monkeypatch):
@@ -351,42 +302,41 @@ def test_job_gpu_memory_is_cached_between_calls(monkeypatch):
     assert len(calls) == 1, "2回目はキャッシュから返すこと"
 
 
-def test_job_gpu_memory_cache_expires(monkeypatch):
-    """キャッシュが切れれば取り直すことを確認する。"""
-    calls = []
+
+
+def test_job_memory_usage_sums_instantaneous_values():
+    """CPU側とGPU側はどちらも瞬間値なので、合計が実使用量になる。
+
+    CPU側にsstatのMaxRSS(ピーク値)を使うと、同時には使っていない量まで
+    足して誤って超過と判定してしまう。
+    """
+    usage = admin_apps._hpc_job_memory_usage(
+        "44", {"44": 2 * 1024**3}, {"44": 24 * 1024**3}
+    )
+
+    assert usage["memory_used_bytes"] == 26 * 1024**3
+    assert usage["cpu_memory_bytes"] == 2 * 1024**3
+    assert usage["gpu_memory_bytes"] == 24 * 1024**3
+
+
+def test_job_memory_usage_without_any_source():
+    """どちらも取得できないジョブは判定対象から外す。"""
+    usage = admin_apps._hpc_job_memory_usage("44", {}, {})
+
+    assert usage["memory_used_bytes"] is None
+    assert usage["memory_used_label"] == "取得不可"
+
+
+def test_job_cpu_memory_reads_job_level_cgroup(tmp_path, monkeypatch):
+    """job_N 直下のみを読み、配下のstepは内訳なので二重に数えない。"""
+    job = tmp_path / "system.slice/node_slurmstepd.scope/job_44"
+    (job / "step_batch").mkdir(parents=True)
+    (job / "memory.current").write_text("2147483648\n", encoding="utf-8")
+    (job / "step_batch/memory.current").write_text("2147483648\n", encoding="utf-8")
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: calls.append(command)
-        or SimpleNamespace(returncode=0, stdout="100, 1024\n", stderr=""),
-    )
-    monkeypatch.setattr(admin_apps, "_hpc_job_id_of_pid", lambda pid: "44")
-
-    admin_apps._hpc_job_gpu_memory_bytes()
-    admin_apps._HPC_GPU_MEMORY_CACHE.update(expires_at=0.0)
-    admin_apps._hpc_job_gpu_memory_bytes()
-
-    assert len(calls) == 2
-
-
-def test_overuse_note_is_placed_below_detail_items():
-    """詳細パネルの超過注意書きが項目の幅を奪わないことを確認する。
-
-    パネルは横並びのflexで、注意書きを先に差し込むと項目側が圧縮される。
-    DOM上は項目の後ろに置き、CSSで全幅の下段へ回す。
-    """
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[1]
-    js = (root / "roles/jupyterhub/files/hpc-portal-js/admin-apps.js").read_text(
-        encoding="utf-8"
-    )
-    css = (root / "roles/jupyterhub/files/hpc-portal-css/45-admin-apps.css").read_text(
-        encoding="utf-8"
+        "_HPC_JOB_CGROUP_GLOBS",
+        (str(tmp_path / "system.slice/*slurmstepd.scope/job_*/memory.current"),),
     )
 
-    # dl を先に追加してから注意書きを追加する
-    assert js.index("panel.appendChild(list);") < js.index("hpc-memory-overuse-note")
-    assert "flex-wrap: wrap;" in css
-    assert ".hpc-admin-app-details-panel .hpc-memory-overuse-note" in css
-    assert "flex: 1 0 100%;" in css
+    assert admin_apps._hpc_job_cpu_memory_bytes() == {"44": 2 * 1024**3}

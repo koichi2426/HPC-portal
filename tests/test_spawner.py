@@ -107,3 +107,46 @@ def test_failure_message_masks_secrets():
 
     assert "sk-***" in message
     assert "sk-abcdefgh1234" not in message
+
+
+def test_pending_reason_is_not_refetched_every_iteration(monkeypatch):
+    """進捗ループは0.75秒間隔で回るため、待機理由の取得を間引く。
+
+    毎周叩くと300秒のPENDINGで約400回になる。
+    """
+    calls = []
+    monkeypatch.setattr(
+        spawner.subprocess,
+        "run",
+        lambda *args, **kwargs: calls.append(1)
+        or SimpleNamespace(returncode=0, stdout="(Resources)\n"),
+    )
+
+    class _Sp:
+        _hpc_pending_reason = ""
+        _hpc_pending_reason_checked_at = 0.0
+
+    sp = _Sp()
+    clock = [1000.0]
+    monkeypatch.setattr(spawner.time, "monotonic", lambda: clock[0])
+
+    def tick():
+        """progress ループ1周分の判定を再現する。"""
+        now = spawner.time.monotonic()
+        if now >= sp._hpc_pending_reason_checked_at:
+            sp._hpc_pending_reason_checked_at = now + spawner._HPC_PENDING_REASON_INTERVAL
+            reason = spawner._hpc_slurm_pending_reason("42")
+            if reason:
+                sp._hpc_pending_reason = reason
+
+    # 10秒ぶん（約13周）回しても取得は1回
+    for _ in range(13):
+        tick()
+        clock[0] += 0.75
+    assert len(calls) == 1
+
+    # 間隔を超えれば取り直す
+    clock[0] += spawner._HPC_PENDING_REASON_INTERVAL
+    tick()
+    assert len(calls) == 2
+    assert sp._hpc_pending_reason == "Resources"

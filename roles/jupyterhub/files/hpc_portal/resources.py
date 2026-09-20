@@ -194,7 +194,14 @@ def _hpc_slurm_free_resources():
             fields.get("CPUTot") or fields.get("CPUs") or cfg["cpu"] or 0
         )
         cpu_alloc = int(fields.get("CPUAlloc") or alloc["cpu"] or 0)
-        mem_total_mb = int(fields.get("RealMemory", "0") or 0)
+        # MemSpecLimit はOSとシステムデーモン用の予約で、ジョブへは割り当てられない。
+        # RealMemory から引いた残りがSlurmの割り当て可能量になる。引き忘れると空きを
+        # 過大報告し、投入前チェックが通した要求がPENDINGのまま詰まる。
+        mem_total_mb = max(
+            0,
+            int(fields.get("RealMemory", "0") or 0)
+            - int(fields.get("MemSpecLimit", "0") or 0),
+        )
         mem_alloc_mb = alloc["mem_mb"]
         if not mem_alloc_mb and fields.get("AllocMem"):
             mem_alloc_mb = int(fields["AllocMem"])

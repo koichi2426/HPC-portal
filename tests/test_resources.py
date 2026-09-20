@@ -264,3 +264,22 @@ def test_resource_snapshot_reports_gpu_share_of_unified_memory(monkeypatch):
     # 統合メモリの内数であり、総量を超えない
     assert snapshot["mem_gpu_used_gb"] <= snapshot["mem_total_gb"]
     HpcResourceSnapshot.model_validate(snapshot)
+
+
+def test_slurm_free_resources_subtracts_mem_spec_limit(monkeypatch):
+    """MemSpecLimit はジョブへ割り当てられないため空きから除く。
+
+    引き忘れると空きを過大報告し、投入前チェックが通した要求がPENDINGで詰まる。
+    """
+    _fake_slurm_commands(
+        monkeypatch,
+        "CPUTot=20 CPUAlloc=8 RealMemory=122506 MemSpecLimit=4096 AllocMem=40960 "
+        "Gres=gpu:1 CfgTRES=cpu=20,mem=122506M AllocTRES=cpu=8,mem=40G,gres/gpu=1",
+        "gres/gpu:1\n",
+    )
+
+    free = resources._hpc_slurm_free_resources()
+
+    # 122506 - 4096 = 118410 が割り当て可能総量、そこから 40G を引いた残り
+    assert free["mem_total_mb"] == 118410
+    assert free["mem_available_mb"] == 118410 - 40960

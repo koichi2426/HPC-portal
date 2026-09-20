@@ -213,15 +213,15 @@
               <div class="hpc-section-title">{{ app_label }}{% if spawner.job_id %} <span class="hpc-muted" style="font-size:11px;">(job {{ spawner.job_id }})</span>{% endif %}</div>
               <div class="hpc-muted" style="font-size:11px; margin-top:6px;">割り当て: {{ alloc_line }}</div>
               {# 5秒間隔で /hub/hpc-app-memory から更新する。job_id を突き合わせの鍵にする #}
-              {% set _overuse = (hpc_memory_overuse or {}).get(spawner.job_id|string) %}
+              {% set _overuse = (hpc_memory_overuse or {}).get(name|string) %}
               <div class="hpc-muted" style="font-size:11px; margin-top:2px;"
-                   data-hpc-app-memory="{{ spawner.job_id }}"
+                   data-hpc-app-memory="{{ name }}"
                    {% if not (_overuse and _overuse.memory_used_label) %}hidden{% endif %}>実使用:
                 <span data-hpc-app-memory-used{% if _overuse and _overuse.memory_overuse_level %} class="hpc-memory-overuse-{{ _overuse.memory_overuse_level }}"{% endif %}>{{ _overuse.memory_used_label if _overuse else '' }}</span>
                 <span class="hpc-muted" data-hpc-app-memory-gpu{% if not (_overuse and _overuse.gpu_memory_label) %} hidden{% endif %}>（うちGPU {{ _overuse.gpu_memory_label if _overuse else '' }}）</span>
               </div>
               <div style="font-size:11px; margin-top:4px;"
-                   data-hpc-app-memory-overuse="{{ spawner.job_id }}"
+                   data-hpc-app-memory-overuse="{{ name }}"
                    {% if _overuse and _overuse.memory_overuse_level %}class="hpc-memory-overuse-{{ _overuse.memory_overuse_level }}"{% endif %}
                    {% if not (_overuse and _overuse.memory_overuse_label) %}hidden{% endif %}>メモリ超過: <span data-hpc-app-memory-overuse-text>{{ _overuse.memory_overuse_label if _overuse else '' }}</span></div>
               {% if is_openwebui and not spawn_error %}

@@ -3,6 +3,7 @@
 import asyncio
 import re
 import subprocess
+import time
 
 from .apps import _is_openwebui_spawner, _job_host, _spawner_job_id
 from .common import (
@@ -23,6 +24,9 @@ from .routing import (
     _wait_for_tcp_port,
 )
 
+
+# 待機理由の再取得間隔（秒）
+_HPC_PENDING_REASON_INTERVAL = 15.0
 
 _HPC_PENDING_REASON_LABELS = {
     "Resources": "GPUまたはメモリの空き待ち",
@@ -125,6 +129,7 @@ class HPCSlurmSpawner(SlurmSpawner):
         self._hpc_progress_message = "起動要求を受け付けました"
         self._hpc_progress_revision = 0
         self._hpc_pending_reason = ""
+        self._hpc_pending_reason_checked_at = 0.0
         super().clear_state()
         # ここでは sbatch しない。先行提出すると get_env が api_token 付与前に走り、
         # ジョブ内の JUPYTERHUB_API_TOKEN が空のまま固定され Hub の ready 判定が進まない。
@@ -165,12 +170,19 @@ class HPCSlurmSpawner(SlurmSpawner):
                     if self.state_ispending():
                         message = f"Slurmジョブ {job_id} は実行待ちです"
                         # 待機理由はstart_timeout到達時の説明にも使うため保持する。
-                        # squeueを毎周叩かないよう、理由が変わるまでは再取得しない。
-                        reason = await asyncio.to_thread(
-                            _hpc_slurm_pending_reason, job_id
-                        )
-                        if reason:
-                            self._hpc_pending_reason = reason
+                        # このループは0.75秒間隔で回るため毎周squeueを叩くと
+                        # 300秒のPENDINGで約400回になる。理由は頻繁に変わらないので
+                        # 間隔を空けて取得する。
+                        now = time.monotonic()
+                        if now >= getattr(self, "_hpc_pending_reason_checked_at", 0.0):
+                            self._hpc_pending_reason_checked_at = (
+                                now + _HPC_PENDING_REASON_INTERVAL
+                            )
+                            reason = await asyncio.to_thread(
+                                _hpc_slurm_pending_reason, job_id
+                            )
+                            if reason:
+                                self._hpc_pending_reason = reason
                         detail = _hpc_pending_reason_message(
                             getattr(self, "_hpc_pending_reason", "")
                         )
