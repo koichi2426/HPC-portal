@@ -114,6 +114,10 @@
     </section>
   {% endif %}
 
+  {% if hpc_external_api_enabled %}
+  <section class="gx10-resource-card" data-api-app-list hidden><div class="hpc-section-title">自分の公開 API</div><div data-api-app-rows></div></section>
+  {% endif %}
+
   <div class="hpc-muted" style="margin-bottom:10px;">自分の起動中アプリケーション</div>
 
   {% if user and user.name in hpc_portal_admin_users %}
@@ -269,6 +273,9 @@
 {% endblock %}
 
 {% block script %}
+{% if hpc_external_api_enabled %}
+<script src="/hub/hpc-js/external-api.js?v={{ hpc_static_versions['js/external-api.js'] }}" defer></script>
+{% endif %}
 <script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
 <script src="/hub/hpc-js/resource-meter.js?v={{ hpc_static_versions['js/resource-meter.js'] }}"></script>
 <script src="/hub/hpc-js/app-status.js?v={{ hpc_static_versions['js/app-status.js'] }}"></script>

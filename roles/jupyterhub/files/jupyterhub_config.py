@@ -110,3 +110,16 @@ from hpc_portal import batch as _batch  # noqa: E402,F401
 from hpc_portal.handlers import register_handlers  # noqa: E402
 
 register_handlers()
+
+from hpc_portal.external_api.config import Config as ExternalApiConfig
+from hpc_portal.external_api.service import start_background
+
+c.JupyterHub.template_vars["hpc_external_api_enabled"] = ExternalApiConfig.from_env().enabled
+
+if ExternalApiConfig.from_env().enabled:
+    c.JupyterHub.token_expires_in_max_seconds = 0
+    c.JupyterHub.custom_scopes = {
+        "custom:external-api:invoke": {"description": "Invoke the owner's registered HTTP API apps"},
+    }
+    c.JupyterHub.load_roles = [{"name": "user", "scopes": ["self", "custom:external-api:invoke!user"]}]
+    start_background()

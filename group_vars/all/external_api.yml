@@ -1,0 +1,10 @@
+---
+# Opt-in; real nftables/Cloudflare checks are required before enabling.
+hpc_external_api_enabled: false
+# Cloudflare Zero Trust team URL, e.g. https://your-team.cloudflareaccess.com
+hpc_external_api_access_issuer: ""
+hpc_external_api_state_dir: /var/lib/jupyterhub/external-api-v2
+hpc_external_api_token_limit: 50
+hpc_external_api_port_start: 20000
+hpc_external_api_port_end: 29999
+hpc_external_api_reserved_ports: [22, 80, 443, 4000, 5432, 8000, 8001, 8081, 8888, 8890, 11434]

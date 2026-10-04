@@ -286,6 +286,17 @@
           .finally(function () { btn.disabled = false; });
       };
     });
+    document.querySelectorAll(".hpc-external-access-btn").forEach(function (btn) {
+      btn.onclick = async function () {
+        var name = btn.dataset.username, action = btn.dataset.action;
+        closeUserActionMenus();
+        if (!confirm(name + " の外部 API 利用状態を変更しますか？停止時はトークンを失効させます。")) return;
+        btn.disabled = true;
+        try { await postAction({action: action, username: name}); await reloadUsers(); }
+        catch (error) { showMsg(document.getElementById("list-msg"), error.message, false); }
+        finally { btn.disabled = false; }
+      };
+    });
     document.querySelectorAll(".hpc-sudo-access-btn").forEach(function (btn) {
       btn.onclick = function () {
         var name = btn.getAttribute("data-username");
@@ -427,6 +438,10 @@
           var displayAction = appendActionItem("表示名を変更", "hpc-display-name-btn", "", "", false, "");
           displayAction.setAttribute("data-display-name", u.display_name || "");
           if (!u.protected) {
+            if (u.external_api_state) {
+              var externalEnabled = u.external_api_state !== "disabled";
+              appendActionItem("外部 API: " + u.external_api_state + (externalEnabled ? "／利用停止" : "／有効化"), "hpc-external-access-btn", externalEnabled ? "external_api_disable" : "external_api_enable", "", false, "");
+            }
             appendActionItem("パスワード再発行", "hpc-pw-btn", "", "", false, "");
             if (apiAccess === "enabled") {
               appendActionItem("LLM API無効化", "hpc-api-access-btn", "api_disable", "enabled", false, "");

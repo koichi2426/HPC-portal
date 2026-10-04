@@ -188,6 +188,17 @@ async def _hpc_admin_users_snapshot() -> list[dict]:
             _hpc_format_storage_bytes(used_bytes) if used_bytes is not None else "確認不可"
         )
         updated["storage_message"] = storage_error or ""
+        from ..external_api.config import Config as ExternalConfig
+        if ExternalConfig.from_env().enabled:
+            updated["external_api_state"] = "issuing"
+            try:
+                from ..external_api.service import service as external_service
+                credentials, _ = external_service()
+                record = credentials.store.get("credentials", row["username"])
+                if record:
+                    updated["external_api_state"] = record.get("state", "issuing")
+            except Exception:
+                updated["external_api_state"] = "unknown"
         return updated
 
     return list(await asyncio.gather(*(enrich(row) for row in rows)))
@@ -347,6 +358,11 @@ class HpcAdminUsersApiHandler(BaseHandler):
             )
             if err:
                 return self._api_error(400, err)
+            from ..external_api.service import provision as provision_external_api
+            try:
+                await provision_external_api(username)
+            except Exception:
+                HPC_USER_ADMIN_LOG.warning("External API issuance pending for %s", username)
             if grant_sudo:
                 _hpc_log_user_admin_success("sudo_enable", actor, username)
             api_key, key_warning = _hpc_litellm_generate_key(username)
@@ -377,9 +393,18 @@ class HpcAdminUsersApiHandler(BaseHandler):
         if action == "delete":
             if not username:
                 return self._api_error(400, "username が必要です")
+            if username in HPC_PORTAL_PROTECTED_USERS or username == actor:
+                return self._api_error(400, "保護されたユーザーは削除できません")
+            from ..external_api.service import disable as disable_external_api
+            try:
+                await disable_external_api(username)
+            except Exception:
+                return self._api_error(503, "外部 API の失効処理が未完了です。再試行してください")
             err = _hpc_delete_linux_user(username, actor)
             if err:
                 return self._api_error(400, err)
+            from ..external_api.service import deleted as external_user_deleted
+            await external_user_deleted(username)
             key_warning = _hpc_litellm_delete_user_keys(username)
             body = {"ok": True}
             if key_warning:
@@ -413,6 +438,22 @@ class HpcAdminUsersApiHandler(BaseHandler):
                 return self._api_error(400, err)
             _hpc_log_user_admin_success(action, actor, username)
             self.write({"ok": True, "username": username, "sudo_enabled": enabled})
+            return
+
+        if action in {"external_api_disable", "external_api_enable"}:
+            if not username or username in HPC_PORTAL_PROTECTED_USERS:
+                return self._api_error(400, "対象ユーザーを確認してください")
+            from ..external_api.service import service as external_service, disable as external_disable
+            try:
+                if action == "external_api_disable":
+                    await external_disable(username)
+                else:
+                    credentials, _ = external_service()
+                    user = await credentials.hub.user(username)
+                    await credentials.enable(user)
+            except Exception:
+                return self._api_error(503, "外部 API の変更を完了できません。再試行してください")
+            self.write({"ok": True})
             return
 
         if action in {"api_disable", "api_enable"}:

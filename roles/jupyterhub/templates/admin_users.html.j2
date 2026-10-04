@@ -142,6 +142,14 @@
               <div class="hpc-user-actions-menu" role="menu" hidden>
                 <button type="button" role="menuitem" class="hpc-user-action-item hpc-display-name-btn" data-username="{{ u.username }}" data-display-name="{{ u.display_name }}">表示名を変更</button>
                 {% if not u.protected %}
+                {% if u.external_api_state is defined %}
+                <span class="hpc-muted">外部 API: {{ u.external_api_state }}</span>
+                {% if u.external_api_state == "disabled" %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-external-access-btn" data-username="{{ u.username }}" data-action="external_api_enable">外部 API 有効化</button>
+                {% else %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-external-access-btn" data-username="{{ u.username }}" data-action="external_api_disable">外部 API 利用停止</button>
+                {% endif %}
+                {% endif %}
                 <button type="button" role="menuitem" class="hpc-user-action-item hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
                 {% if u.api_access == 'enabled' %}
                 <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_disable">LLM API無効化</button>

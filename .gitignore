@@ -15,3 +15,6 @@ __pycache__/
 *.py[cod]
 .coverage
 htmlcov/
+
+# Local manuals (not published to GitHub)
+/docs/

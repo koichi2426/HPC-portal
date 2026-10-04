@@ -19,6 +19,8 @@ from ..resources import (
 from .admin_apps import HpcAdminAppsApiHandler
 from .admin_users import HpcAdminUsersApiHandler, HpcAdminUsersPageHandler
 from .llm_api import HpcLlmApiApiHandler, HpcLlmApiPageHandler
+from .external_api import ExternalApiPage, ExternalApiCredentials, ApiPublicationsPage, ApiPublications, ApiPorts
+from .api_gateway import ApiGateway
 from .password import HpcPasswordApiHandler, HpcPasswordPageHandler
 from .spawn import HpcAdminRedirectHandler, HpcSpawnHandler
 
@@ -40,6 +42,12 @@ def register_handlers() -> None:
 
     c.JupyterHub.extra_handlers.extend([
         (r"/new", HpcNewApplicationHandler),
+        (r"/external-api", ExternalApiPage),
+        (r"/external-api/credentials", ExternalApiCredentials),
+        (r"/api-publications", ApiPublicationsPage),
+        (r"/api-publications/api", ApiPublications),
+        (r"/api-publications/ports", ApiPorts),
+        (r"/user-api/([^/]+)/([a-z][a-z0-9-]{0,47})(?:/(.*))?", ApiGateway),
         (r"/hpc-js/([a-z0-9-]+\.js)", HpcPortalJsHandler),
         (r"/hpc-portal.css", HpcPortalCssHandler),
         (r"/hpc-resource-status", HpcResourceStatusHandler),

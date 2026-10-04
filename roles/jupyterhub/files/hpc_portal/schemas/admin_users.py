@@ -11,6 +11,8 @@ HpcAdminAction = Literal[
     "password_regenerate",
     "sudo_enable",
     "sudo_disable",
+    "external_api_enable",
+    "external_api_disable",
     "api_enable",
     "api_disable",
     "ollama_register_model",
