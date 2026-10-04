@@ -2,26 +2,21 @@
 
 import json
 import os
-import sys
 import time
 import urllib.error
 import urllib.parse
-from pathlib import Path
 
 import pytest
 
-
-SEARCH_MCP_FILES = (
-    Path(__file__).resolve().parents[1] / "roles" / "search_mcp" / "files"
+from hpc_search_mcp import (
+    combined_search,  # noqa: E402
+    fetch_reference,  # noqa: E402
+    mcp_auth,  # noqa: E402
+    search_service,  # noqa: E402
+    web_fetch,  # noqa: E402
 )
-sys.path.insert(0, str(SEARCH_MCP_FILES))
-os.environ.setdefault("SEARCH_MCP_AUTH_TOKEN", "t" * 64)
 
-import combined_search  # noqa: E402
-import fetch_reference  # noqa: E402
-import mcp_auth  # noqa: E402
-import search_service  # noqa: E402
-import web_fetch  # noqa: E402
+os.environ.setdefault("SEARCH_MCP_AUTH_TOKEN", "t" * 64)
 
 
 class FakeResponse:
@@ -74,9 +69,10 @@ def test_search_web_returns_public_fields_and_caps_result_count(monkeypatch):
         "engine",
         "fetch_ref",
     }
-    assert fetch_reference.verify_fetch_reference(
-        result["results"][0]["fetch_ref"]
-    ) == result["results"][0]["url"]
+    assert (
+        fetch_reference.verify_fetch_reference(result["results"][0]["fetch_ref"])
+        == result["results"][0]["url"]
+    )
     assert urllib.parse.parse_qs(urllib.parse.urlparse(captured["url"]).query)["q"] == [
         "HPC portal"
     ]
@@ -115,6 +111,7 @@ def _install_dns_result(monkeypatch, addresses):
         monkeypatch: pytestの差し替え機能。
         addresses: 名前解決結果として返すIPアドレス。
     """
+
     class FakeResolver:
         """A・AAAAレコードをメモリ上から返すResolver。"""
 
@@ -210,9 +207,7 @@ def test_fetch_web_page_extracts_html_and_marks_untrusted_content(monkeypatch):
         ),
     )
 
-    result = web_fetch.fetch_web_page(
-        _fetch_ref("https://example.com/article#section")
-    )
+    result = web_fetch.fetch_web_page(_fetch_ref("https://example.com/article#section"))
 
     assert result["url"] == "https://example.com/article"
     assert result["title"] == "Example Page"
@@ -226,6 +221,7 @@ def test_fetch_web_page_extracts_html_and_marks_untrusted_content(monkeypatch):
 
 def test_fetch_web_page_revalidates_redirect_and_blocks_private_target(monkeypatch):
     """外部URLからlocalhostへ向かうリダイレクトを拒否する。"""
+
     def resolve_addresses(hostname, _port, _deadline):
         if hostname == "127.0.0.1":
             raise web_fetch.WebFetchError(
@@ -309,6 +305,7 @@ def test_fetch_web_page_truncates_extracted_content(monkeypatch):
 
 def test_request_once_rejects_body_over_byte_limit(monkeypatch):
     """Content-Lengthがなくても読み取り上限を超えた応答を拒否する。"""
+
     class OversizedResponse:
         """上限超過のHTTP応答を返すテスト用オブジェクト。"""
 
@@ -374,6 +371,7 @@ def test_request_once_rejects_body_over_byte_limit(monkeypatch):
 
 def test_read_response_body_enforces_total_timeout(monkeypatch):
     """データが少しずつ届いても本文取得全体の期限で停止する。"""
+
     class SlowResponse:
         """本文を完了させないテスト用HTTP応答。"""
 

@@ -6,15 +6,16 @@ from types import SimpleNamespace
 import pytest
 from tornado import web
 
-from hpc_portal import forms
-
+from hpc_portal.entrypoints import jupyterhub as jupyterhub_entrypoint
+from hpc_portal.infrastructure.linux import resource_inventory
+from hpc_portal.presentation import job_form as forms
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_app_resource_recommendations_match_supported_workloads():
     """アプリごとの推奨値が想定する用途に一致することを確認する。"""
-    recommendations = forms._hpc_app_resource_recommendations()
+    recommendations = portal.jobs.app_resource_recommendations()
 
     assert recommendations["ubuntu-cli"]["label"] == "JupyterLab"
     assert recommendations["ubuntu-cli"]["cpu"] == "2"
@@ -28,9 +29,9 @@ def test_app_resource_recommendations_match_supported_workloads():
 
 def test_app_option_contains_recommendation_data_attributes():
     """選択肢へJavaScriptが利用する推奨値を埋め込むことを確認する。"""
-    recommendation = forms._hpc_app_resource_recommendations()["open-webui"]
+    recommendation = portal.jobs.app_resource_recommendations()["open-webui"]
 
-    option = forms._hpc_app_option_html("open-webui", recommendation)
+    option = forms.app_option_html("open-webui", recommendation)
 
     assert 'value="open-webui"' in option
     assert 'data-cpu="2"' in option
@@ -74,8 +75,8 @@ def test_spawn_form_renders_recommendation_card(monkeypatch):
         notebook_dir="/home/user01",
         homedir="/home/user01",
     )
-    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
-    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+    monkeypatch.setattr(portal.resources, "snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "is_portal_admin", lambda _user: False)
 
     rendered = forms.make_options_form(spawner)
 
@@ -95,7 +96,9 @@ def test_spawn_form_renders_recommendation_card(monkeypatch):
 
 def test_missing_form_values_fall_back_to_selected_app_recommendation():
     """入力が欠けても選択アプリの推奨値を使用することを確認する。"""
-    user_options = forms.options_from_form({"app_choice": ["open-webui"]})
+    user_options = jupyterhub_entrypoint.options_from_form(
+        {"app_choice": ["open-webui"]}
+    )
 
     assert user_options["nprocs"] == "2"
     assert user_options["memory"] == "4G"
@@ -105,7 +108,9 @@ def test_missing_form_values_fall_back_to_selected_app_recommendation():
 
 def test_shared_ollama_memory_default_keeps_single_unit_suffix():
     """Ollama推奨メモリの単位を重複させないことを確認する。"""
-    user_options = forms.options_from_form({"app_choice": ["shared-ollama"]})
+    user_options = jupyterhub_entrypoint.options_from_form(
+        {"app_choice": ["shared-ollama"]}
+    )
 
     assert user_options["nprocs"] == "8"
     assert user_options["memory"] == "40G"
@@ -145,11 +150,11 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
     spawner = SimpleNamespace(
         user=user, notebook_dir="/home/admin", homedir="/home/admin"
     )
-    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
-    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: True)
+    monkeypatch.setattr(portal.resources, "snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "is_portal_admin", lambda _user: True)
     monkeypatch.setattr(
         forms,
-        "_hpc_shared_ollama_detail_context",
+        "shared_ollama_detail_context",
         lambda: {"active": False},
     )
 
@@ -165,9 +170,7 @@ def test_spawn_form_renders_shared_ollama_runtime_settings(monkeypatch):
 
 def test_spawn_script_applies_selected_recommendation_to_form_values():
     """アプリ変更時に入力欄と案内カードを更新することを確認する。"""
-    script = (
-        REPOSITORY_ROOT / "roles/jupyterhub/files/hpc-portal-js/spawn-form.js"
-    ).read_text()
+    script = (REPOSITORY_ROOT / "frontend/static/js/spawn-form.js").read_text()
 
     assert "function applyRecommendation(option, isSharedOllama)" in script
     assert 'setFormValue("cpu", recommendation.cpu)' in script
@@ -177,9 +180,9 @@ def test_spawn_script_applies_selected_recommendation_to_form_values():
 
 def _resource_meter_sources():
     """リソースメーターを描画しているファイルを列挙する。"""
-    root = Path(__file__).resolve().parents[1] / "roles/jupyterhub"
-    candidates = list((root / "templates").glob("*.j2"))
-    candidates.append(root / "files/hpc_portal/forms.py")
+    root = Path(__file__).resolve().parents[1]
+    candidates = list((root / "frontend/templates").glob("*.html"))
+    candidates.append(root / "src/hpc_portal/presentation/job_form.py")
     return [
         path
         for path in candidates
@@ -212,15 +215,22 @@ def test_every_resource_meter_shows_gpu_share_of_unified_memory():
     1/10ほどしか示さない。3箇所が同じマークアップを複製しているので、
     片方だけ直しても気付けない。
     """
-    sources = _resource_meter_sources()
+    _resource_meter_sources()
 
 
 @pytest.mark.parametrize(
     ("raw", "gigabytes"),
-    [("40G", 40.0), ("4096M", 4.0), ("1T", 1024.0), ("8", 8.0), ("", None), ("bad", None)],
+    [
+        ("40G", 40.0),
+        ("4096M", 4.0),
+        ("1T", 1024.0),
+        ("8", 8.0),
+        ("", None),
+        ("bad", None),
+    ],
 )
 def test_parse_requested_memory_gb(raw, gigabytes):
-    assert forms._hpc_parse_requested_memory_gb(raw) == gigabytes
+    assert portal.jobs.parse_requested_memory_gb(raw) == gigabytes
 
 
 def _free(cpu=12.0, mem_mb=56970, gpu=1):
@@ -235,16 +245,16 @@ def _free(cpu=12.0, mem_mb=56970, gpu=1):
 
 
 def test_requested_resources_pass_when_within_free_capacity(monkeypatch):
-    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+    monkeypatch.setattr(resource_inventory, "slurm_free_resources", lambda: _free())
 
-    assert forms._hpc_requested_resources_error("8", "32G") == ""
+    assert portal.jobs.requested_resources_error("8", "32G") == ""
 
 
 def test_requested_resources_reject_memory_over_capacity(monkeypatch):
     """空き55.6GBに対する96G要求は、5分待たずに理由付きで弾く。"""
-    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+    monkeypatch.setattr(resource_inventory, "slurm_free_resources", lambda: _free())
 
-    error = forms._hpc_requested_resources_error("4", "96G")
+    error = portal.jobs.requested_resources_error("4", "96G")
 
     assert "メモリ" in error
     assert "96" in error and "55.6" in error
@@ -256,32 +266,38 @@ def test_requested_resources_ignore_gpu_availability(monkeypatch):
     枚数で弾くと、実際には起動できる構成まで拒否してしまう。
     GPUの確保分は統合メモリから出ていくため、メモリ判定が実質的な歯止めになる。
     """
-    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(gpu=0))
+    monkeypatch.setattr(
+        resource_inventory, "slurm_free_resources", lambda: _free(gpu=0)
+    )
 
-    assert forms._hpc_requested_resources_error("2", "4G") == ""
+    assert portal.jobs.requested_resources_error("2", "4G") == ""
 
 
 def test_requested_resources_reject_cpu_over_capacity(monkeypatch):
-    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free(cpu=4.0))
+    monkeypatch.setattr(
+        resource_inventory, "slurm_free_resources", lambda: _free(cpu=4.0)
+    )
 
-    error = forms._hpc_requested_resources_error("16", "4G")
+    error = portal.jobs.requested_resources_error("16", "4G")
 
     assert "vCPU" in error
 
 
 def test_requested_resources_allow_when_slurm_unavailable(monkeypatch):
     """Slurmへ問い合わせられないときは判断材料が無いため通す。"""
-    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: None)
+    monkeypatch.setattr(resource_inventory, "slurm_free_resources", lambda: None)
 
-    assert forms._hpc_requested_resources_error("20", "999G") == ""
+    assert portal.jobs.requested_resources_error("20", "999G") == ""
 
 
 def test_options_from_form_rejects_request_over_capacity(monkeypatch):
     """sbatchへ渡す前に400で弾き、PENDINGの5分待ちを避ける。"""
-    monkeypatch.setattr(forms, "_hpc_slurm_free_resources", lambda: _free())
+    monkeypatch.setattr(resource_inventory, "slurm_free_resources", lambda: _free())
 
     with pytest.raises(web.HTTPError) as excinfo:
-        forms.options_from_form({"app_choice": ["ubuntu-cli"], "mem": ["96"], "cpu": ["2"]})
+        jupyterhub_entrypoint.options_from_form(
+            {"app_choice": ["ubuntu-cli"], "mem": ["96"], "cpu": ["2"]}
+        )
 
     assert excinfo.value.status_code == 400
     assert "メモリ" in str(excinfo.value.log_message)
@@ -293,7 +309,7 @@ def test_user_jobs_no_longer_reserve_gpu_gres():
     ノードのGPUは1枚しかなく、予約すると2人目以降が永久にPENDINGになる。
     起動スクリプトは常に apptainer exec --nv で実行するため、予約が無くてもGPUは使える。
     """
-    user_options = forms.options_from_form(
+    user_options = jupyterhub_entrypoint.options_from_form(
         {"app_choice": ["ubuntu-cli"], "gpu": ["1"], "mem": ["16"]}
     )
 
@@ -309,7 +325,7 @@ def test_jobs_without_gpu_hide_cuda_devices():
     GRES予約をやめた以上スケジューラ側では締め出せず、統合メモリのため
     意図しないGPU確保がそのまま要求メモリの枠を圧迫する。
     """
-    user_options = forms.options_from_form(
+    user_options = jupyterhub_entrypoint.options_from_form(
         {"app_choice": ["ubuntu-cli"], "gpu": ["0"], "mem": ["4"]}
     )
 
@@ -320,23 +336,38 @@ def test_jobs_without_gpu_hide_cuda_devices():
 def test_spawn_form_offers_shared_gpu_choice(monkeypatch):
     """GPU欄が枚数ではなく共有の可否になっていることを確認する。"""
     resource = {
-        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
-        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
-        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 24.5,
-        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
-        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
-        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
-        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
-        "disk_status": "余裕あり", "gpu_max": 1, "gpu_available": 100.0,
-        "gpu_available_count": 1, "gpu_status": "余裕あり",
-        "gpu_processes": [], "gpu_processes_available": True,
+        "cpu_available": 50.0,
+        "cpu_available_count": 10.0,
+        "cpu_total": 20,
+        "cpu_status": "余裕あり",
+        "mem_available": 75.0,
+        "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0,
+        "mem_used_gb": 30.0,
+        "mem_gpu_used_gb": 24.5,
+        "mem_status": "余裕あり",
+        "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6,
+        "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6,
+        "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0,
+        "disk_available_gb": 600.0,
+        "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり",
+        "gpu_max": 1,
+        "gpu_available": 100.0,
+        "gpu_available_count": 1,
+        "gpu_status": "余裕あり",
+        "gpu_processes": [],
+        "gpu_processes_available": True,
     }
     user = SimpleNamespace(name="user01", spawners={})
     spawner = SimpleNamespace(
         user=user, notebook_dir="/home/user01", homedir="/home/user01"
     )
-    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: resource)
-    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+    monkeypatch.setattr(portal.resources, "snapshot", lambda _path: resource)
+    monkeypatch.setattr(forms, "is_portal_admin", lambda _user: False)
 
     rendered = forms.make_options_form(spawner)
 
@@ -356,9 +387,9 @@ def test_gpu_choice_survives_missing_gpu_count(monkeypatch):
     この fact が無く 0 になる。枚数としてクランプすると利用者の選択が黙って
     0 へ潰され、CUDA_VISIBLE_DEVICES="" でGPUが使えなくなる。
     """
-    monkeypatch.setattr(forms, "HPC_GPU_COUNT", 0)
+    monkeypatch.setattr(resource_inventory, "HPC_GPU_COUNT", 0)
 
-    user_options = forms.options_from_form(
+    user_options = jupyterhub_entrypoint.options_from_form(
         {"app_choice": ["ubuntu-cli"], "gpu": ["1"], "mem": ["16"]}
     )
 
@@ -369,7 +400,7 @@ def test_gpu_choice_survives_missing_gpu_count(monkeypatch):
 @pytest.mark.parametrize("raw", ["2", "5", "true"])
 def test_gpu_choice_is_normalized_to_boolean(raw):
     """GPUは枚数ではなく使う/使わないの2値として正規化する。"""
-    user_options = forms.options_from_form(
+    user_options = jupyterhub_entrypoint.options_from_form(
         {"app_choice": ["ubuntu-cli"], "gpu": [raw], "mem": ["16"]}
     )
 
@@ -378,16 +409,31 @@ def test_gpu_choice_is_normalized_to_boolean(raw):
 
 def _resource_fixture(gpu_max):
     return {
-        "cpu_available": 50.0, "cpu_available_count": 10.0, "cpu_total": 20,
-        "cpu_status": "余裕あり", "mem_available": 75.0, "mem_available_gb": 90.0,
-        "mem_total_gb": 120.0, "mem_used_gb": 30.0, "mem_gpu_used_gb": 0.0,
-        "mem_status": "余裕あり", "mem_slurm_available": 46.0,
-        "mem_slurm_available_gb": 55.6, "mem_slurm_used_gb": 64.0,
-        "mem_slurm_total_gb": 119.6, "mem_slurm_status": "やや混雑",
-        "disk_available": 60.0, "disk_available_gb": 600.0, "disk_total_gb": 1000.0,
-        "disk_status": "余裕あり", "gpu_max": gpu_max, "gpu_available": 100.0,
-        "gpu_available_count": gpu_max, "gpu_status": "余裕あり",
-        "gpu_processes": [], "gpu_processes_available": True,
+        "cpu_available": 50.0,
+        "cpu_available_count": 10.0,
+        "cpu_total": 20,
+        "cpu_status": "余裕あり",
+        "mem_available": 75.0,
+        "mem_available_gb": 90.0,
+        "mem_total_gb": 120.0,
+        "mem_used_gb": 30.0,
+        "mem_gpu_used_gb": 0.0,
+        "mem_status": "余裕あり",
+        "mem_slurm_available": 46.0,
+        "mem_slurm_available_gb": 55.6,
+        "mem_slurm_used_gb": 64.0,
+        "mem_slurm_total_gb": 119.6,
+        "mem_slurm_status": "やや混雑",
+        "disk_available": 60.0,
+        "disk_available_gb": 600.0,
+        "disk_total_gb": 1000.0,
+        "disk_status": "余裕あり",
+        "gpu_max": gpu_max,
+        "gpu_available": 100.0,
+        "gpu_available_count": gpu_max,
+        "gpu_status": "余裕あり",
+        "gpu_processes": [],
+        "gpu_processes_available": True,
     }
 
 
@@ -400,10 +446,13 @@ def test_spawn_form_hides_gpu_choice_without_gpu(monkeypatch):
     spawner = SimpleNamespace(
         user=user, notebook_dir="/home/user01", homedir="/home/user01"
     )
-    monkeypatch.setattr(forms, "_hpc_resource_snapshot", lambda _path: _resource_fixture(0))
-    monkeypatch.setattr(forms, "_hpc_is_portal_admin", lambda _user: False)
+    monkeypatch.setattr(
+        portal.resources, "snapshot", lambda _path: _resource_fixture(0)
+    )
+    monkeypatch.setattr(forms, "is_portal_admin", lambda _user: False)
 
     rendered = forms.make_options_form(spawner)
+    assert 'id="spawn-gpu"' not in rendered
 
 
 def test_memory_overuse_is_keyed_by_server_name(monkeypatch):
@@ -412,25 +461,31 @@ def test_memory_overuse_is_keyed_by_server_name(monkeypatch):
     _spawner_job_id は job_id が空のとき他のソースから回収するが、
     テンプレートからは同じ回収ができない。キーが噛み合わないと無表示になる。
     """
-    from hpc_portal import apps
+    from hpc_portal.presentation import job_presenter as apps
 
     spawner = SimpleNamespace(
-        job_id="",                    # 属性からは消えている
-        _hpc_job_id="44",             # 回収元にはある
+        job_id="",  # 属性からは消えている
+        _hpc_job_id="44",  # 回収元にはある
         user_options={"memory": "8G"},
         get_state=lambda: {},
     )
     user = SimpleNamespace(spawners={"app-20260920-0001": spawner})
     monkeypatch.setattr(
-        "hpc_portal.handlers.admin_apps._hpc_job_cpu_memory_bytes",
+        "hpc_portal.infrastructure.slurm.slurm_client.job_cpu_memory_bytes",
         lambda: {"44": 1024**3},
     )
     monkeypatch.setattr(
-        "hpc_portal.handlers.admin_apps._hpc_job_gpu_memory_bytes",
+        "hpc_portal.infrastructure.slurm.slurm_client.job_gpu_memory_bytes",
         lambda: {"44": 12 * 1024**3},
     )
 
-    result = apps._hpc_user_memory_overuse(user)
+    result = apps.user_memory_overuse(user)
 
     assert list(result) == ["app-20260920-0001"]
     assert result["app-20260920-0001"]["memory_used_label"]
+
+
+@pytest.fixture(autouse=True)
+def usecase_components(portal_dependencies):
+    global portal
+    portal = portal_dependencies

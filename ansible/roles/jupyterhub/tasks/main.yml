@@ -1,0 +1,262 @@
+# slurm_effective_gpu_count は通常 slurm ロールが set_fact で設定する。
+# --tags jupyterhub のようにslurmロールを飛ばすデプロイではこの fact が無く、
+# jupyterhub.env の HPC_GPU_COUNT が 0 になってGPUを選べなくなる。
+# そのため、未定義のときはここでも検出する。
+- name: GPU数を検出（slurmロールを経由しないデプロイ向け）
+  ansible.builtin.command: nvidia-smi -L
+  register: jupyterhub_nvidia_smi
+  failed_when: false
+  changed_when: false
+  check_mode: false
+  when: slurm_effective_gpu_count is not defined
+
+- name: 検出したGPU数を設定
+  ansible.builtin.set_fact:
+    slurm_effective_gpu_count: >-
+      {{
+        slurm_gpu_count
+        | default(
+            (jupyterhub_nvidia_smi.stdout_lines | default([]))
+            | select('match', '^GPU ') | list | length
+          )
+        | int
+      }}
+  when: slurm_effective_gpu_count is not defined
+
+- name: 必要なOSパッケージをインストール
+  ansible.builtin.package:
+    name:
+      - python3-full
+      - python3-venv
+      - python3-pip
+      - nodejs
+      - npm
+      - git
+      - util-linux
+      - iproute2
+      - nftables
+    state: present
+
+- name: configurable-http-proxyをインストール
+  community.general.npm:
+    name: configurable-http-proxy
+    global: yes
+    state: present
+
+- name: JupyterHub用各ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /opt/jupyterhub
+    - /etc/jupyterhub
+    - /etc/jupyterhub/hpc_portal
+    - /etc/jupyterhub/templates
+    - /etc/jupyterhub/static
+    - /var/lib/jupyterhub
+
+- name: Python仮想環境(venv)の作成とパッケージインストール
+  ansible.builtin.pip:
+    name:
+      - jupyterhub
+      - jupyterlab
+      - jupyter-server-proxy
+      - nest-asyncio
+      - psutil
+      - 'pydantic>=2,<3'
+      - open-webui
+      - batchspawner
+      - 'cryptography>=44'
+      - 'aiohttp>=3.12,<4'
+      - 'PyJWT[crypto]>=2.10,<3'
+    virtualenv: /opt/jupyterhub/venv
+    virtualenv_command: python3 -m venv
+    state: present
+  notify: jupyterhubを再起動
+
+- name: JupyterHub設定エントリポイントを配置
+  ansible.builtin.copy:
+    src: jupyterhub_config.py
+    dest: /etc/jupyterhub/jupyterhub_config.py
+    owner: root
+    group: root
+    mode: '0644'
+  notify: jupyterhubを再起動
+
+- name: 配置対象のHPCポータルPythonツリーを取得
+  ansible.builtin.set_fact:
+    portal_python_tree: >-
+      {{ query('community.general.filetree', playbook_dir + '/../../src/hpc_portal') }}
+
+- name: 配置対象のHPCポータルPythonファイルを抽出
+  ansible.builtin.set_fact:
+    portal_python_files: >-
+      {{ portal_python_tree
+         | selectattr('state', 'equalto', 'file')
+         | selectattr('path', 'match', '.*\.py$')
+         | list }}
+
+- name: HPCポータルPythonパッケージディレクトリを作成
+  ansible.builtin.file:
+    path: "/etc/jupyterhub/hpc_portal/{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ portal_python_tree | selectattr('state', 'equalto', 'directory') | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: item.path is not search('(^|/)__pycache__(/|$)')
+
+- name: 配置済みHPCポータルPythonモジュールを確認
+  ansible.builtin.find:
+    paths: /etc/jupyterhub/hpc_portal
+    patterns: '*.py'
+    file_type: file
+    recurse: true
+  register: deployed_portal_python_files
+
+- name: 廃止したHPCポータルPythonモジュールを削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ deployed_portal_python_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: >-
+    (item.path | regex_replace('^/etc/jupyterhub/hpc_portal/', '')) not in
+    (portal_python_files | map(attribute='path') | list)
+  notify: jupyterhubを再起動
+
+- name: HPCポータルPythonモジュールを配置
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/etc/jupyterhub/hpc_portal/{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ portal_python_files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  notify: jupyterhubを再起動
+
+- name: JupyterHub 環境ファイルを配置
+  ansible.builtin.template:
+    src: jupyterhub.env.j2
+    dest: /etc/jupyterhub/jupyterhub.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+  notify: jupyterhubを再起動
+
+- name: HPCポータル画面テンプレートを配置
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/jupyterhub/templates/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ query('ansible.builtin.fileglob', playbook_dir + '/../../frontend/templates/*.html') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: 廃止した管理画面テンプレートを削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/jupyterhub/templates/admin.html
+    - /etc/jupyterhub/templates/admin_nav.html
+    - /etc/jupyterhub/static/hpc-admin-nav.js
+
+- name: HPCポータルJavaScriptディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/jupyterhub/static/hpc-portal-js
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: 配置済みHPCポータルJavaScriptを確認
+  ansible.builtin.find:
+    paths: /etc/jupyterhub/static/hpc-portal-js
+    patterns: '*.js'
+    file_type: file
+    recurse: false
+  register: deployed_portal_javascript_files
+
+- name: 廃止したHPCポータルJavaScriptを削除
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ deployed_portal_javascript_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: >-
+    item.path | basename not in
+    (query('ansible.builtin.fileglob', playbook_dir + '/../../frontend/static/js/*.js')
+    | map('basename') | list)
+
+- name: HPCポータルJavaScriptを配置
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/jupyterhub/static/hpc-portal-js/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ query('ansible.builtin.fileglob', playbook_dir + '/../../frontend/static/js/*.js') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: 旧HPCポータルJavaScriptを削除
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/jupyterhub/static/hpc-resource-meter.js
+    - /etc/jupyterhub/static/hpc-app-status.js
+
+- name: HPCポータルCSS断片を結合して配置
+  ansible.builtin.assemble:
+    src: "{{ playbook_dir }}/../../frontend/static/css"
+    dest: /etc/jupyterhub/static/hpc-portal.css
+    remote_src: false
+    regexp: '^[0-9]+-.*\.css$'
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: JupyterHubのsystemdユニットを配置
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/jupyterhub.service
+    content: |
+      [Unit]
+      Description=JupyterHub
+      After=network.target
+
+      [Service]
+      User=root
+      WorkingDirectory=/etc/jupyterhub
+      Environment="PATH=/opt/jupyterhub/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      Environment="JUPYTERHUB_XSRF_ANONYMOUS_IP_CIDRS=127.0.0.0/8;10.0.0.0/8;172.16.0.0/12;::1/128"
+      EnvironmentFile=/etc/jupyterhub/jupyterhub.env
+      ExecStart=/opt/jupyterhub/venv/bin/jupyterhub -f /etc/jupyterhub/jupyterhub_config.py
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: '0644'
+  notify: jupyterhubを再起動
+
+- name: systemdをリロード & 起動
+  ansible.builtin.systemd:
+    name: jupyterhub
+    daemon_reload: true
+    enabled: true
+    state: started

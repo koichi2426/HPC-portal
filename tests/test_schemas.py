@@ -2,7 +2,7 @@
 
 import pytest
 
-from hpc_portal.schemas import (
+from hpc_portal.presentation.schemas import (
     HpcAdminUsersRequest,
     HpcLlmApiRequest,
     HpcPasswordChangeRequest,

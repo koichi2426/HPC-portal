@@ -171,11 +171,11 @@ Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and
    # Ubuntu
    sudo apt update && sudo apt install ansible -y
    ```
-2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `inventory/production.ini`.
+2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `ansible/inventory/production.ini`.
 
    - Slurm-launched app data lives under that home directory. Shared Ollama models live in `/srv/ollama/models`
    - **SSH public-key login** from your control machine
-   - **Passwordless sudo** is required (`site.yml` uses `become: true`)
+   - **Passwordless sudo** is required (`ansible/playbooks/site.yml` uses `become: true`)
 
    ```bash
    # On the server (Ubuntu). Use the same name as ansible_user in production.ini
@@ -191,9 +191,9 @@ Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and
 4. **Prepare the inventory and local configuration**:
    ```bash
    make setup
-   # inventory/production.ini contains the host and connection settings
-   # Set external values such as cloudflared_token in group_vars/all/secret.yml
-   # Define optional read-only shares in group_vars/all/nfs_mounts.yml
+   # ansible/inventory/production.ini contains the host and connection settings
+   # Set external values such as cloudflared_token in ansible/inventory/group_vars/all/secret.yml
+   # Define optional read-only shares in ansible/inventory/group_vars/all/nfs_mounts.yml
    ```
 
    `make setup` creates missing local configuration files and generates only missing secrets. It never replaces configured values. The three files containing environment-specific values are excluded from Git.
@@ -214,7 +214,7 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make smoke` | Run read-only checks against services, APIs, and deployed assets |
 | `make nfs-mounts` | Apply only the read-only NAS/NFS configuration |
 
-Override inventory: `make deploy INV=inventory/staging.ini`
+Override inventory: `make deploy INV=ansible/inventory/staging.ini`
 
 ##### Component updates
 
@@ -249,7 +249,7 @@ Override inventory: `make deploy INV=inventory/staging.ini`
 
 #### Read-only NAS mounts
 
-Optional NFS shares can be exposed read-only to all HPC users under `/mnt/nas/`. Keep the real configuration only in the Git-ignored `group_vars/all/nfs_mounts.yml`.
+Optional NFS shares can be exposed read-only to all HPC users under `/mnt/nas/`. Keep the real configuration only in the Git-ignored `ansible/inventory/group_vars/all/nfs_mounts.yml`.
 
 - Enable: set `state: present`, then run `make nfs-mounts`
 - Disable: set `state: absent`, then run `make nfs-mounts`
@@ -330,15 +330,48 @@ Start with `make status`, `make gpu`, `make services`, or `make processes`.
 <summary>Run ansible commands directly</summary>
 
 ```bash
-ansible -i inventory/production.ini gx10 -m ping
-ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
-ansible-playbook -i inventory/production.ini site.yml --check --diff
+ansible -i ansible/inventory/production.ini gx10 -m ping
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags jupyterhub
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --check --diff
 ```
 
 </details>
 
 ---
 
-### 4. License
+### 4. Development layout
+
+```text
+src/
+├── hpc_portal/
+│   ├── entrypoints/             # Hub registration and dependency assembly
+│   ├── application/
+│   │   ├── usecase/             # Operations grouped by feature
+│   │   └── ports/               # Interfaces for external operations
+│   ├── domain/                  # Data and validation rules
+│   ├── infrastructure/          # Linux, Slurm, and API connections
+│   └── presentation/            # HTTP input and display formatting
+└── hpc_search_mcp/              # Web-search MCP, deployed as a separate service
+frontend/
+├── templates/                  # HTML rendered by JupyterHub
+└── static/                     # JavaScript and CSS
+ansible/
+├── playbooks/                  # Deployment, verification, and cleanup
+├── roles/                      # Service deployment settings
+└── inventory/group_vars/all/    # Shared settings and Git-ignored secrets
+tests/                          # Checks without HPC access
+```
+
+Start with `application/usecase/` to follow an operation. Each feature, such as user or LLM management, groups its workflows in one `*_usecase.py` file and receives external connections through `ports/`. `domain/` and `application/` do not depend on JupyterHub or Ansible settings.
+
+`entrypoints/dependencies.py` assembles connections, and `entrypoints/jupyterhub.py` registers the portal with JupyterHub. Ansible deploys the required files from `src/` and `frontend/`. Deployment destinations and stored data formats remain compatible.
+
+```bash
+uv sync --dev
+make check-local   # Static checks, formatting checks, and tests
+make format        # Format Python files
+```
+
+### 5. License
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

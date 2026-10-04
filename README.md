@@ -171,11 +171,11 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
    # Ubuntu
    sudo apt update && sudo apt install ansible -y
    ```
-2. **デプロイ先に運用ユーザーを作成**: Playbook は Unix ユーザーを自動作成しません。後述する `inventory/production.ini` の **`ansible_user` と同じ名前のユーザー**を、対象サーバー（gx10 等）にあらかじめ用意してください。
+2. **デプロイ先に運用ユーザーを作成**: Playbook は Unix ユーザーを自動作成しません。後述する `ansible/inventory/production.ini` の **`ansible_user` と同じ名前のユーザー**を、対象サーバー（gx10 等）にあらかじめ用意してください。
 
    - **ホームディレクトリ**（`/home/<ansible_user>/`）には、Slurm 経由で起動するアプリのデータが置かれます。共有 Ollama のモデルは `/srv/ollama/models` に置かれます
    - 手元の PC から、そのユーザーで **SSH 公開鍵認証**できること
-   - `site.yml` は `become: true` で root 昇格するため、**パスワードなし sudo**（`sudo` グループ等）が必要です
+   - `ansible/playbooks/site.yml` は `become: true` で root 昇格するため、**パスワードなし sudo**（`sudo` グループ等）が必要です
 
    ```bash
    # サーバー側の例（Ubuntu）。your_user は production.ini の ansible_user と同じ名前にする
@@ -191,9 +191,9 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 4. **インベントリとローカル設定の準備**:
    ```bash
    make setup
-   # inventory/production.ini … IP / ansible_user / ドメイン変数
-   # group_vars/all/secret.yml … cloudflared_tokenなど外部発行の値を設定
-   # group_vars/all/nfs_mounts.yml … 必要な読み取り専用NFS共有を設定
+   # ansible/inventory/production.ini … IP / ansible_user / ドメイン変数
+   # ansible/inventory/group_vars/all/secret.yml … cloudflared_tokenなど外部発行の値を設定
+   # ansible/inventory/group_vars/all/nfs_mounts.yml … 必要な読み取り専用NFS共有を設定
    ```
 
    `make setup`は不足しているローカル設定ファイルを作成し、未設定の秘密値だけを自動生成します。設定済みの値は変更しません。実環境の値を含む3ファイルはGit管理外です。
@@ -214,7 +214,7 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 | `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
 | `make nfs-mounts` | NASの読み取り専用NFS設定だけを反映 |
 
-別のインベントリを使う場合: `make deploy INV=inventory/staging.ini`
+別のインベントリを使う場合: `make deploy INV=ansible/inventory/staging.ini`
 
 ##### コンポーネント別の反映
 
@@ -249,7 +249,7 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 
 #### NASの読み取り専用マウント
 
-任意のNFS共有を、HPC上の`/mnt/nas/`配下から全ユーザー向けに読み取り専用で参照できます。実環境の設定はGit管理外の`group_vars/all/nfs_mounts.yml`に記載します。
+任意のNFS共有を、HPC上の`/mnt/nas/`配下から全ユーザー向けに読み取り専用で参照できます。実環境の設定はGit管理外の`ansible/inventory/group_vars/all/nfs_mounts.yml`に記載します。
 
 - 有効化: `state: present`にして`make nfs-mounts`
 - 解除: `state: absent`にして`make nfs-mounts`
@@ -329,36 +329,69 @@ make cleanup-purge-data
 <details>
 <summary>ansible コマンドを直接使う場合</summary>
 
-ホスト名 `gx10` は `inventory/production.ini` のグループ名に合わせてください。
+ホスト名 `gx10` は `ansible/inventory/production.ini` のグループ名に合わせてください。
 
 ```bash
 # 接続確認
-ansible -i inventory/production.ini gx10 -m ping
+ansible -i ansible/inventory/production.ini gx10 -m ping
 
 # Slurm ジョブ・ノード割当
-ansible -i inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
 
 # GPU / VRAM
-ansible -i inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
 
 # JupyterHub / Slurm / LiteLLM / shared Ollama 状態（-b は root 権限が必要なとき）
-ansible -i inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
+ansible -i ansible/inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
 
 # 残存プロセス（YOUR_USER は ansible_user に置き換え）
-ansible -i inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
 
 # 部分デプロイ
-ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
-ansible-playbook -i inventory/production.ini site.yml --tags slurm
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags jupyterhub
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags slurm
 
 # ドライラン
-ansible-playbook -i inventory/production.ini site.yml --check --diff
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --check --diff
 ```
 
 </details>
 
 ---
 
-### 4. ライセンス
+### 4. 開発時の構成
+
+```text
+src/
+├── hpc_portal/
+│   ├── entrypoints/             # JupyterHubへの登録・依存の組み立て
+│   ├── application/
+│   │   ├── usecase/             # 機能ごとの操作手順
+│   │   └── ports/               # 外部処理のインターフェース
+│   ├── domain/                  # データと検証ルール
+│   ├── infrastructure/          # Linux・Slurm・各APIへの接続
+│   └── presentation/            # HTTP入力・画面表示
+└── hpc_search_mcp/              # 別サービスとして動くWeb検索MCP
+frontend/
+├── templates/                  # JupyterHubが描画するHTML
+└── static/                     # JavaScript・CSS
+ansible/
+├── playbooks/                  # デプロイ・確認・削除
+├── roles/                      # 各サービスの配布設定
+└── inventory/group_vars/all/    # 共通設定・Git管理外の秘密情報
+tests/                          # 実機接続なしの検証
+```
+
+処理を確認するときは `application/usecase/` から読みます。ユーザー管理やLLM管理など、機能ごとに1つの `*_usecase.py` へ操作手順をまとめ、外部への接続は `ports/` を通じて渡します。`domain/` と `application/` はJupyterHubやAnsibleの設定に依存しません。
+
+`entrypoints/dependencies.py` が接続先を組み立て、`entrypoints/jupyterhub.py` がJupyterHubへ登録します。Ansibleは `src/` と `frontend/` から必要なファイルを配布します。配布先や保存済みデータの形式は維持しています。
+
+```bash
+uv sync --dev
+make check-local   # 静的検証・書式・テスト
+make format        # Pythonの書式を統一
+```
+
+### 5. ライセンス
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

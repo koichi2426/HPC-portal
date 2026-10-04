@@ -2,9 +2,6 @@
 
 import os
 
-from traitlets.config import Config
-
-
 # 実機の設定や秘密情報を読み込まず、import時検証を通すテスト専用値へ固定する。
 os.environ.update(
     {
@@ -29,9 +26,13 @@ os.environ.update(
     }
 )
 
-# 本番ではjupyterhub_config.pyから渡されるConfigを、import副作用のない偽物で置き換える。
-from hpc_portal import runtime  # noqa: E402
+import pytest
 
-runtime.c = Config()
-runtime.c.JupyterHub.template_vars = {}
-runtime.c.JupyterHub.extra_handlers = []
+from hpc_portal.entrypoints import dependencies
+
+
+@pytest.fixture(autouse=True)
+def portal_dependencies(monkeypatch):
+    assembled = dependencies.build_dependencies()
+    monkeypatch.setattr(dependencies, "_dependencies", assembled)
+    return assembled

@@ -5,7 +5,6 @@ from pathlib import Path
 
 from scripts.setup_secrets import ensure_secrets, find_missing
 
-
 TARGET_KEYS = {
     "litellm_master_key",
     "litellm_salt_key",

@@ -1,0 +1,203 @@
+{% extends "page.html" %}
+
+{% block main %}
+<div class="gx10-admin-users">
+  <div style="margin-bottom:20px;">
+    <a class="hpc-back-link" href="/hub/home">← Home</a>
+    <div class="hpc-row-between" style="margin-top:10px;">
+      <h2 class="hpc-page-title">Linux ユーザー管理</h2>
+      {% if hpc_litellm_admin_url %}
+      <a class="hpc-page-link hpc-external-link" href="{{ hpc_litellm_admin_url }}" target="_blank" rel="noopener noreferrer" aria-label="LiteLLM 管理画面を新しいタブで開く"><span>LiteLLM 管理画面</span><svg class="hpc-external-link-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v7H3V3h7"/></svg></a>
+      {% endif %}
+    </div>
+    <div class="hpc-help">ポータルへのログインに使う OS アカウントとシステム権限の管理</div>
+  </div>
+
+  <div class="hpc-note">
+    <strong>ログインは Linux ユーザーです</strong><br>
+    ここで作成・再発行したユーザー名とパスワードが、そのまま <a href="/hub/login">ログイン画面</a> で使われます。JupyterHub 専用のアカウントはありません。
+  </div>
+
+  <div class="hpc-note">
+    LLM API利用の有効化・無効化・ユーザー削除は、このHPCポータルから行ってください。LiteLLMでVirtual Keyを直接変更すると、管理状態が一致しなくなる場合があります。
+  </div>
+
+  <div class="gx10-admin-card">
+    <div class="hpc-section-title" style="margin-bottom:12px;">新規ユーザー作成</div>
+    <form id="hpc-create-user-form" class="gx10-admin-form-grid" method="post" action="#" onsubmit="return false;" data-default-sudo="{% if grant_sudo_default %}true{% else %}false{% endif %}">
+      <div>
+        <label class="gx10-admin-label" for="new-username">ユーザー名</label>
+        <input class="gx10-admin-input" id="new-username" name="username" pattern="[a-z0-9][a-z0-9_-]{2,31}" required placeholder="例: 22rd092" autocomplete="off">
+      </div>
+      <div>
+        <label class="gx10-admin-label" for="new-display-name">表示名（任意）</label>
+        <input class="gx10-admin-input" id="new-display-name" name="display_name" maxlength="80" placeholder="例: 山田 太郎" autocomplete="off">
+      </div>
+      <div>
+        <label class="gx10-admin-label" style="margin-bottom:10px;">権限</label>
+        <label class="hpc-row" style="font-size:13px;">
+          <input type="checkbox" id="new-sudo" name="sudo" {% if grant_sudo_default %}checked{% endif %}>
+          sudo グループに追加
+        </label>
+      </div>
+      <div>
+        <button type="submit" class="gx10-admin-btn gx10-admin-btn-primary" id="create-btn">作成</button>
+      </div>
+    </form>
+    <div id="create-msg" class="gx10-admin-msg"></div>
+    <div id="create-keybox" class="gx10-admin-keybox" aria-live="polite">
+      <div class="hpc-section-title"><span id="credential-username"></span> の認証情報（一度だけ表示）</div>
+      <div class="hpc-status-warn" id="credential-warning" style="font-size:12px; margin-top:4px;">初期パスワードは保存されません。画面を移動する前にユーザーへ安全な経路で共有してください。</div>
+      <div class="gx10-admin-keyline" id="password-key-line">
+        <div><div class="hpc-help">初期パスワード</div><div id="initial-password-value" class="gx10-admin-keyvalue"></div></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="initial-password-value">コピー</button>
+      </div>
+      <div class="gx10-admin-keyline" id="api-key-line" hidden>
+        <div><div class="hpc-help">API key</div><div id="create-keyvalue" class="gx10-admin-keyvalue"></div></div>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-copy-btn" data-copy-target="create-keyvalue">コピー</button>
+      </div>
+      {% if hpc_litellm_public_base_url %}
+      <div class="hpc-help" id="api-base-help" style="margin-top:8px;" hidden>API Base URL: <code>{{ hpc_litellm_public_base_url }}</code></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="gx10-admin-card">
+    <div class="hpc-row-between" style="margin-bottom:12px;">
+      <div class="hpc-section-title">登録ユーザー（UID ≥ 1000）</div>
+      <div class="hpc-user-list-actions">
+        <details class="hpc-sort-dropdown" id="user-sort-dropdown">
+          <summary class="hpc-sort-trigger" aria-label="ユーザーの並べ替えメニューを開く">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M6 3v14M3.5 5.5 6 3l2.5 2.5M14 17V3m-2.5 11.5L14 17l2.5-2.5"></path>
+            </svg>
+            <span>並べ替え</span>
+            <span class="hpc-sort-caret" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="hpc-sort-panel">
+            <div aria-label="並べ替え項目">
+              <button type="button" class="hpc-sort-option selected" data-sort-key="username" aria-pressed="true">ユーザー名順</button>
+              <button type="button" class="hpc-sort-option" data-sort-key="created" aria-pressed="false">作成順</button>
+            </div>
+            <div class="hpc-sort-divider"></div>
+            <div aria-label="並べ替え方向">
+              <button type="button" class="hpc-sort-option selected" data-sort-direction="asc" aria-pressed="true">昇順</button>
+              <button type="button" class="hpc-sort-option" data-sort-direction="desc" aria-pressed="false">降順</button>
+            </div>
+          </div>
+        </details>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="reload-btn">再読み込み</button>
+      </div>
+    </div>
+    <div class="hpc-muted" style="margin:-4px 0 12px; font-size:13px;">
+      パスワードを再発行しても、対象ユーザーのログイン済みブラウザや実行中アプリは終了しません。新しいパスワードは次回ログインから使用します。<br>
+      ストレージ使用量はホームディレクトリ内の実使用量で、容量の上限ではありません。sudo可のユーザーはサーバー全体を管理できるため、必要なユーザーだけに付与してください。sudoグループの変更は次回ログインから確実に反映され、ログイン済みセッションや実行中アプリは終了しません。
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="gx10-admin-table" aria-label="Linux ユーザー一覧">
+        <thead>
+          <tr>
+            <th>ユーザー名</th>
+            <th>表示名</th>
+            <th>UID</th>
+            <th>ホーム</th>
+            <th>ストレージ使用量</th>
+            <th title="設定されたsudoグループへの所属状態">システム権限</th>
+            <th>LLM API</th>
+            <th class="hpc-user-actions-heading">操作</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody">
+          {% for u in users %}
+          <tr data-username="{{ u.username }}" data-uid="{{ u.uid }}">
+            <td>
+              <strong>{{ u.username }}</strong>
+              {% if u.protected %}<span class="gx10-admin-badge" style="margin-left:6px;">保護</span>{% endif %}
+            </td>
+            <td>
+              <span class="hpc-display-name-value">{{ u.display_name or '—' }}</span>
+            </td>
+            <td>{{ u.uid }}</td>
+            <td><code>{{ u.home }}</code></td>
+            <td>
+              <span class="hpc-storage-usage{% if u.storage_used_bytes is none %} is-unknown{% endif %}"{% if u.storage_message %} title="{{ u.storage_message }}"{% endif %}>{{ u.storage_used_label }}</span>
+            </td>
+            <td>
+              <span class="hpc-sudo-status-badge {% if u.sudo_enabled %}is-enabled{% else %}is-disabled{% endif %}" title="設定されたsudoグループに{% if u.sudo_enabled %}所属しています{% else %}所属していません{% endif %}">{% if u.sudo_enabled %}sudo可{% else %}一般{% endif %}</span>
+            </td>
+            <td>
+              {% if u.api_access == 'enabled' %}
+              <span class="hpc-api-status-badge is-enabled">有効</span>
+              {% elif u.api_access == 'disabled' %}
+              <span class="hpc-api-status-badge is-disabled">無効</span>
+              {% elif u.api_access == 'unissued' %}
+              <span class="hpc-api-status-badge is-unissued">未発行</span>
+              {% else %}
+              <span class="hpc-api-status-badge is-unknown"{% if u.api_access_message %} title="{{ u.api_access_message }}"{% endif %}>確認不可</span>
+              {% endif %}
+            </td>
+            <td class="hpc-user-actions-cell">
+              <button type="button" class="hpc-user-actions-trigger" aria-label="{{ u.username }} の操作メニューを開く" aria-haspopup="menu" aria-expanded="false">…</button>
+              <div class="hpc-user-actions-menu" role="menu" hidden>
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-display-name-btn" data-username="{{ u.username }}" data-display-name="{{ u.display_name }}">表示名を変更</button>
+                {% if not u.protected %}
+                {% if u.external_api_state is defined %}
+                <span class="hpc-muted">外部 API: {{ u.external_api_state }}</span>
+                {% if u.external_api_state == "disabled" %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-external-access-btn" data-username="{{ u.username }}" data-action="external_api_enable">外部 API 有効化</button>
+                {% else %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-external-access-btn" data-username="{{ u.username }}" data-action="external_api_disable">外部 API 利用停止</button>
+                {% endif %}
+                {% endif %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-pw-btn" data-username="{{ u.username }}">パスワード再発行</button>
+                {% if u.api_access == 'enabled' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_disable">LLM API無効化</button>
+                {% elif u.api_access == 'disabled' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="disabled">LLM API有効化</button>
+                {% elif u.api_access == 'unissued' %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-api-access-btn" data-username="{{ u.username }}" data-action="api_enable" data-api-state="unissued">LLM API有効化</button>
+                {% endif %}
+                {% endif %}
+                <div class="hpc-user-action-divider" role="separator"></div>
+                {% if u.sudo_enabled %}
+                <button type="button" role="menuitem" class="hpc-user-action-item is-warning hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_disable"{% if u.protected %} disabled title="保護ユーザーのsudo権限は解除できません"{% endif %}>sudo無効化</button>
+                {% else %}
+                <button type="button" role="menuitem" class="hpc-user-action-item hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_enable">sudo有効化</button>
+                {% endif %}
+                {% if not u.protected %}
+                <div class="hpc-user-action-divider" role="separator"></div>
+                <button type="button" role="menuitem" class="hpc-user-action-item is-danger hpc-del-btn" data-username="{{ u.username }}">ユーザー削除</button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div id="list-msg" class="gx10-admin-msg"></div>
+  </div>
+</div>
+
+<div id="hpc-display-name-modal" class="gx10-admin-modal" role="dialog" aria-modal="true" aria-labelledby="hpc-display-name-modal-title" hidden>
+  <div class="gx10-admin-modal-inner">
+    <div class="hpc-section-title" id="hpc-display-name-modal-title" style="margin-bottom:12px;"></div>
+    <form id="hpc-display-name-form">
+      <label class="gx10-admin-label" for="hpc-display-name-input">表示名</label>
+      <input class="gx10-admin-input" id="hpc-display-name-input" maxlength="80" autocomplete="off" placeholder="例: 山田 太郎">
+      <div class="hpc-help" style="margin-top:6px;">空欄で保存すると表示名を削除します。</div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" id="hpc-display-name-cancel">キャンセル</button>
+        <button type="submit" class="gx10-admin-btn gx10-admin-btn-primary" id="hpc-display-name-save">保存</button>
+      </div>
+    </form>
+    <div id="hpc-display-name-error" class="gx10-admin-msg" aria-live="polite"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block script %}
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/admin-users.js?v={{ hpc_static_versions['js/admin-users.js'] }}"></script>
+{% endblock %}

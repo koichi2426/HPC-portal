@@ -3,16 +3,14 @@
 import json
 from pathlib import Path
 
-from hpc_portal import batch, settings
-
+from hpc_portal.infrastructure.config import settings
+from hpc_portal.infrastructure.slurm import batch_script_builder as batch
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_web_search_settings_use_local_searxng_with_bounded_workload():
-    assert settings.HPC_SEARXNG_QUERY_URL == (
-        "http://127.0.0.1:8888/search?q=<query>"
-    )
+    assert settings.HPC_SEARXNG_QUERY_URL == ("http://127.0.0.1:8888/search?q=<query>")
     assert settings.OPENWEBUI_WEB_SEARCH_RESULT_COUNT == 6
     assert settings.OPENWEBUI_WEB_SEARCH_CONCURRENT_REQUESTS == 1
     assert settings.OPENWEBUI_WEB_LOADER_CONCURRENT_REQUESTS == 2
@@ -22,7 +20,7 @@ def test_web_search_settings_use_local_searxng_with_bounded_workload():
 def test_openwebui_enables_selected_builtin_tools_by_default():
     metadata = json.loads(batch.OPENWEBUI_DEFAULT_MODEL_METADATA_JSON)
     params = json.loads(batch.OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON)
-    script = batch.c.HPCSlurmSpawner.batch_script
+    script = batch.build_batch_script()
 
     assert metadata["capabilities"]["web_search"] is True
     assert metadata["capabilities"]["code_interpreter"] is True
@@ -44,7 +42,7 @@ def test_openwebui_enables_selected_builtin_tools_by_default():
 
 
 def test_openwebui_keeps_private_url_fetch_ssrf_protection_enabled():
-    script = batch.c.HPCSlurmSpawner.batch_script
+    script = batch.build_batch_script()
 
     assert '"ENABLE_RAG_LOCAL_WEB_FETCH=False"' in script
     assert '"BYPASS_WEB_SEARCH_WEB_LOADER=False"' in script
@@ -52,19 +50,21 @@ def test_openwebui_keeps_private_url_fetch_ssrf_protection_enabled():
 
 def test_searxng_service_listens_on_loopback_and_has_no_cloudflare_route():
     service = (
-        REPOSITORY_ROOT / "roles/searxng/templates/searxng.service.j2"
+        REPOSITORY_ROOT / "ansible/roles/searxng/templates/searxng.service.j2"
     ).read_text()
-    cloudflared_vars = (REPOSITORY_ROOT / "group_vars/all/main.yml").read_text()
+    cloudflared_vars = (
+        REPOSITORY_ROOT / "ansible/inventory/group_vars/all/main.yml"
+    ).read_text()
 
     assert "GRANIAN_HOST={{ searxng_host }}" in service
     assert "--pwd /usr/local/searxng" in service
     assert 'searxng_host: "127.0.0.1"' in cloudflared_vars
-    assert "hostname: \"{{ searxng" not in cloudflared_vars
+    assert 'hostname: "{{ searxng' not in cloudflared_vars
 
 
 def test_searxng_limits_engines_and_enables_json_without_limiter():
     config = (
-        REPOSITORY_ROOT / "roles/searxng/templates/settings.yml.j2"
+        REPOSITORY_ROOT / "ansible/roles/searxng/templates/settings.yml.j2"
     ).read_text()
 
     assert "    - json" in config

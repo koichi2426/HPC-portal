@@ -4,19 +4,29 @@ from types import SimpleNamespace
 
 import pytest
 
-from hpc_portal import resources
-from hpc_portal.schemas import HpcResourceSnapshot
+from hpc_portal.domain import resource_models
+from hpc_portal.infrastructure.linux import resource_inventory as resources
+from hpc_portal.presentation.schemas import HpcResourceSnapshot
 
 
 @pytest.mark.parametrize(
-    ("available", "status"), [(100, "余裕あり"), (50, "余裕あり"), (49.9, "やや混雑"), (25, "やや混雑"), (24.9, "逼迫"), (0, "逼迫")]
+    ("available", "status"),
+    [
+        (100, "余裕あり"),
+        (50, "余裕あり"),
+        (49.9, "やや混雑"),
+        (25, "やや混雑"),
+        (24.9, "逼迫"),
+        (0, "逼迫"),
+    ],
 )
 def test_resource_status_boundary(available, status):
-    assert resources._hpc_resource_status(available) == status
+    assert resource_models.resource_status(available) == status
 
 
 @pytest.mark.parametrize(
-    ("raw", "megabytes"), [("", 0), ("4G", 4096), ("1.5G", 1536), ("8192M", 8192), ("512", 512)]
+    ("raw", "megabytes"),
+    [("", 0), ("4G", 4096), ("1.5G", 1536), ("8192M", 8192), ("512", 512)],
 )
 def test_parse_slurm_memory(raw, megabytes):
     assert resources._parse_slurm_mem_to_mb(raw) == megabytes
@@ -29,14 +39,18 @@ def test_parse_slurm_tres_reads_cpu_memory_and_gpu():
 
 
 def test_slurm_field_map_ignores_tokens_without_equals():
-    assert resources._slurm_field_map("NodeName=test State=MIXED invalid CfgTRES=cpu=20,mem=32G") == {
+    assert resources._slurm_field_map(
+        "NodeName=test State=MIXED invalid CfgTRES=cpu=20,mem=32G"
+    ) == {
         "NodeName": "test",
         "State": "MIXED",
         "CfgTRES": "cpu=20,mem=32G",
     }
 
 
-@pytest.mark.parametrize(("raw", "count"), [("gpu:1", 1), ("gpu:tesla:2", 0), ("(null)", 0), ("gpu:x", 0)])
+@pytest.mark.parametrize(
+    ("raw", "count"), [("gpu:1", 1), ("gpu:tesla:2", 0), ("(null)", 0), ("gpu:x", 0)]
+)
 def test_parse_slurm_gres_count(raw, count):
     assert resources._parse_slurm_gres_count(raw) == count
 
@@ -46,10 +60,12 @@ def test_slurm_free_resources_calculates_non_negative_available_values(monkeypat
     monkeypatch.setattr(
         resources.subprocess,
         "run",
-        lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": stdout})(),
+        lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 0, "stdout": stdout}
+        )(),
     )
 
-    result = resources._hpc_slurm_free_resources()
+    result = resources.slurm_free_resources()
 
     assert result["cpu_available_count"] == 0
     assert result["mem_available_mb"] == 0
@@ -63,8 +79,7 @@ def test_slurm_free_resources_returns_none_on_command_failure(monkeypatch):
         lambda *args, **kwargs: type("Result", (), {"returncode": 1, "stdout": ""})(),
     )
 
-    assert resources._hpc_slurm_free_resources() is None
-
+    assert resources.slurm_free_resources() is None
 
 
 @pytest.mark.parametrize(
@@ -88,7 +103,9 @@ def _fake_slurm_commands(monkeypatch, scontrol_stdout, squeue_stdout, squeue_rc=
 
     def run(command, *args, **kwargs):
         if command[0] == "squeue":
-            return type("Result", (), {"returncode": squeue_rc, "stdout": squeue_stdout})()
+            return type(
+                "Result", (), {"returncode": squeue_rc, "stdout": squeue_stdout}
+            )()
         return type("Result", (), {"returncode": 0, "stdout": scontrol_stdout})()
 
     monkeypatch.setattr(resources.subprocess, "run", run)
@@ -97,16 +114,18 @@ def _fake_slurm_commands(monkeypatch, scontrol_stdout, squeue_stdout, squeue_rc=
 def test_slurm_allocated_gpus_sums_running_jobs(monkeypatch):
     _fake_slurm_commands(monkeypatch, "", "gres/gpu:1\nN/A\ngres/gpu:2\n")
 
-    assert resources._hpc_slurm_allocated_gpus() == 3
+    assert resources.slurm_allocated_gpus() == 3
 
 
 def test_slurm_allocated_gpus_returns_none_on_command_failure(monkeypatch):
     _fake_slurm_commands(monkeypatch, "", "", squeue_rc=1)
 
-    assert resources._hpc_slurm_allocated_gpus() is None
+    assert resources.slurm_allocated_gpus() is None
 
 
-def test_slurm_free_resources_falls_back_to_squeue_when_alloctres_lacks_gpu(monkeypatch):
+def test_slurm_free_resources_falls_back_to_squeue_when_alloctres_lacks_gpu(
+    monkeypatch,
+):
     """AccountingStorageTRESにgres/gpuが無い環境でもGPU割当を検出する。"""
     # 実機の出力と同じく AllocTRES に gres/gpu が現れない
     scontrol = (
@@ -115,7 +134,7 @@ def test_slurm_free_resources_falls_back_to_squeue_when_alloctres_lacks_gpu(monk
     )
     _fake_slurm_commands(monkeypatch, scontrol, "gres/gpu:1\n")
 
-    result = resources._hpc_slurm_free_resources()
+    result = resources.slurm_free_resources()
 
     assert result["gpu_max"] == 1
     assert result["gpu_available_count"] == 0
@@ -128,14 +147,14 @@ def test_slurm_free_resources_reports_gpu_free_when_nothing_holds_it(monkeypatch
     )
     _fake_slurm_commands(monkeypatch, scontrol, "N/A\n")
 
-    assert resources._hpc_slurm_free_resources()["gpu_available_count"] == 1
+    assert resources.slurm_free_resources()["gpu_available_count"] == 1
 
 
 def test_resource_snapshot_exposes_slurm_backed_memory_and_gpu(monkeypatch):
     """メーターがSlurmの割当状況を反映し、Schema検証を通ることを確認する。"""
     monkeypatch.setattr(
         resources,
-        "_hpc_slurm_free_resources",
+        "slurm_free_resources",
         lambda: {
             "cpu_total": 20,
             "cpu_available_count": 12.0,
@@ -145,19 +164,19 @@ def test_resource_snapshot_exposes_slurm_backed_memory_and_gpu(monkeypatch):
             "gpu_available_count": 0,
         },
     )
-    monkeypatch.setattr(resources, "_hpc_gpu_process_snapshot", lambda: ([], True))
+    monkeypatch.setattr(resources, "gpu_process_snapshot", lambda: ([], True))
     monkeypatch.setattr(
         resources.psutil,
         "virtual_memory",
-        lambda: SimpleNamespace(total=128 * 1024 ** 3, available=121 * 1024 ** 3),
+        lambda: SimpleNamespace(total=128 * 1024**3, available=121 * 1024**3),
     )
     monkeypatch.setattr(
         resources.psutil,
         "disk_usage",
-        lambda path: SimpleNamespace(total=1000 * 1024 ** 3, free=500 * 1024 ** 3),
+        lambda path: SimpleNamespace(total=1000 * 1024**3, free=500 * 1024**3),
     )
 
-    snapshot = resources._hpc_resource_snapshot()
+    snapshot = portal.resources.snapshot()
 
     # GPUは1枚すべて予約済みなので空きは0
     assert snapshot["gpu_available_count"] == 0
@@ -198,7 +217,9 @@ def _fake_nvidia_smi(monkeypatch, stdout, returncode=0):
     monkeypatch.setattr(
         resources.psutil,
         "Process",
-        lambda pid: SimpleNamespace(name=lambda: "ollama", username=lambda: "hpc-ollama"),
+        lambda pid: SimpleNamespace(
+            name=lambda: "ollama", username=lambda: "hpc-ollama"
+        ),
     )
 
 
@@ -206,7 +227,7 @@ def test_gpu_process_snapshot_reads_used_memory(monkeypatch):
     """GB10ではnvidia-smiだけがGPU確保量を返すため、プロセスごとに保持する。"""
     _fake_nvidia_smi(monkeypatch, "2275817, /usr/lib/ollama/llama-server, 25053\n")
 
-    processes, available = resources._hpc_gpu_process_snapshot()
+    processes, available = resources.gpu_process_snapshot()
 
     assert available is True
     assert processes == [
@@ -223,7 +244,7 @@ def test_gpu_process_snapshot_tolerates_unavailable_memory(monkeypatch):
     """used_memoryが[N/A]でもプロセス一覧そのものは失わない。"""
     _fake_nvidia_smi(monkeypatch, "100, /usr/lib/ollama/llama-server, [N/A]\n")
 
-    processes, available = resources._hpc_gpu_process_snapshot()
+    processes, available = resources.gpu_process_snapshot()
 
     assert available is True
     assert processes[0]["memory_mb"] is None
@@ -235,13 +256,18 @@ def test_resource_snapshot_reports_gpu_share_of_unified_memory(monkeypatch):
     GB10ではCUDAの確保分がRSSにもcgroupにも現れず、OS実使用(mem_used_gb)から
     漏れる。内訳を持たないと画面が実態の1/10を示してしまう。
     """
-    monkeypatch.setattr(resources, "_hpc_slurm_free_resources", lambda: None)
+    monkeypatch.setattr(resources, "slurm_free_resources", lambda: None)
     monkeypatch.setattr(
         resources,
-        "_hpc_gpu_process_snapshot",
+        "gpu_process_snapshot",
         lambda: (
             [
-                {"pid": 1, "name": "Ollama", "username": "hpc-ollama", "memory_mb": 25053},
+                {
+                    "pid": 1,
+                    "name": "Ollama",
+                    "username": "hpc-ollama",
+                    "memory_mb": 25053,
+                },
                 {"pid": 2, "name": "python", "username": "user01", "memory_mb": None},
             ],
             True,
@@ -250,15 +276,15 @@ def test_resource_snapshot_reports_gpu_share_of_unified_memory(monkeypatch):
     monkeypatch.setattr(
         resources.psutil,
         "virtual_memory",
-        lambda: SimpleNamespace(total=128 * 1024 ** 3, available=96 * 1024 ** 3),
+        lambda: SimpleNamespace(total=128 * 1024**3, available=96 * 1024**3),
     )
     monkeypatch.setattr(
         resources.psutil,
         "disk_usage",
-        lambda path: SimpleNamespace(total=1000 * 1024 ** 3, free=500 * 1024 ** 3),
+        lambda path: SimpleNamespace(total=1000 * 1024**3, free=500 * 1024**3),
     )
 
-    snapshot = resources._hpc_resource_snapshot()
+    snapshot = portal.resources.snapshot()
 
     assert round(snapshot["mem_gpu_used_gb"], 1) == 24.5
     # 統合メモリの内数であり、総量を超えない
@@ -278,8 +304,14 @@ def test_slurm_free_resources_subtracts_mem_spec_limit(monkeypatch):
         "gres/gpu:1\n",
     )
 
-    free = resources._hpc_slurm_free_resources()
+    free = resources.slurm_free_resources()
 
     # 122506 - 4096 = 118410 が割り当て可能総量、そこから 40G を引いた残り
     assert free["mem_total_mb"] == 118410
     assert free["mem_available_mb"] == 118410 - 40960
+
+
+@pytest.fixture(autouse=True)
+def usecase_components(portal_dependencies):
+    global portal
+    portal = portal_dependencies

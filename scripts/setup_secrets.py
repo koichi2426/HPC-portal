@@ -9,7 +9,6 @@ import secrets
 import tempfile
 from pathlib import Path
 
-
 SECRET_GENERATORS = {
     "litellm_master_key": lambda: f"sk-{secrets.token_hex(32)}",
     "litellm_salt_key": lambda: secrets.token_hex(32),
@@ -33,10 +32,9 @@ def _is_unset(value: str) -> bool:
         自動生成の対象ならTrue。
     """
 
-    normalized = value.strip().strip('"\'').strip()
+    normalized = value.strip().strip("\"'").strip()
     return (
-        normalized.lower() in {"", "null", "~"}
-        or "REPLACE_WITH_" in normalized.upper()
+        normalized.lower() in {"", "null", "~"} or "REPLACE_WITH_" in normalized.upper()
     )
 
 
@@ -68,9 +66,7 @@ def _replace_missing_values(content: str) -> tuple[str, list[str]]:
 
         value = SECRET_GENERATORS[key]()
         newline = match["newline"] or ""
-        output.append(
-            f'{match["indent"]}{key}{match["separator"]}"{value}"{newline}'
-        )
+        output.append(f'{match["indent"]}{key}{match["separator"]}"{value}"{newline}')
         generated.append(key)
 
     missing = [key for key in SECRET_GENERATORS if key not in found]
@@ -138,9 +134,7 @@ def find_missing(path: Path) -> list[str]:
             found[match["key"]] = match["value"]
 
     return [
-        key
-        for key in SECRET_GENERATORS
-        if key not in found or _is_unset(found[key])
+        key for key in SECRET_GENERATORS if key not in found or _is_unset(found[key])
     ]
 
 

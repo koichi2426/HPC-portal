@@ -2,8 +2,6 @@
 
 import pytest
 
-from hpc_portal.litellm import users
-
 
 @pytest.mark.parametrize(
     ("value", "expected"),
@@ -16,26 +14,32 @@ from hpc_portal.litellm import users
     ],
 )
 def test_litellm_metadata_normalizes_supported_values(value, expected):
-    assert users._hpc_litellm_metadata(value) == expected
+    assert users.metadata(value) == expected
 
 
 def test_ensure_user_treats_duplicate_as_success(monkeypatch):
-    monkeypatch.setattr(users, "_hpc_litellm_enabled", lambda: True)
+    monkeypatch.setattr(users.client, "enabled", lambda: True)
     monkeypatch.setattr(
-        users,
-        "_hpc_litellm_request",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("user already exists")),
+        users.client,
+        "request",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("user already exists")
+        ),
     )
 
-    assert users._hpc_litellm_ensure_user("user01") is None
+    assert users.ensure_user("user01") is None
 
 
 def test_ensure_user_sends_expected_identity_metadata(monkeypatch):
     calls = []
-    monkeypatch.setattr(users, "_hpc_litellm_enabled", lambda: True)
-    monkeypatch.setattr(users, "_hpc_litellm_request", lambda path, payload: calls.append((path, payload)) or {})
+    monkeypatch.setattr(users.client, "enabled", lambda: True)
+    monkeypatch.setattr(
+        users.client,
+        "request",
+        lambda path, payload: calls.append((path, payload)) or {},
+    )
 
-    assert users._hpc_litellm_ensure_user("user01") is None
+    assert users.ensure_user("user01") is None
     assert calls[0][0] == "/user/new"
     assert calls[0][1]["user_id"] == "user01"
     assert calls[0][1]["metadata"]["admin_disabled"] is False
@@ -43,15 +47,17 @@ def test_ensure_user_sends_expected_identity_metadata(monkeypatch):
 
 def test_user_metadata_url_encodes_username(monkeypatch):
     paths = []
-    monkeypatch.setattr(users, "_hpc_litellm_enabled", lambda: True)
+    monkeypatch.setattr(users.client, "enabled", lambda: True)
     monkeypatch.setattr(
-        users,
-        "_hpc_litellm_request",
-        lambda path, method="POST": paths.append((path, method))
-        or {"user_info": {"metadata": '{"admin_disabled":true}'}},
+        users.client,
+        "request",
+        lambda path, method="POST": (
+            paths.append((path, method))
+            or {"user_info": {"metadata": '{"admin_disabled":true}'}}
+        ),
     )
 
-    metadata, error = users._hpc_litellm_user_metadata("name/with?query")
+    metadata, error = users.user_metadata("name/with?query")
 
     assert error is None
     assert metadata == {"admin_disabled": True}
@@ -59,9 +65,20 @@ def test_user_metadata_url_encodes_username(monkeypatch):
 
 
 def test_admin_disabled_requires_literal_boolean_true(monkeypatch):
-    monkeypatch.setattr(users, "_hpc_litellm_user_metadata", lambda username: ({"admin_disabled": "true"}, None))
-    assert users._hpc_litellm_user_admin_disabled("user01") == (False, None)
+    monkeypatch.setattr(
+        users, "user_metadata", lambda username: ({"admin_disabled": "true"}, None)
+    )
+    assert users.user_admin_disabled("user01") == (False, None)
 
-    monkeypatch.setattr(users, "_hpc_litellm_user_metadata", lambda username: ({"admin_disabled": True}, None))
-    assert users._hpc_litellm_user_admin_disabled("user01") == (True, None)
+    monkeypatch.setattr(
+        users, "user_metadata", lambda username: ({"admin_disabled": True}, None)
+    )
+    assert users.user_admin_disabled("user01") == (True, None)
 
+
+@pytest.fixture(autouse=True)
+def usecase_components(portal_dependencies):
+    global users, portal, ollama
+    portal = portal_dependencies
+    users = portal_dependencies.llm
+    ollama = portal_dependencies.ollama.client

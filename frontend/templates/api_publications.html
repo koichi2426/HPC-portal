@@ -1,0 +1,57 @@
+{% extends "page.html" %}
+{% block main %}
+<div class="hpc-page" data-api-publications>
+  <h2 class="hpc-page-title">API 公開設定</h2>
+  <p>自分で起動した HTTP アプリを選び、本人のトークンだけで利用できる URL を作成します。</p>
+  {% if configured %}
+  <section class="gx10-resource-card">
+    <h3>ポートを確認</h3>
+    <button type="button" data-refresh-ports>候補を更新</button>
+    <p data-ports-checked></p>
+    <p>空きポート候補：<span data-free-ports>確認中…</span></p>
+    <p class="hpc-muted">空き候補は確認時点の情報です。予約ではありません。アプリを起動してから候補を更新してください。</p>
+    <details><summary>候補範囲・予約ポート</summary><p data-port-settings></p></details>
+  </section>
+  <section class="gx10-resource-card">
+    <h3>起動済みアプリを選択</h3>
+    <input class="form-control" type="search" data-candidate-search placeholder="名前・作業フォルダ・ポートで検索" aria-label="アプリを検索">
+    <div data-candidate-list></div>
+    <p data-candidate-empty hidden>候補がありません。アプリを 127.0.0.1 で待ち受けるように起動し、更新してください。</p>
+  </section>
+  <section class="gx10-resource-card">
+    <h3>公開先を登録・変更</h3>
+    <form data-publication-form>
+      <div class="form-group"><label for="api-name">公開名</label>
+        <input id="api-name" class="form-control" name="name" required pattern="[a-z][a-z0-9-]{0,47}" maxlength="48" placeholder="my-api">
+        <p class="hpc-muted">同じ公開名で登録すると接続先を更新し、公開 URL を維持します。</p>
+      </div>
+      <div class="form-group"><label for="api-display-name">表示名（任意）</label>
+        <input id="api-display-name" class="form-control" name="display_name" maxlength="80" placeholder="解析 API">
+      </div>
+      <p>選択したアプリ：<span data-selected-candidate>未選択</span></p>
+      <details><summary>ポートを手動指定・動作確認パス</summary>
+        <div class="form-group"><label for="api-port">接続先ポート</label>
+          <input id="api-port" class="form-control" name="port" type="number" min="1024" max="65535" placeholder="3000">
+          <p class="hpc-muted">手動指定でも本人の待ち受けであることを確認します。空きポートを指定してもアプリは起動しません。</p>
+        </div>
+        <div class="form-group"><label for="api-health">動作確認パス（任意）</label>
+          <input id="api-health" class="form-control" name="health_path" maxlength="512" placeholder="/health">
+        </div>
+      </details>
+      <button class="hpc-primary-btn" type="submit">接続を確認して公開</button>
+    </form>
+  </section>
+  <section class="gx10-resource-card"><h3>登録済み API</h3><div data-publication-list></div></section>
+  <p>公開停止・登録削除は URL へのアクセスを止めます。アプリのプロセスは終了しません。</p>
+  {% else %}
+  <p>管理者による外部 API 公開の初期設定が必要です。</p>
+  {% endif %}
+  <p data-external-message role="status" aria-live="polite"></p>
+  <a href="/hub/external-api">トークン・接続設定</a>
+</div>
+{% endblock %}
+{% block script %}
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/external-api.js?v={{ hpc_static_versions['js/external-api.js'] }}"></script>
+{{ super() }}
+{% endblock %}

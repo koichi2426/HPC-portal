@@ -1,0 +1,2 @@
+from hpc_portal.domain.resource_models import HpcGpuProcess as HpcGpuProcess
+from hpc_portal.domain.resource_models import HpcResourceSnapshot as HpcResourceSnapshot

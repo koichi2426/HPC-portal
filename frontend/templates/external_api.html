@@ -1,0 +1,35 @@
+{% extends "page.html" %}
+{% block main %}
+<div class="hpc-page" data-external-api>
+  <h2 class="hpc-page-title">API トークン・接続設定</h2>
+  <p>状態: {{ state }} ／ 有効期限: 無期限</p>
+  {% if configured %}
+  <p>外部プログラムが公開 API を呼び出すための個人用設定です。自作 API サーバーにトークンを埋め込む必要はありません。</p>
+  <button type="button" class="hpc-primary-btn" data-credential-action="reveal">接続情報を表示</button>
+  <button type="button" data-download-config>接続設定をダウンロード</button>
+  <div data-credential-fields hidden>
+    {% for key, label in [('base_url', 'ポータル URL'), ('client_id', 'Cloudflare Client ID'), ('client_secret', 'Cloudflare Client Secret'), ('jupyterhub_token', 'JupyterHub Token')] %}
+    <div class="form-group"><label>{{ label }}</label>
+      <input class="form-control" data-credential-value="{{ key }}" type="{{ 'password' if key in ['client_secret', 'jupyterhub_token'] else 'text' }}" readonly autocomplete="off">
+      <button type="button" data-copy-credential="{{ key }}">コピー</button>
+    </div>
+    {% endfor %}
+    <button type="button" data-copy-env>.env 形式で一括コピー</button>
+    <button type="button" data-hide-credentials>非表示にする</button>
+  </div>
+  <hr>
+  <p>再発行した認証情報だけが変更されます。利用中の外部プログラムの接続設定を取り直してください。</p>
+  <button type="button" data-credential-action="rotate_cloudflare">Cloudflare Client Secret を再発行</button>
+  <button type="button" data-credential-action="rotate_jupyterhub">JupyterHub Token を再発行</button>
+  {% else %}
+  <p>管理者による外部 API 公開の初期設定が必要です。</p>
+  {% endif %}
+  <p data-external-message role="status" aria-live="polite"></p>
+  <a href="/hub/api-publications">API 公開設定・ポート確認</a>
+</div>
+{% endblock %}
+{% block script %}
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/external-api.js?v={{ hpc_static_versions['js/external-api.js'] }}"></script>
+{{ super() }}
+{% endblock %}

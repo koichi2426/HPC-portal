@@ -4,14 +4,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from hpc_portal.handlers import admin_apps
+from hpc_portal.infrastructure.slurm import slurm_client as admin_apps
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"), [("", None), ("N/A", None), ("512", 512), ("1K", 1024), ("1.5M", 1572864), ("2G", 2 * 1024**3), ("-2M", 0), ("bad", None)]
+    ("raw", "expected"),
+    [
+        ("", None),
+        ("N/A", None),
+        ("512", 512),
+        ("1K", 1024),
+        ("1.5M", 1572864),
+        ("2G", 2 * 1024**3),
+        ("-2M", 0),
+        ("bad", None),
+    ],
 )
 def test_slurm_memory_bytes(raw, expected):
-    assert admin_apps._hpc_slurm_memory_bytes(raw) == expected
+    assert admin_apps.slurm_memory_bytes(raw) == expected
 
 
 def test_admin_apps_snapshot_parses_only_portal_jobs(monkeypatch):
@@ -26,20 +36,22 @@ def test_admin_apps_snapshot_parses_only_portal_jobs(monkeypatch):
     )
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+        "run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=0, stdout=stdout, stderr=""
+        ),
     )
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_linux_users_snapshot",
+        "linux_users_snapshot",
         lambda: [
             {"username": "user01", "display_name": "利用者一"},
             {"username": "user02", "display_name": "利用者二"},
         ],
     )
-    monkeypatch.setattr(admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {"42": 1024})
+    monkeypatch.setattr(admin_apps, "job_cpu_memory_bytes", lambda: {"42": 1024})
 
-    rows, error = admin_apps._hpc_admin_apps_snapshot_uncached()
+    rows, error = admin_apps.admin_apps_snapshot_uncached()
 
     assert error == ""
     assert [row["job_id"] for row in rows] == ["44", "42", "43"]
@@ -56,11 +68,13 @@ def test_admin_apps_snapshot_parses_only_portal_jobs(monkeypatch):
 def test_admin_apps_snapshot_bounds_command_error(monkeypatch):
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=1, stdout="", stderr="x" * 500),
+        "run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=1, stdout="", stderr="x" * 500
+        ),
     )
 
-    rows, error = admin_apps._hpc_admin_apps_snapshot_uncached()
+    rows, error = admin_apps.admin_apps_snapshot_uncached()
 
     assert rows == []
     assert len(error) == 300
@@ -69,13 +83,13 @@ def test_admin_apps_snapshot_bounds_command_error(monkeypatch):
 def test_admin_apps_snapshot_reports_timeout(monkeypatch):
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
+        "run_cmd",
         lambda command, timeout: (_ for _ in ()).throw(
             admin_apps.subprocess.TimeoutExpired(command, timeout)
         ),
     )
 
-    rows, error = admin_apps._hpc_admin_apps_snapshot_uncached()
+    rows, error = admin_apps.admin_apps_snapshot_uncached()
 
     assert rows == []
     assert "タイムアウト" in error
@@ -86,17 +100,16 @@ def test_admin_apps_cache_returns_copy_without_refetch(monkeypatch):
     calls = []
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_admin_apps_snapshot_uncached",
+        "admin_apps_snapshot_uncached",
         lambda: calls.append(True) or ([{"job_id": "42"}], ""),
     )
 
-    first, _ = admin_apps._hpc_admin_apps_snapshot()
+    first, _ = admin_apps.admin_apps_snapshot()
     first[0]["job_id"] = "changed"
-    second, _ = admin_apps._hpc_admin_apps_snapshot()
+    second, _ = admin_apps.admin_apps_snapshot()
 
     assert len(calls) == 1
     assert second == [{"job_id": "42"}]
-
 
 
 @pytest.fixture(autouse=True)
@@ -111,7 +124,7 @@ def test_job_gpu_memory_sums_processes_per_job(monkeypatch):
     """nvidia-smiのPIDをcgroup経由でSlurmジョブへ紐付けて集計する。"""
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
+        "run_cmd",
         lambda command, timeout: SimpleNamespace(
             returncode=0,
             stdout="100, 25053\n101, 1024\n102, 512\nmalformed\n",
@@ -120,11 +133,11 @@ def test_job_gpu_memory_sums_processes_per_job(monkeypatch):
     )
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_job_id_of_pid",
+        "job_id_of_pid",
         lambda pid: {100: "44", 101: "44", 102: ""}.get(pid, ""),
     )
 
-    usage = admin_apps._hpc_job_gpu_memory_bytes()
+    usage = admin_apps.job_gpu_memory_bytes()
 
     # ジョブに属さないPID(102)は除外し、同一ジョブのPIDは合算する
     assert usage == {"44": (25053 + 1024) * 1024**2}
@@ -133,11 +146,13 @@ def test_job_gpu_memory_sums_processes_per_job(monkeypatch):
 def test_job_gpu_memory_returns_empty_on_command_failure(monkeypatch):
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=1, stdout="", stderr="no gpu"),
+        "run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=1, stdout="", stderr="no gpu"
+        ),
     )
 
-    assert admin_apps._hpc_job_gpu_memory_bytes() == {}
+    assert admin_apps.job_gpu_memory_bytes() == {}
 
 
 def test_job_id_of_pid_reads_slurm_cgroup(tmp_path, monkeypatch):
@@ -158,7 +173,7 @@ def test_job_id_of_pid_reads_slurm_cgroup(tmp_path, monkeypatch):
         ),
     )
 
-    assert admin_apps._hpc_job_id_of_pid(1234) == "12"
+    assert admin_apps.job_id_of_pid(1234) == "12"
 
 
 def test_job_id_of_pid_returns_empty_when_unreadable(monkeypatch):
@@ -167,7 +182,7 @@ def test_job_id_of_pid_returns_empty_when_unreadable(monkeypatch):
 
     monkeypatch.setattr("builtins.open", raise_oserror)
 
-    assert admin_apps._hpc_job_id_of_pid(999999) == ""
+    assert admin_apps.job_id_of_pid(999999) == ""
 
 
 def test_admin_apps_snapshot_adds_gpu_memory_to_used_total(monkeypatch):
@@ -175,18 +190,18 @@ def test_admin_apps_snapshot_adds_gpu_memory_to_used_total(monkeypatch):
     stdout = "44|hpc-ollama|shared-ollama|RUNNING|8|40G|N/A|10:00|2026-01-01T00:00:00"
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+        "run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=0, stdout=stdout, stderr=""
+        ),
     )
-    monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(admin_apps, "linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(admin_apps, "job_cpu_memory_bytes", lambda: {"44": 2 * 1024**3})
     monkeypatch.setattr(
-        admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {"44": 2 * 1024**3}
-    )
-    monkeypatch.setattr(
-        admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
+        admin_apps, "job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
     )
 
-    rows, error = admin_apps._hpc_admin_apps_snapshot_uncached()
+    rows, error = admin_apps.admin_apps_snapshot_uncached()
 
     assert error == ""
     row = rows[0]
@@ -201,14 +216,16 @@ def test_admin_apps_snapshot_keeps_label_when_nothing_measurable(monkeypatch):
     stdout = "43|user02|jhub-openwebui|PENDING|4|8G|N/A|00:00|N/A"
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+        "run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=0, stdout=stdout, stderr=""
+        ),
     )
-    monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
-    monkeypatch.setattr(admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {})
-    monkeypatch.setattr(admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {})
+    monkeypatch.setattr(admin_apps, "linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(admin_apps, "job_cpu_memory_bytes", lambda: {})
+    monkeypatch.setattr(admin_apps, "job_gpu_memory_bytes", lambda: {})
 
-    rows, _ = admin_apps._hpc_admin_apps_snapshot_uncached()
+    rows, _ = admin_apps.admin_apps_snapshot_uncached()
 
     assert rows[0]["memory_used_bytes"] is None
     assert rows[0]["memory_used_label"] == "取得不可"
@@ -218,16 +235,16 @@ def test_admin_apps_snapshot_keeps_label_when_nothing_measurable(monkeypatch):
 @pytest.mark.parametrize(
     ("used", "requested", "level"),
     [
-        (8 * 1024**3, "16G", ""),            # 要求内
-        (16 * 1024**3, "16G", ""),           # ちょうど
-        (18 * 1024**3, "16G", "caution"),    # 超過だが2割以内
-        (26 * 1024**3, "16G", "warning"),    # 2割超
-        (None, "16G", ""),                   # 実使用を取得できない
-        (8 * 1024**3, "", ""),               # 要求を解釈できない
+        (8 * 1024**3, "16G", ""),  # 要求内
+        (16 * 1024**3, "16G", ""),  # ちょうど
+        (18 * 1024**3, "16G", "caution"),  # 超過だが2割以内
+        (26 * 1024**3, "16G", "warning"),  # 2割超
+        (None, "16G", ""),  # 実使用を取得できない
+        (8 * 1024**3, "", ""),  # 要求を解釈できない
     ],
 )
 def test_memory_overuse_levels(used, requested, level):
-    result = admin_apps._hpc_memory_overuse(used, requested)
+    result = admin_apps.memory_overuse(used, requested)
 
     assert result["memory_overuse_level"] == level
     if level:
@@ -241,13 +258,13 @@ def test_memory_overuse_reports_concrete_amounts():
 
     「何%超過」だけでは、次にどれだけ要求を増やせばよいか分からない。
     """
-    result = admin_apps._hpc_memory_overuse(32 * 1024**3, "8G")
+    result = admin_apps.memory_overuse(32 * 1024**3, "8G")
 
     assert result["memory_limit_bytes"] == 8 * 1024**3
     assert result["memory_usage_ratio"] == 4.0
     label = result["memory_overuse_label"]
-    assert "8.0 GB" in label      # 要求
-    assert "32.0 GB" in label     # 実使用
+    assert "8.0 GB" in label  # 要求
+    assert "32.0 GB" in label  # 実使用
     assert "24.0 GB 超過" in label  # 差分
     assert "400%" in label
 
@@ -261,18 +278,18 @@ def test_admin_apps_snapshot_flags_memory_overuse(monkeypatch):
     stdout = "44|user01|jhub-app|RUNNING|2|8G|N/A|10:00|2026-01-01T00:00:00"
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+        "run_cmd",
+        lambda command, timeout: SimpleNamespace(
+            returncode=0, stdout=stdout, stderr=""
+        ),
     )
-    monkeypatch.setattr(admin_apps, "_hpc_linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(admin_apps, "linux_users_snapshot", lambda: [])
+    monkeypatch.setattr(admin_apps, "job_cpu_memory_bytes", lambda: {"44": 2 * 1024**3})
     monkeypatch.setattr(
-        admin_apps, "_hpc_job_cpu_memory_bytes", lambda: {"44": 2 * 1024**3}
-    )
-    monkeypatch.setattr(
-        admin_apps, "_hpc_job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
+        admin_apps, "job_gpu_memory_bytes", lambda: {"44": 24 * 1024**3}
     )
 
-    rows, _ = admin_apps._hpc_admin_apps_snapshot_uncached()
+    rows, _ = admin_apps.admin_apps_snapshot_uncached()
 
     row = rows[0]
     assert row["memory_used_bytes"] == 26 * 1024**3
@@ -289,19 +306,19 @@ def test_job_gpu_memory_is_cached_between_calls(monkeypatch):
     calls = []
     monkeypatch.setattr(
         admin_apps,
-        "_hpc_run_cmd",
-        lambda command, timeout: calls.append(command)
-        or SimpleNamespace(returncode=0, stdout="100, 1024\n", stderr=""),
+        "run_cmd",
+        lambda command, timeout: (
+            calls.append(command)
+            or SimpleNamespace(returncode=0, stdout="100, 1024\n", stderr="")
+        ),
     )
-    monkeypatch.setattr(admin_apps, "_hpc_job_id_of_pid", lambda pid: "44")
+    monkeypatch.setattr(admin_apps, "job_id_of_pid", lambda pid: "44")
 
-    first = admin_apps._hpc_job_gpu_memory_bytes()
-    second = admin_apps._hpc_job_gpu_memory_bytes()
+    first = admin_apps.job_gpu_memory_bytes()
+    second = admin_apps.job_gpu_memory_bytes()
 
     assert first == second == {"44": 1024 * 1024**2}
     assert len(calls) == 1, "2回目はキャッシュから返すこと"
-
-
 
 
 def test_job_memory_usage_sums_instantaneous_values():
@@ -310,9 +327,7 @@ def test_job_memory_usage_sums_instantaneous_values():
     CPU側にsstatのMaxRSS(ピーク値)を使うと、同時には使っていない量まで
     足して誤って超過と判定してしまう。
     """
-    usage = admin_apps._hpc_job_memory_usage(
-        "44", {"44": 2 * 1024**3}, {"44": 24 * 1024**3}
-    )
+    usage = admin_apps.job_memory_usage("44", {"44": 2 * 1024**3}, {"44": 24 * 1024**3})
 
     assert usage["memory_used_bytes"] == 26 * 1024**3
     assert usage["cpu_memory_bytes"] == 2 * 1024**3
@@ -321,7 +336,7 @@ def test_job_memory_usage_sums_instantaneous_values():
 
 def test_job_memory_usage_without_any_source():
     """どちらも取得できないジョブは判定対象から外す。"""
-    usage = admin_apps._hpc_job_memory_usage("44", {}, {})
+    usage = admin_apps.job_memory_usage("44", {}, {})
 
     assert usage["memory_used_bytes"] is None
     assert usage["memory_used_label"] == "取得不可"
@@ -339,4 +354,4 @@ def test_job_cpu_memory_reads_job_level_cgroup(tmp_path, monkeypatch):
         (str(tmp_path / "system.slice/*slurmstepd.scope/job_*/memory.current"),),
     )
 
-    assert admin_apps._hpc_job_cpu_memory_bytes() == {"44": 2 * 1024**3}
+    assert admin_apps.job_cpu_memory_bytes() == {"44": 2 * 1024**3}

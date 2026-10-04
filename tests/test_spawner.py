@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hpc_portal import spawner
+from hpc_portal.infrastructure.jupyterhub import slurm_spawner as spawner
 
 
 @pytest.mark.parametrize(
@@ -24,11 +24,11 @@ def test_slurm_pending_reason(monkeypatch, stdout, returncode, expected):
         lambda *args, **kwargs: SimpleNamespace(returncode=returncode, stdout=stdout),
     )
 
-    assert spawner._hpc_slurm_pending_reason("42") == expected
+    assert spawner.slurm_pending_reason("42") == expected
 
 
 def test_slurm_pending_reason_without_job_id():
-    assert spawner._hpc_slurm_pending_reason("") == ""
+    assert spawner.slurm_pending_reason("") == ""
 
 
 def test_slurm_pending_reason_survives_command_failure(monkeypatch):
@@ -37,7 +37,7 @@ def test_slurm_pending_reason_survives_command_failure(monkeypatch):
 
     monkeypatch.setattr(spawner.subprocess, "run", raise_oserror)
 
-    assert spawner._hpc_slurm_pending_reason("42") == ""
+    assert spawner.slurm_pending_reason("42") == ""
 
 
 @pytest.mark.parametrize(
@@ -50,7 +50,7 @@ def test_slurm_pending_reason_survives_command_failure(monkeypatch):
     ],
 )
 def test_pending_reason_message(reason, fragment):
-    message = spawner._hpc_pending_reason_message(reason)
+    message = spawner.pending_reason_message(reason)
 
     if fragment:
         assert fragment in message
@@ -118,8 +118,9 @@ def test_pending_reason_is_not_refetched_every_iteration(monkeypatch):
     monkeypatch.setattr(
         spawner.subprocess,
         "run",
-        lambda *args, **kwargs: calls.append(1)
-        or SimpleNamespace(returncode=0, stdout="(Resources)\n"),
+        lambda *args, **kwargs: (
+            calls.append(1) or SimpleNamespace(returncode=0, stdout="(Resources)\n")
+        ),
     )
 
     class _Sp:
@@ -134,8 +135,10 @@ def test_pending_reason_is_not_refetched_every_iteration(monkeypatch):
         """progress ループ1周分の判定を再現する。"""
         now = spawner.time.monotonic()
         if now >= sp._hpc_pending_reason_checked_at:
-            sp._hpc_pending_reason_checked_at = now + spawner._HPC_PENDING_REASON_INTERVAL
-            reason = spawner._hpc_slurm_pending_reason("42")
+            sp._hpc_pending_reason_checked_at = (
+                now + spawner._HPC_PENDING_REASON_INTERVAL
+            )
+            reason = spawner.slurm_pending_reason("42")
             if reason:
                 sp._hpc_pending_reason = reason
 
