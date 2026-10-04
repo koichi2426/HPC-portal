@@ -7,13 +7,13 @@ import time
 from jupyterhub.handlers.base import BaseHandler
 from tornado import web
 
-from hpc_portal.domain.resource_models import HpcResourceSnapshot
 from hpc_portal.entrypoints.dependencies import get_dependencies
 from hpc_portal.infrastructure.filesystem.static_asset_versions import (
     HPC_PORTAL_CSS,
     HPC_PORTAL_JS_DIR,
     HPC_PORTAL_JS_FILES,
 )
+from hpc_portal.presentation.schemas.resources import HpcResourceSnapshot
 
 
 class HpcResourceStatusHandler(BaseHandler):
@@ -23,7 +23,7 @@ class HpcResourceStatusHandler(BaseHandler):
     async def get(self):
         """現在の空きリソースをキャッシュ無効のJSONで返す。"""
         self.set_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        payload = await asyncio.to_thread(get_dependencies().resources.snapshot)
+        payload = await asyncio.to_thread(get_dependencies().resources.execute)
         payload["updated_at"] = time.time()
         self.write(HpcResourceSnapshot.model_validate(payload).model_dump())
 

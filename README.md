@@ -300,7 +300,7 @@ Python 3.12の`.venv`を作成し、開発用依存を同期します。
 make test
 ```
 
-実機へ接続せず、Pythonの入力検証・権限・処理分岐を確認します。
+実機へ接続せず、認証・権限、トークン失効、削除・停止の対象、保存データの復旧、起動を確認します。画面の文言や細かな表示は手動で確認します。
 
 ##### スモークテスト（deploy後）
 
@@ -359,39 +359,6 @@ ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml 
 
 ---
 
-### 4. 開発時の構成
-
-```text
-src/
-├── hpc_portal/
-│   ├── entrypoints/             # JupyterHubへの登録・依存の組み立て
-│   ├── application/
-│   │   ├── usecase/             # 機能ごとの操作手順
-│   │   └── ports/               # 外部処理のインターフェース
-│   ├── domain/                  # データと検証ルール
-│   ├── infrastructure/          # Linux・Slurm・各APIへの接続
-│   └── presentation/            # HTTP入力・画面表示
-└── hpc_search_mcp/              # 別サービスとして動くWeb検索MCP
-frontend/
-├── templates/                  # JupyterHubが描画するHTML
-└── static/                     # JavaScript・CSS
-ansible/
-├── playbooks/                  # デプロイ・確認・削除
-├── roles/                      # 各サービスの配布設定
-└── inventory/group_vars/all/    # 共通設定・Git管理外の秘密情報
-tests/                          # 実機接続なしの検証
-```
-
-処理を確認するときは `application/usecase/` から読みます。ユーザー管理やLLM管理など、機能ごとに1つの `*_usecase.py` へ操作手順をまとめ、外部への接続は `ports/` を通じて渡します。`domain/` と `application/` はJupyterHubやAnsibleの設定に依存しません。
-
-`entrypoints/dependencies.py` が接続先を組み立て、`entrypoints/jupyterhub.py` がJupyterHubへ登録します。Ansibleは `src/` と `frontend/` から必要なファイルを配布します。配布先や保存済みデータの形式は維持しています。
-
-```bash
-uv sync --dev
-make check-local   # 静的検証・書式・テスト
-make format        # Pythonの書式を統一
-```
-
-### 5. ライセンス
+### 4. ライセンス
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

@@ -57,7 +57,7 @@ def hpc_subdomain_hook(name, domain, kind):
 
 def options_from_form(formdata):
     try:
-        return get_dependencies().jobs.options_from_form(formdata)
+        return get_dependencies().jobs.options_from_form.execute(formdata)
     except UseCaseError as exc:
         raise web.HTTPError(400, str(exc)) from exc
 
@@ -116,7 +116,7 @@ def configure_jupyterhub(c):
         "hpc_jupyter_ubuntu_version": HPC_JUPYTER_UBUNTU_VERSION,
         "hpc_static_versions": HPC_STATIC_VERSIONS,
         "hpc_ollama_version": HPC_OLLAMA_VERSION.removeprefix("v"),
-        "hpc_resource_snapshot": dependencies.resources.snapshot,
+        "hpc_resource_snapshot": dependencies.resources.execute,
         "hpc_memory_overuse": user_memory_overuse,
         "hpc_shared_ollama_detail": shared_ollama_detail_context,
     }

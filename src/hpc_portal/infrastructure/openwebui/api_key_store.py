@@ -3,7 +3,7 @@
 import os
 import secrets
 
-from hpc_portal.domain.user_policy import validate_username
+from hpc_portal.domain.accounts.account_policy import validate_username
 
 
 class OpenWebuiKeyStore:

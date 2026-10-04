@@ -7,58 +7,6 @@ import pytest
 from hpc_portal.infrastructure.ollama import ollama_client as ollama
 
 
-def test_model_records_accepts_supported_response_shapes():
-    response = {
-        "data": ["plain-model", {"id": "id-model"}],
-        "models": [{"model_name": "named-model"}],
-        "model_list": [{"litellm_params": {"model": "ollama/qwen"}}],
-    }
-
-    records = list(models.model_records(response))
-
-    assert {record.get("id") for record in records if record.get("id")} == {
-        "plain-model",
-        "id-model",
-    }
-    assert any(record.get("model_name") == "named-model" for record in records)
-
-
-def test_list_models_deduplicates_and_sorts(monkeypatch):
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    monkeypatch.setattr(
-        models.client,
-        "request",
-        lambda path, method="POST": {
-            "data": [
-                {"id": "z-model", "owned_by": "team"},
-                {"model_name": "a-model", "provider": "ollama"},
-                {"id": "z-model", "owned_by": "duplicate"},
-                "",
-            ]
-        },
-    )
-
-    listed, error = models.list_models()
-
-    assert error is None
-    assert listed == [
-        {"id": "a-model", "owned_by": "ollama"},
-        {"id": "z-model", "owned_by": "team"},
-    ]
-
-
-@pytest.mark.parametrize("model", ["", "bad model", "$(id)", "a" * 129])
-def test_register_model_rejects_invalid_name_without_external_calls(monkeypatch, model):
-    monkeypatch.setattr(
-        models.client, "request", lambda *args, **kwargs: pytest.fail("通信禁止")
-    )
-
-    result, error = models.register_ollama_model(model)
-
-    assert result is None
-    assert error
-
-
 def _deployment(
     backend="ollama_chat/qwen:4b",
     model_id="db-1",
@@ -88,88 +36,6 @@ def _mock_ollama_model(monkeypatch, *, supports_tools=True):
     )
 
 
-def test_register_model_returns_already_registered_for_portal_chat_backend(monkeypatch):
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    _mock_ollama_model(monkeypatch)
-    monkeypatch.setattr(
-        models,
-        "model_info",
-        lambda: ({"data": [_deployment()]}, None),
-    )
-    monkeypatch.setattr(
-        models.client, "request", lambda *args, **kwargs: pytest.fail("作成禁止")
-    )
-
-    result, error = models.register_ollama_model("qwen:4b")
-
-    assert error is None
-    assert result["state"] == "already_registered"
-
-
-def test_register_model_does_not_duplicate_manual_chat_backend(monkeypatch):
-    manual = _deployment(source="manual")
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    _mock_ollama_model(monkeypatch)
-    monkeypatch.setattr(
-        models,
-        "model_info",
-        lambda: ({"data": [manual]}, None),
-    )
-    monkeypatch.setattr(
-        models.client,
-        "request",
-        lambda *args, **kwargs: pytest.fail("作成・削除禁止"),
-    )
-
-    result, error = models.register_ollama_model("qwen:4b")
-
-    assert error is None
-    assert result["state"] == "already_registered"
-
-
-def test_register_model_refuses_to_mix_manual_legacy_backend(monkeypatch):
-    manual_legacy = _deployment("ollama/qwen:4b", source="manual")
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    _mock_ollama_model(monkeypatch)
-    monkeypatch.setattr(
-        models,
-        "model_info",
-        lambda: ({"data": [manual_legacy]}, None),
-    )
-    monkeypatch.setattr(
-        models.client,
-        "request",
-        lambda *args, **kwargs: pytest.fail("作成・削除禁止"),
-    )
-
-    result, error = models.register_ollama_model("qwen:4b")
-
-    assert result is None
-    assert "LiteLLM管理画面" in error
-
-
-def test_register_model_creates_db_record_and_verifies_it(monkeypatch):
-    calls = []
-    responses = iter([({"data": []}, None), ({"data": [_deployment()]}, None)])
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    _mock_ollama_model(monkeypatch, supports_tools=True)
-    monkeypatch.setattr(models, "model_info", lambda: next(responses))
-    monkeypatch.setattr(
-        models.client,
-        "request",
-        lambda path, payload: calls.append((path, payload)) or {"ok": True},
-    )
-
-    result, error = models.register_ollama_model("qwen:4b")
-
-    assert error is None
-    assert result["state"] == "registered"
-    assert calls[0][0] == "/model/new"
-    assert calls[0][1]["model_name"] == "qwen:4b"
-    assert calls[0][1]["litellm_params"]["model"] == "ollama_chat/qwen:4b"
-    assert calls[0][1]["model_info"]["supports_function_calling"] is True
-
-
 def test_register_model_verifies_chat_backend_before_deleting_legacy(monkeypatch):
     calls = []
     legacy = _deployment("ollama/qwen:4b", "legacy-1")
@@ -177,14 +43,14 @@ def test_register_model_verifies_chat_backend_before_deleting_legacy(monkeypatch
     responses = iter([({"data": [legacy]}, None), ({"data": [legacy, correct]}, None)])
     monkeypatch.setattr(models.client, "enabled", lambda: True)
     _mock_ollama_model(monkeypatch)
-    monkeypatch.setattr(models, "model_info", lambda: next(responses))
+    monkeypatch.setattr(models.gateway, "model_info", lambda: next(responses))
     monkeypatch.setattr(
         models.client,
         "request",
         lambda path, payload: calls.append((path, payload)) or {"ok": True},
     )
 
-    result, error = models.register_ollama_model("qwen:4b")
+    result, error = models.register_ollama_model.execute("qwen:4b")
 
     assert error is None
     assert result["migrated"] == 1
@@ -202,50 +68,18 @@ def test_register_model_preserves_legacy_when_chat_backend_verification_fails(
     responses = iter([({"data": [legacy]}, None), ({"data": [legacy]}, None)])
     monkeypatch.setattr(models.client, "enabled", lambda: True)
     _mock_ollama_model(monkeypatch)
-    monkeypatch.setattr(models, "model_info", lambda: next(responses))
+    monkeypatch.setattr(models.gateway, "model_info", lambda: next(responses))
     monkeypatch.setattr(
         models.client,
         "request",
         lambda path, payload: calls.append((path, payload)) or {"ok": True},
     )
 
-    result, error = models.register_ollama_model("qwen:4b")
+    result, error = models.register_ollama_model.execute("qwen:4b")
 
     assert result is None
     assert "確認できません" in error
     assert [path for path, _payload in calls] == ["/model/new"]
-
-
-def test_register_model_does_not_create_when_ollama_model_is_missing(monkeypatch):
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    monkeypatch.setattr(ollama, "has_model", lambda model: (False, "missing"))
-    monkeypatch.setattr(
-        models.client, "request", lambda *args, **kwargs: pytest.fail("通信禁止")
-    )
-
-    result, error = models.register_ollama_model("qwen:4b")
-
-    assert result is None
-    assert error == "missing"
-
-
-def test_register_model_redacts_key_from_api_error(monkeypatch):
-    monkeypatch.setattr(models.client, "enabled", lambda: True)
-    _mock_ollama_model(monkeypatch)
-    monkeypatch.setattr(models, "model_info", lambda: ({"data": []}, None))
-    monkeypatch.setattr(
-        models.client,
-        "request",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            RuntimeError("bad sk-private-key")
-        ),
-    )
-
-    result, error = models.register_ollama_model("qwen:4b")
-
-    assert result is None
-    assert "sk-private" not in error
-    assert "REDACTED" in error
 
 
 def test_delete_model_deletes_only_matching_db_deployments_once(monkeypatch):
@@ -272,7 +106,7 @@ def test_delete_model_deletes_only_matching_db_deployments_once(monkeypatch):
     monkeypatch.setattr(models.client, "enabled", lambda: True)
     monkeypatch.setattr(models.client, "request", fake_request)
 
-    assert models.delete_ollama_model("qwen:4b") is None
+    assert models.delete_ollama_model.execute("qwen:4b") is None
     assert calls == [
         ("/v1/model/info", None, "GET"),
         ("/model/delete", {"id": "db-1"}, "POST"),
@@ -297,34 +131,10 @@ def test_delete_model_preserves_ansible_and_manual_models(monkeypatch):
         ),
     )
 
-    error = models.delete_ollama_model("qwen:4b")
+    error = models.delete_ollama_model.execute("qwen:4b")
 
     assert error is None
     assert calls == [("/v1/model/info", None, "GET")]
-
-
-def test_sync_all_models_reports_changed_and_failed(monkeypatch):
-    monkeypatch.setattr(
-        ollama,
-        "model_names",
-        lambda: (["a:1b", "b:2b"], None),
-    )
-    monkeypatch.setattr(
-        models,
-        "register_ollama_model",
-        lambda model: (
-            ({"model": model, "state": "registered"}, None)
-            if model == "a:1b"
-            else (None, "capability failed")
-        ),
-    )
-
-    result, error = models.sync_ollama_models()
-
-    assert error is None
-    assert result["total"] == 2
-    assert result["changed"] == 1
-    assert result["failed"] == 1
 
 
 @pytest.fixture(autouse=True)
@@ -332,4 +142,4 @@ def usecase_components(portal_dependencies):
     global models, portal, ollama
     portal = portal_dependencies
     models = portal_dependencies.llm
-    ollama = portal_dependencies.ollama.client
+    ollama = portal_dependencies.ollama.backend

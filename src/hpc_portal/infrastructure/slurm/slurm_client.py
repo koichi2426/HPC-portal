@@ -6,7 +6,7 @@ import subprocess
 import threading
 import time
 
-from hpc_portal.domain.resource_models import (
+from hpc_portal.domain.resources.snapshot import (
     format_storage_bytes as format_storage_bytes,
 )
 from hpc_portal.infrastructure.linux.user_account_gateway import (

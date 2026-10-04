@@ -31,7 +31,7 @@ class HubTokens(Protocol):
 class ListenerInventory(Protocol):
     def choose(self, uid: int, candidate: str = "", port=None) -> dict: ...
     def validate(self, target: dict): ...
-    def ports(self, uid: int, home: str) -> dict: ...
+    def ports(self, uid: int) -> dict: ...
 
 
 class PortGuard(Protocol):
@@ -48,3 +48,15 @@ class HttpRelay(Protocol):
     def request(
         self, inventory, target, method, path, headers=None, body=None, *, timeout
     ): ...
+
+
+class ApiHealth(Protocol):
+    async def check(self, record: dict) -> None: ...
+
+
+class ApiConfiguration(Protocol):
+    public_host: str
+    max_apps: int
+    body_limit: int
+    timeout: int
+    concurrency: int

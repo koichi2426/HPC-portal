@@ -1,1 +1,1 @@
-from hpc_portal.domain.llm_models import HpcLlmModel as HpcLlmModel
+from hpc_portal.presentation.schemas.llm_models import HpcLlmModel as HpcLlmModel

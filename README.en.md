@@ -245,7 +245,7 @@ Override inventory: `make deploy INV=ansible/inventory/staging.ini`
 | Command | Description |
 |---------|-------------|
 | `make cleanup` | Cleanup services and config while keeping model/DB data |
-| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
+| `make cleanup-purge-data` | Delete model/DB data too, with Japanese confirmation |
 
 #### Read-only NAS mounts
 
@@ -300,7 +300,7 @@ This creates a Python 3.12 `.venv` and synchronizes development dependencies.
 make test
 ```
 
-This runs locally without connecting to the target host and checks Python input validation, authorization, and control flow.
+This runs locally without connecting to the target host and checks authentication, authorization, token revocation, deletion and shutdown targets, persisted state recovery, and startup. UI wording and display details are checked manually.
 
 ##### Smoke test (after deployment)
 
@@ -316,7 +316,7 @@ This connects to the target host in read-only mode and checks major functionalit
 make cleanup
 ```
 
-`make cleanup` removes services and configuration but keeps data such as `/srv/ollama/models` and the LiteLLM database. Use the explicit purge target only when you want to delete model and DB data as well.
+`make cleanup` removes services and configuration but keeps data such as `/srv/ollama/models` and the LiteLLM database. Use the explicit purge target only when you want to delete model and DB data as well, and enter `削除する` at the confirmation prompt.
 
 ```bash
 make cleanup-purge-data
@@ -329,9 +329,29 @@ Start with `make status`, `make gpu`, `make services`, or `make processes`.
 <details>
 <summary>Run ansible commands directly</summary>
 
+Use the group name from `ansible/inventory/production.ini` in place of `gx10` if it differs.
+
 ```bash
+# Connectivity check
 ansible -i ansible/inventory/production.ini gx10 -m ping
+
+# Slurm jobs and node allocation
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
+
+# GPU / VRAM
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
+
+# JupyterHub, Slurm, LiteLLM, and shared Ollama status (-b enables root privileges)
+ansible -i ansible/inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
+
+# Remaining processes (replace YOUR_USER with ansible_user)
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
+
+# Deploy selected components
 ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags jupyterhub
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags slurm
+
+# Dry run
 ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --check --diff
 ```
 
@@ -339,39 +359,6 @@ ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml 
 
 ---
 
-### 4. Development layout
-
-```text
-src/
-├── hpc_portal/
-│   ├── entrypoints/             # Hub registration and dependency assembly
-│   ├── application/
-│   │   ├── usecase/             # Operations grouped by feature
-│   │   └── ports/               # Interfaces for external operations
-│   ├── domain/                  # Data and validation rules
-│   ├── infrastructure/          # Linux, Slurm, and API connections
-│   └── presentation/            # HTTP input and display formatting
-└── hpc_search_mcp/              # Web-search MCP, deployed as a separate service
-frontend/
-├── templates/                  # HTML rendered by JupyterHub
-└── static/                     # JavaScript and CSS
-ansible/
-├── playbooks/                  # Deployment, verification, and cleanup
-├── roles/                      # Service deployment settings
-└── inventory/group_vars/all/    # Shared settings and Git-ignored secrets
-tests/                          # Checks without HPC access
-```
-
-Start with `application/usecase/` to follow an operation. Each feature, such as user or LLM management, groups its workflows in one `*_usecase.py` file and receives external connections through `ports/`. `domain/` and `application/` do not depend on JupyterHub or Ansible settings.
-
-`entrypoints/dependencies.py` assembles connections, and `entrypoints/jupyterhub.py` registers the portal with JupyterHub. Ansible deploys the required files from `src/` and `frontend/`. Deployment destinations and stored data formats remain compatible.
-
-```bash
-uv sync --dev
-make check-local   # Static checks, formatting checks, and tests
-make format        # Format Python files
-```
-
-### 5. License
+### 4. License
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)

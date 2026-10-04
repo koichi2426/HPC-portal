@@ -131,7 +131,7 @@ def make_options_form(spawner):
         or getattr(spawner, "homedir", "")
         or "/home"
     )
-    resource = get_dependencies().resources.snapshot(disk_path)
+    resource = get_dependencies().resources.execute(disk_path)
     cpu_available = resource["cpu_available"]
     cpu_available_count = resource["cpu_available_count"]
     cpu_total = resource["cpu_total"]
@@ -284,7 +284,7 @@ def make_options_form(spawner):
         active_sessions_html = '<div class="hpc-empty" style="font-style:italic;">No active sessions.</div>'
 
     portal_admin = is_portal_admin(user)
-    recommendations = get_dependencies().jobs.app_resource_recommendations()
+    recommendations = get_dependencies().jobs.policy.app_resource_recommendations()
     app_options = [
         app_option_html("ubuntu-cli", recommendations["ubuntu-cli"]),
         app_option_html("open-webui", recommendations["open-webui"]),
@@ -340,7 +340,7 @@ def make_options_form(spawner):
         {"1": "ON", "0": "OFF"},
     )
 
-    shared_ollama_gpu_label = get_dependencies().ollama.client.gpu_label()
+    shared_ollama_gpu_label = get_dependencies().ollama.backend.gpu_label()
 
     # GPUを持たないノードでは選択肢を出さない。出したうえで無効化すると、
     # 選べたのに効かない状態になり原因が分からなくなる。

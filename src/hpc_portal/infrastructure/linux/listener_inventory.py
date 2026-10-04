@@ -8,8 +8,6 @@ from pathlib import Path
 
 import psutil
 
-from hpc_portal.domain.external_api_models import public_candidate
-
 
 def candidate_id(row):
     identity = [row[k] for k in ("uid", "pid", "started_at", "inode", "netns", "port")]
@@ -145,7 +143,7 @@ class LinuxListenerInventory:
         except (psutil.Error, OSError, KeyError):
             raise ValueError("接続先が終了または変更されています") from None
 
-    def ports(self, uid, home):
+    def ports(self, uid):
         rows = self.listeners(uid)
         used = {c.laddr.port for c in self.sockets() if c.laddr}
         try:
@@ -173,5 +171,5 @@ class LinuxListenerInventory:
             "range": [self.config.port_start, self.config.port_end],
             "reserved": list(self.config.reserved_ports),
             "free": candidates,
-            "listeners": [public_candidate(row, home) for row in rows],
+            "listeners": rows,
         }

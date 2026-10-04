@@ -394,30 +394,28 @@ class HPCSlurmSpawner(SlurmSpawner):
                 # Open WebUI には、ユーザー専用の永続 Virtual Key を渡す。
                 self.set_progress("Open WebUIの利用権限を確認しています")
                 username = self.user.name if getattr(self, "user", None) else ""
-                if not username:
-                    raise RuntimeError("Open WebUI 用のユーザー情報を取得できません")
-                for other in (getattr(self.user, "spawners", {}) or {}).values():
-                    if other is self or not _is_openwebui_spawner(other):
-                        continue
-                    if getattr(other, "active", False) or getattr(
-                        other, "pending", None
-                    ):
-                        raise RuntimeError(
-                            "Open WebUIはユーザーごとに1つだけ起動できます。"
-                            "起動中のOpen WebUIを停止してから再試行してください"
-                        )
+                another_active = any(
+                    other is not self
+                    and _is_openwebui_spawner(other)
+                    and (
+                        getattr(other, "active", False)
+                        or getattr(other, "pending", None)
+                    )
+                    for other in (getattr(self.user, "spawners", {}) or {}).values()
+                )
                 lock = self.portal_dependencies.openwebui_key_locks.setdefault(
                     username, asyncio.Lock()
                 )
-                async with lock:
-                    key, err = await asyncio.to_thread(
-                        self.portal_dependencies.llm.get_openwebui_key, username
-                    )
-                if err:
-                    raise RuntimeError(f"Open WebUI を起動できません: {err}")
+                try:
+                    async with lock:
+                        environment = await self.portal_dependencies.jobs.prepare_openwebui.execute(
+                            username, another_active
+                        )
+                except ValueError as error:
+                    raise RuntimeError(str(error)) from error
                 self.environment = {
                     **dict(getattr(self, "environment", {}) or {}),
-                    "OPENWEBUI_LITELLM_API_KEY": key or "",
+                    **environment,
                 }
                 await self.submit_batch_script()
                 p = getattr(self, "port", 0) or 0

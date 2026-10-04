@@ -5,11 +5,13 @@ import os
 import pwd
 import subprocess
 
-from hpc_portal.domain.user_policy import (
+from hpc_portal.domain.accounts.account_policy import (
     validate_display_name,
     validate_password,
 )
-from hpc_portal.domain.user_policy import validate_username as validate_username_policy
+from hpc_portal.domain.accounts.account_policy import (
+    validate_username as validate_username_policy,
+)
 from hpc_portal.infrastructure.config.settings import (
     HPC_PORTAL_ADMIN_USERS,
     HPC_PORTAL_PROTECTED_USERS,

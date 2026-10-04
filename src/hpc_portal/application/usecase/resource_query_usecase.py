@@ -1,15 +1,15 @@
 """OSとSlurmの情報を合わせて空きリソースを確認する。"""
 
 from hpc_portal.application.ports.resource_monitoring_ports import ResourceInventory
-from hpc_portal.domain.resource_models import resource_status
+from hpc_portal.domain.resources.snapshot import resource_status
 
 
-class ResourceMonitoringUseCase:
+class ResourceQueryUseCase:
     def __init__(self, inventory: ResourceInventory, gpu_count: int):
         self.inventory = inventory
         self.gpu_count = gpu_count
 
-    def snapshot(self, disk_path="/home"):
+    def execute(self, disk_path="/home"):
         """CPU・統合メモリ・ストレージとGPUプロセスを取得する。
 
         Args:

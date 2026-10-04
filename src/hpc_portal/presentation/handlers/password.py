@@ -56,7 +56,7 @@ class HpcPasswordApiHandler(BaseHandler):
         except HpcRequestValidationError as exc:
             return self._api_error(400, str(exc))
         try:
-            result = await get_dependencies().users.change_password(
+            result = await get_dependencies().users.change_password.execute(
                 username,
                 request.current_password,
                 request.new_password,

@@ -17,7 +17,7 @@ from hpc_portal.presentation.storage_formatter import format_storage_bytes
 
 
 async def admin_users_snapshot():
-    rows = await get_dependencies().users.snapshot()
+    rows = await get_dependencies().users.snapshot.execute()
     for row in rows:
         used = row["storage_used_bytes"]
         row["storage_used_label"] = (
@@ -95,11 +95,41 @@ class HpcAdminUsersApiHandler(BaseHandler):
             request = parse_json_request(self.request.body, HpcAdminUsersRequest)
             dependencies = get_dependencies()
             if request.action.startswith("ollama_"):
-                result = await dependencies.ollama.execute(request)
+                operations = {
+                    "ollama_register_model": dependencies.ollama.ollama_register_model,
+                    "ollama_sync_models": dependencies.ollama.ollama_sync_models,
+                    "ollama_delete": dependencies.ollama.ollama_delete,
+                    "ollama_start": dependencies.ollama.ollama_start,
+                    "ollama_stop": dependencies.ollama.ollama_stop,
+                    "ollama_update_check": dependencies.ollama.ollama_update_check,
+                    "ollama_update": dependencies.ollama.ollama_update,
+                    "ollama_status": dependencies.ollama.ollama_status,
+                    "ollama_tags": dependencies.ollama.ollama_tags,
+                    "ollama_pull": dependencies.ollama.ollama_pull,
+                    "ollama_pull_cancel": dependencies.ollama.ollama_pull_cancel,
+                    "ollama_pull_status": dependencies.ollama.ollama_pull_status,
+                }
+                operation = operations.get(request.action)
+                if operation is None:
+                    raise UseCaseError("不明な action です")
+                result = await operation.execute(request)
             else:
-                result = await dependencies.users.execute(
-                    self.current_user.name, request
-                )
+                operations = {
+                    "create": dependencies.users.create,
+                    "display_name": dependencies.users.display_name,
+                    "delete": dependencies.users.delete,
+                    "password_regenerate": dependencies.users.password_regenerate,
+                    "sudo_enable": dependencies.users.sudo,
+                    "sudo_disable": dependencies.users.sudo,
+                    "external_api_enable": dependencies.users.external_api,
+                    "external_api_disable": dependencies.users.external_api,
+                    "api_enable": dependencies.users.api,
+                    "api_disable": dependencies.users.api,
+                }
+                operation = operations.get(request.action)
+                if operation is None:
+                    raise UseCaseError("不明な action です")
+                result = await operation.execute(self.current_user.name, request)
         except HpcRequestValidationError as exc:
             return self._api_error(400, str(exc))
         except UseCaseError as exc:

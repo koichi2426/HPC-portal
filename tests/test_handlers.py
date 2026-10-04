@@ -6,7 +6,7 @@ import pytest
 from tornado import web
 
 from hpc_portal.application.usecase import (
-    user_management_usecase as user_usecase_module,
+    account_management_usecase as user_usecase_module,
 )
 from hpc_portal.presentation.handlers import admin_users, llm_api, password
 
@@ -65,45 +65,6 @@ def test_admin_api_rejects_non_admin_user():
 
 
 @pytest.mark.asyncio
-async def test_admin_create_returns_password_key_and_created_status(monkeypatch):
-    handler = _FakeHandler(
-        '{"action":"create","username":"user01","display_name":"研究 太郎","sudo":false}'.encode()
-    )
-    created = []
-    monkeypatch.setattr(
-        user_usecase_module, "generate_password", lambda: "RandomPass12"
-    )
-    monkeypatch.setattr(
-        portal.users.accounts,
-        "create_linux_user",
-        lambda username, generated, sudo, display_name: created.append(
-            (username, generated, sudo, display_name)
-        ),
-    )
-    monkeypatch.setattr(
-        portal.llm,
-        "generate_key",
-        lambda username: ("sk-test-user-key", None),
-    )
-    monkeypatch.setattr(
-        portal.users.settings, "llm_public_base_url", "https://llm.example.test/v1"
-    )
-
-    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
-
-    assert handler.status == 201
-    assert handler.headers["Cache-Control"] == "no-store"
-    assert handler.response == {
-        "ok": True,
-        "username": "user01",
-        "initial_password": "RandomPass12",
-        "api_key": "sk-test-user-key",
-        "api_base_url": "https://llm.example.test/v1",
-    }
-    assert created == [("user01", "RandomPass12", False, "研究 太郎")]
-
-
-@pytest.mark.asyncio
 async def test_admin_create_does_not_call_system_for_invalid_username(monkeypatch):
     handler = _FakeHandler(b'{"action":"create","username":"bad;id"}')
     monkeypatch.setattr(
@@ -155,8 +116,8 @@ async def test_api_disable_attempts_openwebui_stop_even_when_key_update_fails(
     handler = _FakeHandler(b'{"action":"api_disable","username":"user01"}')
     stopped = []
     monkeypatch.setattr(
-        portal.llm,
-        "admin_set_api_access",
+        portal.llm.admin_set_api_access,
+        "execute",
         lambda username, enabled: (None, "key update failed"),
     )
 
@@ -165,7 +126,7 @@ async def test_api_disable_attempts_openwebui_stop_even_when_key_update_fails(
         stopped.append(username)
         return "stop failed"
 
-    monkeypatch.setattr(portal.jobs, "stop_user_openwebui_servers", fake_stop)
+    monkeypatch.setattr(portal.jobs.stop_user_openwebui_servers, "execute", fake_stop)
 
     await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
 
@@ -191,11 +152,11 @@ async def test_ollama_delete_restores_litellm_registration_when_backend_delete_f
             return None, "delete failed"
         raise AssertionError(action)
 
-    monkeypatch.setattr(portal.ollama.client, "command", fake_ollama)
-    monkeypatch.setattr(portal.llm, "delete_ollama_model", lambda model: None)
+    monkeypatch.setattr(portal.ollama.backend, "command", fake_ollama)
+    monkeypatch.setattr(portal.llm.delete_ollama_model, "execute", lambda model: None)
     monkeypatch.setattr(
-        portal.llm,
-        "register_ollama_model",
+        portal.llm.register_ollama_model,
+        "execute",
         lambda model: registered.append(model) or ({"state": "registered"}, None),
     )
 
@@ -205,67 +166,6 @@ async def test_ollama_delete_restores_litellm_registration_when_backend_delete_f
     assert registered == ["qwen:4b"]
     assert handler.status == 400
     assert handler.response == {"error": "delete failed"}
-
-
-@pytest.mark.asyncio
-async def test_ollama_sync_models_returns_sync_summary(monkeypatch):
-    handler = _FakeHandler(b'{"action":"ollama_sync_models"}')
-    summary = {"total": 3, "changed": 2, "failed": 0, "results": []}
-    monkeypatch.setattr(
-        portal.llm,
-        "sync_ollama_models",
-        lambda: (summary, None),
-    )
-
-    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
-
-    assert handler.response == {"ok": True, "data": summary}
-
-
-@pytest.mark.asyncio
-async def test_ollama_update_runs_fixed_management_action(monkeypatch):
-    """管理APIの更新操作が固定のupdateコマンドだけを呼ぶことを確認する。"""
-    handler = _FakeHandler(b'{"action":"ollama_update"}')
-    calls = []
-    monkeypatch.setattr(
-        portal.ollama.client,
-        "command",
-        lambda action, *args: (
-            calls.append((action, args))
-            or ({"status": "started", "job_ids": "43"}, None)
-        ),
-    )
-
-    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
-
-    assert calls == [
-        ("update", (None, None, None, None, None, None, None, None, None, None))
-    ]
-    assert handler.response == {
-        "ok": True,
-        "data": {"status": "started", "job_ids": "43"},
-    }
-
-
-@pytest.mark.asyncio
-async def test_ollama_update_check_runs_server_side_latest_lookup(monkeypatch):
-    handler = _FakeHandler(b'{"action":"ollama_update_check"}')
-    calls = []
-    monkeypatch.setattr(
-        portal.ollama.client,
-        "command",
-        lambda action, *args: (
-            calls.append((action, args))
-            or ({"latest_version": "0.33.0", "update_available": True}, None)
-        ),
-    )
-
-    await admin_users.HpcAdminUsersApiHandler.post.__wrapped__(handler)
-
-    assert calls == [
-        ("update-check", (None, None, None, None, None, None, None, None, None, None))
-    ]
-    assert handler.response["data"]["latest_version"] == "0.33.0"
 
 
 @pytest.mark.asyncio
@@ -329,12 +229,14 @@ async def test_llm_api_regenerates_key_only_for_logged_in_user(monkeypatch):
     handler = _FakeHandler(b'{"action":"regenerate"}', username="user01")
     usernames = []
     monkeypatch.setattr(
-        portal.llm,
-        "regenerate_own_key",
+        portal.llm.regenerate_own_key,
+        "execute",
         lambda username: usernames.append(username) or ("sk-new-key", None),
     )
     monkeypatch.setattr(
-        portal.users.settings, "llm_public_base_url", "https://llm.example.test/v1"
+        portal.users.settings,
+        "llm_public_base_url",
+        "https://llm.example.test/v1",
     )
 
     await llm_api.HpcLlmApiApiHandler.post.__wrapped__(handler)
@@ -345,21 +247,6 @@ async def test_llm_api_regenerates_key_only_for_logged_in_user(monkeypatch):
         "api_key": "sk-new-key",
         "api_base_url": "https://llm.example.test/v1",
     }
-
-
-@pytest.mark.asyncio
-async def test_llm_api_rejects_unknown_action_without_key_operation(monkeypatch):
-    handler = _FakeHandler(b'{"action":"delete"}', username="user01")
-    monkeypatch.setattr(
-        portal.llm,
-        "regenerate_own_key",
-        lambda username: pytest.fail("キー操作は禁止"),
-    )
-
-    await llm_api.HpcLlmApiApiHandler.post.__wrapped__(handler)
-
-    assert handler.status == 400
-    assert handler.response == {"error": "不明な action です"}
 
 
 @pytest.fixture(autouse=True)

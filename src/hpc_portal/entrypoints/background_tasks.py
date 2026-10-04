@@ -15,7 +15,7 @@ async def synchronize_external_api():
     try:
         usecase = get_external_api()
         if usecase:
-            await usecase.synchronize()
+            await usecase.synchronize.execute()
     except Exception:
         # Never include remote error bodies or secrets in synchronization logs.
         log.warning("External API synchronization requires operator configuration")

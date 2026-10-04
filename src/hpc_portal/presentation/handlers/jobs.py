@@ -68,7 +68,7 @@ class HpcAppDetailHandler(BaseHandler):
                 "app_detail.html",
                 user=user,
                 detail=detail,
-                node_resources=get_dependencies().resources.snapshot(),
+                node_resources=get_dependencies().resources.execute(),
                 hpc_public_scheme=HPC_PUBLIC_SCHEME,
                 hpc_job_dns_domain=HPC_JOB_DNS_DOMAIN,
             )
@@ -87,7 +87,7 @@ class HpcAppDetailHandler(BaseHandler):
                 user=user,
                 detail=detail,
                 # template_vars の hpc_resource_snapshot（関数）と名前が衝突しないよう別名で渡す
-                node_resources=get_dependencies().resources.snapshot(),
+                node_resources=get_dependencies().resources.execute(),
                 hpc_public_scheme=HPC_PUBLIC_SCHEME,
                 hpc_job_dns_domain=HPC_JOB_DNS_DOMAIN,
             )

@@ -10,7 +10,7 @@ from tornado.iostream import StreamClosedError
 
 from hpc_portal.domain.errors import UseCaseError
 from hpc_portal.entrypoints.dependencies import get_external_api
-from hpc_portal.infrastructure.http.api_relay import clean_headers, request
+from hpc_portal.infrastructure.http.api_relay import clean_headers
 
 
 class ApiGateway(APIHandler):
@@ -32,7 +32,7 @@ class ApiGateway(APIHandler):
             if usecase is None:
                 raise web.HTTPError(503)
             try:
-                app = await usecase.authorize_request(
+                app = await usecase.authorize_request.execute(
                     self.current_user,
                     token,
                     username,
@@ -59,8 +59,8 @@ class ApiGateway(APIHandler):
             except TimeoutError:
                 raise web.HTTPError(429) from None
             try:
-                async with request(
-                    usecase.inventory,
+                async with usecase.relay.request(
+                    usecase.listeners,
                     app["target"],
                     self.request.method,
                     target,

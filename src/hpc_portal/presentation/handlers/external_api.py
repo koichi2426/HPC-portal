@@ -8,6 +8,10 @@ from tornado import web
 
 from hpc_portal.entrypoints.dependencies import get_external_api
 from hpc_portal.infrastructure.config.external_api_settings import ExternalApiSettings
+from hpc_portal.presentation.api_presenter import (
+    ApiPublicationPresenter,
+    public_candidate,
+)
 from hpc_portal.presentation.schemas.external_api import Operation, Registration
 
 
@@ -42,7 +46,7 @@ class ExternalApiPage(BrowserHandler):
         if configured:
             try:
                 usecase = self.services()
-                state_key = usecase.credential_record(self.current_user).get(
+                state_key = usecase.queries.credential_record(self.current_user).get(
                     "state", "issuing"
                 )
                 state = {
@@ -69,9 +73,9 @@ class ExternalApiCredentials(BrowserHandler):
             op = Operation.model_validate_json(self.request.body)
             usecase = self.services()
             if op.action in {"reveal", "download"}:
-                record = usecase.credential_record(self.current_user)
+                record = usecase.queries.credential_record(self.current_user)
             elif op.action in {"rotate_cloudflare", "rotate_jupyterhub"}:
-                record = await usecase.rotate_credentials(
+                record = await usecase.rotate_credentials.execute(
                     self.current_user, op.action.removeprefix("rotate_")
                 )
             else:
@@ -88,8 +92,10 @@ class ExternalApiCredentials(BrowserHandler):
                 "updated_at": record.get("updated_at"),
                 "base_url": f"https://{usecase.config.public_host}",
                 "apis": {
-                    r["name"]: usecase.publication_url(r)
-                    for r in usecase.list_publications(self.current_user)
+                    r["name"]: ApiPublicationPresenter(
+                        usecase.config, usecase.accounts
+                    ).publication_url(r)
+                    for r in usecase.queries.list_publications(self.current_user)
                 },
             }
         except (ValueError, ValidationError):
@@ -119,9 +125,11 @@ class ApiPorts(BrowserHandler):
     async def get(self):
         usecase = self.services()
         try:
-            data = await usecase.list_ports(self.current_user)
+            data = await usecase.list_ports.execute(self.current_user)
         except (OSError, ValueError):
             raise web.HTTPError(503) from None
+        home = usecase.accounts.getpwnam(self.current_user.name).pw_dir
+        data["listeners"] = [public_candidate(row, home) for row in data["listeners"]]
         self.finish(data)
 
 
@@ -130,8 +138,17 @@ class ApiPublications(BrowserHandler):
     async def get(self):
         usecase = self.services()
         # Reconciliation is background work; page refresh never invokes remote mutations.
-        rows = usecase.list_publications(self.current_user)
-        self.finish({"apps": [usecase.publication_info(row) for row in rows]})
+        rows = usecase.queries.list_publications(self.current_user)
+        self.finish(
+            {
+                "apps": [
+                    ApiPublicationPresenter(
+                        usecase.config, usecase.accounts
+                    ).publication_info(row)
+                    for row in rows
+                ]
+            }
+        )
 
     @web.authenticated
     async def post(self):
@@ -144,15 +161,22 @@ class ApiPublications(BrowserHandler):
                 op = Operation.model_validate(data)
                 if op.action not in {"publish", "unpublish", "delete"} or not op.name:
                     raise ValueError("操作が不正です")
-                app = await usecase.operate_publication(
+                app = await usecase.operate_publication.execute(
                     self.current_user, op.name, op.action
                 )
             else:
-                app = await usecase.publish_api(
+                app = await usecase.publish_api.execute(
                     self.current_user, Registration.model_validate(data)
                 )
         except (ValueError, ValidationError):
             raise web.HTTPError(400) from None
         except Exception:
             raise web.HTTPError(503) from None
-        self.finish({"ok": True, "app": usecase.publication_info(app)})
+        self.finish(
+            {
+                "ok": True,
+                "app": ApiPublicationPresenter(
+                    usecase.config, usecase.accounts
+                ).publication_info(app),
+            }
+        )

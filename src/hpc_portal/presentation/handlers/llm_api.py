@@ -27,13 +27,13 @@ class HpcLlmApiPageHandler(BaseHandler):
         disabled = False
         status_error = ""
         if get_dependencies().llm.client.enabled():
-            disabled, err = get_dependencies().llm.user_admin_disabled(
+            disabled, err = get_dependencies().llm.gateway.user_admin_disabled(
                 self.current_user.name
             )
             status_error = err or ""
         else:
             status_error = "LiteLLM Admin API が未設定です"
-        models, models_error = get_dependencies().llm.list_models()
+        models, models_error = get_dependencies().llm.list_models.execute()
         default_model = models[0]["id"] if models else ""
         html_out = await self.render_template(
             "llm_api.html",
@@ -72,7 +72,9 @@ class HpcLlmApiApiHandler(BaseHandler):
             parse_json_request(self.request.body, HpcLlmApiRequest)
         except HpcRequestValidationError as exc:
             return self._api_error(400, str(exc))
-        api_key, err = get_dependencies().llm.regenerate_own_key(self.current_user.name)
+        api_key, err = get_dependencies().llm.regenerate_own_key.execute(
+            self.current_user.name
+        )
         if err:
             return self._api_error(400, err)
         self.write(

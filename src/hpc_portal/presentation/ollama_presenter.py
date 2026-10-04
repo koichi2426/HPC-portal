@@ -29,14 +29,14 @@ def shared_ollama_detail_context(user=None) -> dict:
     Returns:
         app_detail.htmlとhome.htmlで使うOllamaの表示情報。
     """
-    status, status_err = get_dependencies().ollama.client.command("status")
+    status, status_err = get_dependencies().ollama.backend.command("status")
     status = status or {}
     running = bool(status.get("running"))
     api = bool(status.get("api"))
     # Slurmジョブの起動直後はAPIがまだ待受を開始していないため、
     # 接続失敗をモデル取得エラーとして画面へ出さない。
     tags, tags_err = (
-        get_dependencies().ollama.client.command("tags") if api else (None, None)
+        get_dependencies().ollama.backend.command("tags") if api else (None, None)
     )
     models = []
     if tags and isinstance(tags, dict):
@@ -96,8 +96,8 @@ def shared_ollama_detail_context(user=None) -> dict:
         "allocation": {
             "cpu": status.get("cpus") or HPC_OLLAMA_DEFAULT_CPUS,
             "memory": status.get("memory") or HPC_OLLAMA_DEFAULT_MEMORY,
-            "gpu": get_dependencies().ollama.client.gpu_count(),
-            "gpu_label": get_dependencies().ollama.client.gpu_label(),
+            "gpu": get_dependencies().ollama.backend.gpu_count(),
+            "gpu_label": get_dependencies().ollama.backend.gpu_label(),
             "runtime": HPC_OLLAMA_RUNTIME,
             "hours": "無制限",
         },

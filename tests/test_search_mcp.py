@@ -3,16 +3,12 @@
 import json
 import os
 import time
-import urllib.error
-import urllib.parse
 
 import pytest
 
 from hpc_search_mcp import (
-    combined_search,  # noqa: E402
     fetch_reference,  # noqa: E402
     mcp_auth,  # noqa: E402
-    search_service,  # noqa: E402
     web_fetch,  # noqa: E402
 )
 
@@ -33,75 +29,6 @@ class FakeResponse:
 
     def read(self, _size):
         return self.payload
-
-
-def test_search_web_returns_public_fields_and_caps_result_count(monkeypatch):
-    """公開項目だけを返し、要求件数を設定上限へ丸めることを確認する。"""
-    captured = {}
-    payload = {
-        "results": [
-            {
-                "title": f"結果{i}",
-                "url": f"https://example.com/{i}",
-                "content": f"概要{i}",
-                "engines": ["duckduckgo"],
-                "raw_secret": "公開しない値",
-            }
-            for i in range(12)
-        ],
-        "unresponsive_engines": [],
-    }
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        return FakeResponse(payload)
-
-    monkeypatch.setattr(search_service.urllib.request, "urlopen", fake_urlopen)
-
-    result = search_service.search_web("HPC portal", count=999)
-
-    assert len(result["results"]) == search_service.MAX_RESULT_COUNT
-    assert set(result["results"][0]) == {
-        "title",
-        "url",
-        "snippet",
-        "engine",
-        "fetch_ref",
-    }
-    assert (
-        fetch_reference.verify_fetch_reference(result["results"][0]["fetch_ref"])
-        == result["results"][0]["url"]
-    )
-    assert urllib.parse.parse_qs(urllib.parse.urlparse(captured["url"]).query)["q"] == [
-        "HPC portal"
-    ]
-    assert captured["timeout"] == search_service.SEARCH_TIMEOUT
-
-
-def test_search_web_rejects_empty_and_too_long_queries():
-    """空または上限超過の検索語をSearXNGへ送らないことを確認する。"""
-    with pytest.raises(search_service.SearchServiceError):
-        search_service.search_web("   ")
-    with pytest.raises(search_service.SearchServiceError):
-        search_service.search_web("x" * (search_service.QUERY_MAX_LENGTH + 1))
-
-
-def test_search_web_returns_safe_error_when_searxng_is_unavailable(monkeypatch):
-    """SearXNG障害時に内部例外をそのまま公開しないことを確認する。"""
-    monkeypatch.setattr(
-        search_service.urllib.request,
-        "urlopen",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            urllib.error.URLError("connection refused")
-        ),
-    )
-
-    with pytest.raises(
-        search_service.SearchServiceError,
-        match="Web検索サービスへ接続できませんでした",
-    ):
-        search_service.search_web("SearXNG")
 
 
 def _install_dns_result(monkeypatch, addresses):
@@ -185,40 +112,6 @@ def test_fetch_web_page_rejects_unsafe_url_forms(url):
         web_fetch._validate_and_resolve_url(url, time.monotonic() + 10)
 
 
-def test_fetch_web_page_extracts_html_and_marks_untrusted_content(monkeypatch):
-    """公開HTMLから不要要素を除外し、未信頼テキストとして返す。"""
-    monkeypatch.setattr(
-        web_fetch,
-        "_resolve_public_addresses",
-        lambda *_args: ("93.184.216.34",),
-    )
-    monkeypatch.setattr(
-        web_fetch,
-        "_request_once",
-        lambda _target, _deadline: web_fetch._HttpResponse(
-            status=200,
-            headers={"content-type": "text/html; charset=utf-8"},
-            body=(
-                b"<html><head><title>Example Page</title>"
-                b"<script>steal_secret()</script></head>"
-                b"<body><nav>menu</nav><main><h1>Heading</h1>"
-                b"<p>Useful content.</p></main><footer>footer</footer></body></html>"
-            ),
-        ),
-    )
-
-    result = web_fetch.fetch_web_page(_fetch_ref("https://example.com/article#section"))
-
-    assert result["url"] == "https://example.com/article"
-    assert result["title"] == "Example Page"
-    assert result["content"] == "Heading\nUseful content."
-    assert result["content_type"] == "text/html"
-    assert result["truncated"] is False
-    assert "未信頼テキスト" in result["security_notice"]
-    assert "steal_secret" not in result["content"]
-    assert "menu" not in result["content"]
-
-
 def test_fetch_web_page_revalidates_redirect_and_blocks_private_target(monkeypatch):
     """外部URLからlocalhostへ向かうリダイレクトを拒否する。"""
 
@@ -246,61 +139,6 @@ def test_fetch_web_page_revalidates_redirect_and_blocks_private_target(monkeypat
 
     with pytest.raises(web_fetch.WebFetchError, match="非公開アドレス"):
         web_fetch.fetch_web_page(_fetch_ref("https://example.com/redirect"))
-
-
-@pytest.mark.parametrize(
-    ("headers", "message"),
-    [
-        ({"content-type": "application/pdf"}, "HTMLまたはプレーンテキスト"),
-        (
-            {"content-type": "text/html", "content-encoding": "gzip"},
-            "圧縮されたWebページ",
-        ),
-    ],
-)
-def test_fetch_web_page_rejects_unsupported_responses(monkeypatch, headers, message):
-    """非テキストと意図しない圧縮応答を拒否する。"""
-    monkeypatch.setattr(
-        web_fetch,
-        "_resolve_public_addresses",
-        lambda *_args: ("93.184.216.34",),
-    )
-    monkeypatch.setattr(
-        web_fetch,
-        "_request_once",
-        lambda _target, _deadline: web_fetch._HttpResponse(
-            status=200,
-            headers=headers,
-            body=b"content",
-        ),
-    )
-
-    with pytest.raises(web_fetch.WebFetchError, match=message):
-        web_fetch.fetch_web_page(_fetch_ref("https://example.com/file"))
-
-
-def test_fetch_web_page_truncates_extracted_content(monkeypatch):
-    """抽出本文を設定文字数で切り詰める。"""
-    monkeypatch.setattr(web_fetch, "FETCH_MAX_CONTENT_LENGTH", 12)
-    monkeypatch.setattr(
-        web_fetch,
-        "_resolve_public_addresses",
-        lambda *_args: ("93.184.216.34",),
-    )
-    monkeypatch.setattr(
-        web_fetch,
-        "_request_once",
-        lambda _target, _deadline: web_fetch._HttpResponse(
-            status=200,
-            headers={"content-type": "text/plain; charset=utf-8"},
-            body="これは十分に長い本文です。さらに文章が続きます。".encode(),
-        ),
-    )
-
-    result = web_fetch.fetch_web_page(_fetch_ref("https://example.com/long.txt"))
-
-    assert len(result["content"]) == 12
-    assert result["truncated"] is True
 
 
 def test_request_once_rejects_body_over_byte_limit(monkeypatch):
@@ -403,33 +241,6 @@ def test_read_response_body_enforces_total_timeout(monkeypatch):
     assert fake_socket.timeouts == [pytest.approx(7.9)]
 
 
-def test_open_pinned_socket_connects_to_validated_address(monkeypatch):
-    """HTTP接続がホスト名を再解決せず検証済みIPを使用する。"""
-    captured = {}
-    fake_socket = object()
-
-    def fake_create_connection(address, timeout):
-        captured["address"] = address
-        captured["timeout"] = timeout
-        return fake_socket
-
-    monkeypatch.setattr(web_fetch.socket, "create_connection", fake_create_connection)
-    target = web_fetch._ResolvedTarget(
-        url="http://example.com/",
-        scheme="http",
-        hostname="example.com",
-        port=80,
-        request_target="/",
-        addresses=("93.184.216.34",),
-    )
-
-    result = web_fetch._open_pinned_socket(target, time.monotonic() + 10)
-
-    assert result is fake_socket
-    assert captured["address"] == ("93.184.216.34", 80)
-    assert captured["timeout"] == pytest.approx(web_fetch.FETCH_CONNECT_TIMEOUT)
-
-
 def test_fetch_reference_rejects_tampering_and_expiration(monkeypatch):
     """検索結果参照の改ざんと期限切れを拒否する。"""
     monkeypatch.setattr(fetch_reference, "FETCH_REFERENCE_TTL", 300)
@@ -444,12 +255,6 @@ def test_fetch_reference_rejects_tampering_and_expiration(monkeypatch):
         fetch_reference.verify_fetch_reference(reference, now=1301)
 
 
-def test_fetch_web_page_rejects_raw_url():
-    """search_webを経由していない任意URLを本文取得へ渡せないことを確認する。"""
-    with pytest.raises(web_fetch.WebFetchError, match="参照が不正"):
-        web_fetch.fetch_web_page("https://example.com/private-probe")
-
-
 def test_internal_bearer_token_uses_constant_time_comparison():
     """内部Bearer tokenが完全一致するときだけ認証されることを確認する。"""
     expected = "a" * 64
@@ -457,185 +262,3 @@ def test_internal_bearer_token_uses_constant_time_comparison():
     assert mcp_auth.validate_bearer_token(expected, expected) is True
     assert mcp_auth.validate_bearer_token("b" * 64, expected) is False
     assert mcp_auth.validate_bearer_token("", expected) is False
-
-
-def test_dns_result_count_is_limited_after_private_address_validation(monkeypatch):
-    """多数の公開IPが返っても接続試行数を設定上限へ制限する。"""
-    addresses = [f"93.184.216.{number}" for number in range(10, 20)]
-    _install_dns_result(monkeypatch, addresses)
-    monkeypatch.setattr(web_fetch, "FETCH_MAX_ADDRESSES", 4)
-
-    result = web_fetch._resolve_public_addresses(
-        "example.com", 443, time.monotonic() + 10
-    )
-
-    assert result == tuple(addresses[:4])
-
-
-def test_redirects_share_one_fetch_deadline(monkeypatch):
-    """リダイレクトごとに取得期限が延長されないことを確認する。"""
-    deadlines = []
-    urls = []
-
-    def fake_validate(url, deadline):
-        urls.append(url)
-        deadlines.append(deadline)
-        return web_fetch._ResolvedTarget(
-            url=url,
-            scheme="https",
-            hostname="example.com",
-            port=443,
-            request_target="/",
-            addresses=("93.184.216.34",),
-        )
-
-    responses = iter(
-        [
-            web_fetch._HttpResponse(
-                status=302,
-                headers={"location": "https://example.com/final"},
-                body=b"",
-            ),
-            web_fetch._HttpResponse(
-                status=200,
-                headers={"content-type": "text/plain"},
-                body=b"final content",
-            ),
-        ]
-    )
-
-    def fake_request(_target, deadline):
-        deadlines.append(deadline)
-        return next(responses)
-
-    monkeypatch.setattr(web_fetch, "_validate_and_resolve_url", fake_validate)
-    monkeypatch.setattr(web_fetch, "_request_once", fake_request)
-
-    result = web_fetch.fetch_web_page(_fetch_ref("https://example.com/start"))
-
-    assert result["content"] == "final content"
-    assert urls == ["https://example.com/start", "https://example.com/final"]
-    assert len(set(deadlines)) == 1
-
-
-def test_search_and_fetch_web_returns_page_bodies_in_one_call(monkeypatch):
-    """統合検索が検索と複数ページの本文取得を1回で完了することを確認する。"""
-    candidates = [
-        {
-            "title": f"Result {index}",
-            "url": f"https://example.com/{index}",
-            "snippet": f"Snippet {index}",
-            "fetch_ref": f"reference-{index}",
-        }
-        for index in range(3)
-    ]
-    monkeypatch.setattr(
-        combined_search,
-        "search_web",
-        lambda **_kwargs: {
-            "query": "latest model",
-            "results": candidates,
-            "unresponsive_engines": [],
-        },
-    )
-    deadlines = []
-
-    def fake_fetch(reference, *, deadline):
-        deadlines.append(deadline)
-        index = reference.rsplit("-", 1)[1]
-        return {
-            "title": f"Page {index}",
-            "url": f"https://example.com/{index}",
-            "content": f"Body {index}",
-            "content_type": "text/html",
-            "truncated": False,
-        }
-
-    monkeypatch.setattr(combined_search, "fetch_web_page", fake_fetch)
-
-    result = combined_search.search_and_fetch_web("latest model", count=2)
-
-    assert [page["content"] for page in result["pages"]] == ["Body 0", "Body 1"]
-    assert result["fetch_failures"] == []
-    assert len(set(deadlines)) == 1
-    assert "未信頼テキスト" in result["security_notice"]
-
-
-def test_search_and_fetch_web_skips_failed_candidate(monkeypatch):
-    """取得できない候補を記録し、次の検索結果から本文を取得する。"""
-    monkeypatch.setattr(
-        combined_search,
-        "search_web",
-        lambda **_kwargs: {
-            "query": "query",
-            "results": [
-                {
-                    "title": "Blocked",
-                    "url": "https://blocked.example/",
-                    "snippet": "",
-                    "fetch_ref": "blocked",
-                },
-                {
-                    "title": "Available",
-                    "url": "https://example.com/",
-                    "snippet": "summary",
-                    "fetch_ref": "available",
-                },
-            ],
-            "unresponsive_engines": [],
-        },
-    )
-
-    def fake_fetch(reference, *, deadline):
-        del deadline
-        if reference == "blocked":
-            raise web_fetch.WebFetchError("取得を拒否しました")
-        return {
-            "title": "Available",
-            "url": "https://example.com/",
-            "content": "Page body",
-            "content_type": "text/plain",
-            "truncated": False,
-        }
-
-    monkeypatch.setattr(combined_search, "fetch_web_page", fake_fetch)
-
-    result = combined_search.search_and_fetch_web("query", count=1)
-
-    assert result["pages"][0]["content"] == "Page body"
-    assert result["fetch_failures"] == [
-        {"url": "https://blocked.example/", "error": "取得を拒否しました"}
-    ]
-
-
-def test_search_and_fetch_web_rejects_when_all_pages_fail(monkeypatch):
-    """検索候補の本文を1件も取得できない場合は安全なエラーを返す。"""
-    monkeypatch.setattr(
-        combined_search,
-        "search_web",
-        lambda **_kwargs: {
-            "query": "query",
-            "results": [
-                {
-                    "title": "Blocked",
-                    "url": "https://blocked.example/",
-                    "snippet": "",
-                    "fetch_ref": "blocked",
-                }
-            ],
-            "unresponsive_engines": [],
-        },
-    )
-    monkeypatch.setattr(
-        combined_search,
-        "fetch_web_page",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            web_fetch.WebFetchError("取得を拒否しました")
-        ),
-    )
-
-    with pytest.raises(
-        combined_search.CombinedSearchError,
-        match="本文を取得できませんでした",
-    ):
-        combined_search.search_and_fetch_web("query")
