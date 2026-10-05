@@ -1,0 +1,21 @@
+<div data-preview-controls>
+  <strong>モック環境</strong> — 表示されるデータ・トークンはサンプルです。
+  <form method="post" action="/hub/preview/settings" class="d-flex flex-wrap justify-content-center align-items-center gap-2 mt-2">
+    <input type="hidden" name="_xsrf" value="{{ xsrf_token }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <label for="preview-user">ユーザー</label>
+    <select id="preview-user" name="username" class="form-select form-select-sm w-auto">
+      {% for row in users %}
+      <option value="{{ row.username }}" {% if row.username == username %}selected{% endif %}>{{ row.username }}（{{ '管理者' if row.protected else '一般ユーザー' }}）</option>
+      {% endfor %}
+    </select>
+    <label for="preview-scenario">表示パターン</label>
+    <select id="preview-scenario" name="scenario" class="form-select form-select-sm w-auto">
+      {% for key, label in scenarios.items() %}
+      <option value="{{ key }}" {% if key == scenario %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-sm btn-primary" type="submit">切り替え</button>
+    <button class="btn btn-sm btn-outline-secondary" type="submit" name="reset" value="1">データを初期化</button>
+  </form>
+</div>

@@ -37,7 +37,7 @@
   }
 
   function start() {
-    var form = global.document.querySelector("form");
+    var form = global.document.getElementById("spawn_form");
     var appChoice = global.document.querySelector('select[name="app_choice"]');
     var sharedBox = global.document.getElementById("shared-ollama-options");
     var standardBox = global.document.getElementById("standard-resource-options");
@@ -182,7 +182,7 @@
           });
         return false;
       }
-      var inputs = global.document.querySelectorAll('input[name="_xsrf"]');
+      var inputs = form.querySelectorAll('input[name="_xsrf"]');
       for (var index = 1; index < inputs.length; index += 1) inputs[index].remove();
     };
   }

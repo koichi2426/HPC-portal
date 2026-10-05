@@ -7,10 +7,11 @@ SHELL := /bin/bash
 INV          ?= ansible/inventory/production.ini
 PLAYBOOK     ?= ansible-playbook
 ANSIBLE      ?= ansible
+PORT         ?= 8001
 PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup test lint format check-local check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
+.PHONY: help setup dev test lint format check-local check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
 	common nfs-mounts slurm postgres litellm ollama jupyterhub apptainer searxng cloudflared \
 	search-mcp status gpu cuda services processes
 
@@ -27,15 +28,18 @@ setup: ## インベントリ・secret・NFS設定を初期化（設定済みの�
 	@python3 scripts/setup_secrets.py ansible/inventory/group_vars/all/secret.yml
 	@echo "OK: $(INV)、ansible/inventory/group_vars/all/secret.yml、ansible/inventory/group_vars/all/nfs_mounts.yml を確認してください"
 
+dev: ## モックデータで画面確認サーバーを起動（localhost:8001 / PORTで変更可能）
+	PYTHONPATH=src uv run python -m dev.preview.server --port $(PORT)
+
 test: ## ローカルでpytestを実行（実機接続なし）
 	uv run pytest
 
 lint: ## Pythonの静的検証と書式を確認（実機接続なし）
-	uv run ruff check src tests scripts ansible/roles/jupyterhub/files
-	uv run ruff format --check src tests scripts ansible/roles/jupyterhub/files
+	uv run ruff check src tests scripts dev ansible/roles/jupyterhub/files
+	uv run ruff format --check src tests scripts dev ansible/roles/jupyterhub/files
 
 format: ## Pythonの書式を統一
-	uv run ruff format src tests scripts ansible/roles/jupyterhub/files
+	uv run ruff format src tests scripts dev ansible/roles/jupyterhub/files
 
 check-local: lint test ## 静的検証・書式・テストをまとめて実行
 
