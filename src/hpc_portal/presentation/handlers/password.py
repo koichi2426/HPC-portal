@@ -3,8 +3,8 @@
 from jupyterhub.handlers.base import BaseHandler
 from tornado import web
 
+from hpc_portal.bootstrap.container import get_container
 from hpc_portal.domain.errors import UseCaseError
-from hpc_portal.entrypoints.dependencies import get_dependencies
 from hpc_portal.presentation.schemas import (
     HpcPasswordChangeRequest,
     HpcRequestValidationError,
@@ -56,7 +56,7 @@ class HpcPasswordApiHandler(BaseHandler):
         except HpcRequestValidationError as exc:
             return self._api_error(400, str(exc))
         try:
-            result = await get_dependencies().users.change_password.execute(
+            result = await get_container().users.change_password.execute(
                 username,
                 request.current_password,
                 request.new_password,

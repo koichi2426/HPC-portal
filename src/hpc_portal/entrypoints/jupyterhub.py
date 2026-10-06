@@ -3,9 +3,9 @@
 import nest_asyncio
 from tornado import web
 
+from hpc_portal.bootstrap.container import get_container
 from hpc_portal.domain.errors import UseCaseError
 from hpc_portal.entrypoints.background_tasks import start_background_tasks
-from hpc_portal.entrypoints.dependencies import get_dependencies
 from hpc_portal.entrypoints.handler_registry import register_handlers
 from hpc_portal.infrastructure.config.external_api_settings import (
     ExternalApiSettings as ExternalApiConfig,
@@ -57,7 +57,7 @@ def hpc_subdomain_hook(name, domain, kind):
 
 def options_from_form(formdata):
     try:
-        return get_dependencies().jobs.options_from_form.execute(formdata)
+        return get_container().jobs.options_from_form.execute(formdata)
     except UseCaseError as exc:
         raise web.HTTPError(400, str(exc)) from exc
 
@@ -66,7 +66,7 @@ def configure_jupyterhub(c):
     nest_asyncio.apply()
     install_session_hooks()
     install_proxy_hooks()
-    dependencies = get_dependencies()
+    dependencies = get_container()
     c.JupyterHub.bind_url = f"http://0.0.0.0:{JUPYTERHUB_PORT}"
     c.JupyterHub.hub_bind_url = f"http://127.0.0.1:{JUPYTERHUB_HUB_PORT}/hub/"
     c.JupyterHub.hub_connect_url = f"http://127.0.0.1:{JUPYTERHUB_HUB_PORT}/hub/"
@@ -122,7 +122,7 @@ def configure_jupyterhub(c):
     }
     c.JupyterHub.proxy_class = HpcConfigurableHTTPProxy
     c.JupyterHub.spawner_class = HPCSlurmSpawner
-    c.HPCSlurmSpawner.portal_dependencies_provider = get_dependencies
+    c.HPCSlurmSpawner.portal_dependencies_provider = get_container
     c.HPCSlurmSpawner.options_form = make_options_form
     c.HPCSlurmSpawner.options_from_form = options_from_form
     c.HPCSlurmSpawner.state_exechost_exp = HPC_BATCH_EXECHOST_EXP

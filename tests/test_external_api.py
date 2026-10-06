@@ -16,7 +16,7 @@ from aiohttp import web as aio_web
 from cryptography.hazmat.primitives.asymmetric import rsa
 from tornado import web
 
-from hpc_portal.entrypoints.dependencies import build_external_api_usecases
+from hpc_portal.bootstrap.container import build_external_api_usecases
 from hpc_portal.infrastructure.cloudflare.access_token_verifier import AccessVerifier
 from hpc_portal.infrastructure.config.external_api_settings import ExternalApiSettings
 from hpc_portal.infrastructure.http import api_relay

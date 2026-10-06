@@ -5,15 +5,46 @@ import runpy
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader
 from jupyterhub.app import JupyterHub
 from traitlets.config import Config
 
+from hpc_portal.bootstrap import container
 from hpc_portal.entrypoints import jupyterhub as entrypoint
 from hpc_portal.infrastructure.jupyterhub.slurm_spawner import HPCSlurmSpawner
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_account_api_dependencies_belong_to_their_container(monkeypatch):
+    """個別に組み立てたcontainerが、グローバルな共有先へ混ざらない。"""
+    monkeypatch.setenv("HPC_EXTERNAL_API_ENABLED", "true")
+    first = container.build_container()
+    second = container.build_container()
+    first.external_api = SimpleNamespace(name="first")
+    second.external_api = SimpleNamespace(name="second")
+    monkeypatch.setattr(container, "_container", second)
+
+    assert (
+        first.users.provision_external_api.external_api_factory() is first.external_api
+    )
+    assert second.users.snapshot.external_api_factory() is second.external_api
+    assert container.get_external_api() is second.external_api
+    assert first.openwebui_key_locks is not second.openwebui_key_locks
+
+
+def test_disabled_api_does_not_initialize_the_container(monkeypatch):
+    """外部API無効時は、専用設定の検証やクライアント生成を行わない。"""
+    monkeypatch.setenv("HPC_EXTERNAL_API_ENABLED", "false")
+    monkeypatch.setattr(container, "_container", None)
+
+    def unexpected_initialization():
+        raise AssertionError("無効な外部APIがcontainerを初期化しました")
+
+    monkeypatch.setattr(container, "build_container", unexpected_initialization)
+    assert container.get_external_api() is None
 
 
 def test_deployment_entrypoint_loads_hub_and_spawner(portal_dependencies, monkeypatch):

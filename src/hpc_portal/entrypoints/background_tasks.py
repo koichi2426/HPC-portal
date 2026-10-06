@@ -5,7 +5,7 @@ import logging
 
 from tornado.ioloop import IOLoop, PeriodicCallback
 
-from hpc_portal.entrypoints.dependencies import get_external_api
+from hpc_portal.bootstrap.container import get_external_api
 
 log = logging.getLogger("jupyterhub.external-api")
 _callback = None

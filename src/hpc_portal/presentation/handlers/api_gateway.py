@@ -8,8 +8,8 @@ from jupyterhub.apihandlers.base import APIHandler
 from tornado import web
 from tornado.iostream import StreamClosedError
 
+from hpc_portal.bootstrap.container import get_external_api
 from hpc_portal.domain.errors import UseCaseError
-from hpc_portal.entrypoints.dependencies import get_external_api
 from hpc_portal.infrastructure.http.api_relay import clean_headers
 
 

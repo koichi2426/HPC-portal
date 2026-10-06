@@ -4,8 +4,8 @@ from jupyterhub.handlers.base import BaseHandler
 from jupyterhub.utils import url_path_join
 from tornado import web
 
+from hpc_portal.bootstrap.container import get_container
 from hpc_portal.domain.errors import UseCaseError
-from hpc_portal.entrypoints.dependencies import get_dependencies
 from hpc_portal.infrastructure.config.settings import HPC_PORTAL_GRANT_SUDO
 from hpc_portal.infrastructure.linux.user_account_gateway import is_portal_admin
 from hpc_portal.presentation.schemas import (
@@ -17,7 +17,7 @@ from hpc_portal.presentation.storage_formatter import format_storage_bytes
 
 
 async def admin_users_snapshot():
-    rows = await get_dependencies().users.snapshot.execute()
+    rows = await get_container().users.snapshot.execute()
     for row in rows:
         used = row["storage_used_bytes"]
         row["storage_used_label"] = (
@@ -93,7 +93,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
         self.set_header("Cache-Control", "no-store")
         try:
             request = parse_json_request(self.request.body, HpcAdminUsersRequest)
-            dependencies = get_dependencies()
+            dependencies = get_container()
             if request.action.startswith("ollama_"):
                 operations = {
                     "ollama_register_model": dependencies.ollama.ollama_register_model,

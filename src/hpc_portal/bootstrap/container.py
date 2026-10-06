@@ -1,4 +1,4 @@
-"""外部接続の実装を組み立て、各usecaseへ渡す。"""
+"""外部接続とusecaseを組み立て、Hub内で共有する。"""
 
 from dataclasses import dataclass, field
 
@@ -12,17 +12,17 @@ from hpc_portal.application.usecase.catalog import (
     LlmUseCases,
 )
 from hpc_portal.application.usecase.resource_query_usecase import ResourceQueryUseCase
-from hpc_portal.domain.accounts.settings import UserManagementSettings
-from hpc_portal.domain.jobs.execution_policy import ExecutionPolicy
-from hpc_portal.domain.jobs.settings import JobSettings
-from hpc_portal.domain.llm.runtime_policy import OllamaResourcePolicy
-from hpc_portal.entrypoints.usecase_factory import (
+from hpc_portal.bootstrap.usecase_factory import (
     build_accounts_usecases,
     build_api_usecases,
     build_jobs_usecases,
     build_llm_usecases,
     build_ollama_usecases,
 )
+from hpc_portal.domain.accounts.settings import UserManagementSettings
+from hpc_portal.domain.jobs.execution_policy import ExecutionPolicy
+from hpc_portal.domain.jobs.settings import JobSettings
+from hpc_portal.domain.llm.runtime_policy import OllamaResourcePolicy
 from hpc_portal.infrastructure.cloudflare.access_client import CloudflareAccessClient
 from hpc_portal.infrastructure.cloudflare.access_token_verifier import AccessVerifier
 from hpc_portal.infrastructure.config import settings
@@ -52,7 +52,9 @@ from hpc_portal.infrastructure.persistence.encrypted_record_store import (
 
 
 @dataclass
-class PortalDependencies:
+class PortalContainer:
+    """画面・Spawner・定期処理が共有するusecaseと排他制御。"""
+
     users: AccountUseCases
     jobs: JobUseCases
     llm: LlmUseCases
@@ -61,11 +63,36 @@ class PortalDependencies:
     openwebui_key_locks: dict = field(default_factory=dict)
     external_api: ExternalApiUseCases | None = None
 
+    def get_external_api(self) -> ExternalApiUseCases | None:
+        """外部APIが有効な場合だけ、設定を検証して一度組み立てる。"""
+        config = ExternalApiSettings.from_env()
+        if not config.enabled:
+            return None
+        if self.external_api is None:
+            config.validate()
+            store = EncryptedRecordStore(config.state_dir)
+            inventory = LinuxListenerInventory(config)
+            accounts = self.users.accounts
+            self.external_api = build_external_api_usecases(
+                store,
+                CloudflareAccessClient(config),
+                HubTokenGateway(JupyterHub.instance()),
+                config,
+                inventory,
+                NftablesPortGuard(store, inventory),
+                AccessVerifier(config),
+                accounts,
+                api_relay,
+                accounts.linux_users_snapshot,
+            )
+        return self.external_api
 
-_dependencies: PortalDependencies | None = None
+
+_container: PortalContainer | None = None
 
 
-def build_dependencies():
+def build_container() -> PortalContainer:
+    """通信を開始せずに実装を生成し、機能ごとのusecaseを組み合わせる。"""
     accounts = LinuxUserAccountGateway()
     commands = LinuxCommandRunner()
     inventory = LinuxResourceInventory()
@@ -107,10 +134,15 @@ def build_dependencies():
         gateway=llm_gateway,
         ensure_openwebui_key=llm.get_openwebui_key,
     )
+
+    def external_api_factory() -> ExternalApiUseCases | None:
+        # アカウント操作時に呼ぶため、containerの組み立て完了前には実行されない。
+        return container.get_external_api()
+
     users = build_accounts_usecases(
         accounts=accounts,
         settings=user_settings,
-        external_api_factory=get_external_api,
+        external_api_factory=external_api_factory,
         issue_llm_key=llm.generate_key,
         revoke_llm_access=llm.delete_user_keys,
         set_llm_access=llm.admin_set_api_access,
@@ -118,51 +150,36 @@ def build_dependencies():
         llm_client=llm_client,
         get_llm_access_state=llm.user_external_api_state,
     )
-    return PortalDependencies(
-        users,
-        jobs,
-        llm,
-        build_ollama_usecases(
+    container = PortalContainer(
+        users=users,
+        jobs=jobs,
+        llm=llm,
+        ollama=build_ollama_usecases(
             backend=ollama_client,
             register_model=llm.register_ollama_model,
             synchronize_models=llm.sync_ollama_models,
             unregister_model=llm.delete_ollama_model,
             gateway=llm_gateway,
         ),
-        ResourceQueryUseCase(inventory, settings.HPC_GPU_COUNT),
+        resources=ResourceQueryUseCase(inventory, settings.HPC_GPU_COUNT),
     )
+    return container
 
 
-def get_dependencies():
-    global _dependencies
-    if _dependencies is None:
-        _dependencies = build_dependencies()
-    return _dependencies
+def get_container() -> PortalContainer:
+    """Hubの設定が複製されても、同じクライアントとロックを返す。"""
+    global _container
+    if _container is None:
+        _container = build_container()
+    return _container
 
 
-def get_external_api():
+def get_external_api() -> ExternalApiUseCases | None:
+    """外部APIを使う呼び出し元へ、共有するusecaseを提供する。"""
     config = ExternalApiSettings.from_env()
     if not config.enabled:
         return None
-    dependencies = get_dependencies()
-    if dependencies.external_api is None:
-        config.validate()
-        store = EncryptedRecordStore(config.state_dir)
-        inventory = LinuxListenerInventory(config)
-        accounts = dependencies.users.accounts
-        dependencies.external_api = build_external_api_usecases(
-            store,
-            CloudflareAccessClient(config),
-            HubTokenGateway(JupyterHub.instance()),
-            config,
-            inventory,
-            NftablesPortGuard(store, inventory),
-            AccessVerifier(config),
-            accounts,
-            api_relay,
-            accounts.linux_users_snapshot,
-        )
-    return dependencies.external_api
+    return get_container().get_external_api()
 
 
 def build_external_api_usecases(
@@ -176,7 +193,8 @@ def build_external_api_usecases(
     accounts,
     relay,
     users_snapshot,
-):
+) -> ExternalApiUseCases:
+    """保存・監視・認証の実装を、外部APIのusecaseへ接続する。"""
     repository = ApiAggregateRepository(store)
     queries = ApiRecordQueries(store, accounts, repository, repository)
     health = ApiHealthChecker(guard, inventory, relay)

@@ -1,6 +1,6 @@
 """アプリ起動フォームの生成と入力値変換を提供する。"""
 
-from hpc_portal.entrypoints.dependencies import get_dependencies
+from hpc_portal.bootstrap.container import get_container
 from hpc_portal.infrastructure.config.settings import (
     HPC_JOB_DNS_DOMAIN,
     HPC_JUPYTER_UBUNTU_VERSION,
@@ -50,7 +50,7 @@ def make_options_form(spawner):
         or getattr(spawner, "homedir", "")
         or "/home"
     )
-    dependencies = get_dependencies()
+    dependencies = get_container()
     portal_admin = is_portal_admin(spawner.user)
     return render_options_form(
         spawner,

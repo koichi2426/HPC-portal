@@ -8,7 +8,7 @@ from jupyterhub.handlers.base import BaseHandler
 from jupyterhub.utils import url_escape_path, url_path_join
 from tornado import web
 
-from hpc_portal.entrypoints.dependencies import get_dependencies
+from hpc_portal.bootstrap.container import get_container
 from hpc_portal.infrastructure.config.settings import (
     HPC_JOB_DNS_DOMAIN,
     HPC_OPENWEBUI_VERSION,
@@ -68,7 +68,7 @@ class HpcAppDetailHandler(BaseHandler):
                 "app_detail.html",
                 user=user,
                 detail=detail,
-                node_resources=get_dependencies().resources.execute(),
+                node_resources=get_container().resources.execute(),
                 hpc_public_scheme=HPC_PUBLIC_SCHEME,
                 hpc_job_dns_domain=HPC_JOB_DNS_DOMAIN,
             )
@@ -87,7 +87,7 @@ class HpcAppDetailHandler(BaseHandler):
                 user=user,
                 detail=detail,
                 # template_vars の hpc_resource_snapshot（関数）と名前が衝突しないよう別名で渡す
-                node_resources=get_dependencies().resources.execute(),
+                node_resources=get_container().resources.execute(),
                 hpc_public_scheme=HPC_PUBLIC_SCHEME,
                 hpc_job_dns_domain=HPC_JOB_DNS_DOMAIN,
             )

@@ -28,11 +28,11 @@ os.environ.update(
 
 import pytest
 
-from hpc_portal.entrypoints import dependencies
+from hpc_portal.bootstrap import container
 
 
 @pytest.fixture(autouse=True)
 def portal_dependencies(monkeypatch):
-    assembled = dependencies.build_dependencies()
-    monkeypatch.setattr(dependencies, "_dependencies", assembled)
+    assembled = container.build_container()
+    monkeypatch.setattr(container, "_container", assembled)
     return assembled

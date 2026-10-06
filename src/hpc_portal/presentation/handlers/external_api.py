@@ -6,7 +6,7 @@ from jupyterhub.handlers.base import BaseHandler
 from pydantic import ValidationError
 from tornado import web
 
-from hpc_portal.entrypoints.dependencies import get_external_api
+from hpc_portal.bootstrap.container import get_external_api
 from hpc_portal.infrastructure.config.external_api_settings import ExternalApiSettings
 from hpc_portal.presentation.api_presenter import (
     ApiPublicationPresenter,

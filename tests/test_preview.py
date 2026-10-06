@@ -54,7 +54,7 @@ class TestPreview(AsyncHTTPTestCase):
                 """
 import sys
 sys.modules['hpc_portal.infrastructure.config.settings'] = None
-sys.modules['hpc_portal.entrypoints.dependencies'] = None
+sys.modules['hpc_portal.bootstrap.container'] = None
 from dev.preview.server import create_application
 create_application()
 """,
@@ -80,7 +80,7 @@ create_application()
             "login",
         ]
         with patch(
-            "hpc_portal.presentation.job_form.get_dependencies",
+            "hpc_portal.presentation.job_form.get_container",
             side_effect=AssertionError("本番の依存を利用しています"),
         ):
             for page in pages:
