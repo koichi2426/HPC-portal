@@ -11,7 +11,7 @@ from hpc_portal.domain.jobs.execution_policy import ExecutionPolicy
 from hpc_portal.domain.jobs.settings import JobSettings, runtime_from_hours_choice
 from hpc_portal.presentation.job_allocation import allocation_summary
 from hpc_portal.presentation.job_form_renderer import JobFormSettings
-from hpc_portal.presentation.schemas.resources import HpcResourceSnapshot
+from hpc_portal.presentation.schemas.responses.resources import HpcResourceSnapshot
 
 FORM_SETTINGS = JobFormSettings(
     jupyter_ubuntu_version="24.04",

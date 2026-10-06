@@ -4,11 +4,11 @@ from jupyterhub.handlers.base import BaseHandler
 from tornado import web
 
 from hpc_portal.bootstrap.container import get_container
-from hpc_portal.presentation.schemas import (
-    HpcLlmApiRequest,
+from hpc_portal.presentation.schemas.request_validation import (
     HpcRequestValidationError,
     parse_json_request,
 )
+from hpc_portal.presentation.schemas.requests.llm_api import HpcLlmApiRequest
 
 
 class HpcLlmApiPageHandler(BaseHandler):

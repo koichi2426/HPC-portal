@@ -10,9 +10,12 @@ from tornado import web
 
 from dev.preview.mock_data import FORM_SETTINGS, SCENARIOS
 from hpc_portal.presentation.job_form_renderer import render_options_form
-from hpc_portal.presentation.schemas.admin_users import HpcAdminUsersRequest
-from hpc_portal.presentation.schemas.external_api import Operation, Registration
-from hpc_portal.presentation.schemas.password import HpcPasswordChangeRequest
+from hpc_portal.presentation.schemas.requests.admin_users import HpcAdminUsersRequest
+from hpc_portal.presentation.schemas.requests.external_api import (
+    Operation,
+    Registration,
+)
+from hpc_portal.presentation.schemas.requests.password import HpcPasswordChangeRequest
 
 
 class PreviewHandler(web.RequestHandler):

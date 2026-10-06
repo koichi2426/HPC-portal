@@ -23,7 +23,7 @@ from hpc_portal.presentation.job_presenter import (
     user_memory_overuse,
 )
 from hpc_portal.presentation.ollama_presenter import shared_ollama_detail_context
-from hpc_portal.presentation.schemas import HpcAppMemoryResponse
+from hpc_portal.presentation.schemas.responses.app_memory import HpcAppMemoryResponse
 
 
 class HpcNewApplicationHandler(BaseHandler):

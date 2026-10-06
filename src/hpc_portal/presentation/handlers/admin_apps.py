@@ -8,7 +8,7 @@ from tornado import web
 
 from hpc_portal.infrastructure.linux.user_account_gateway import is_portal_admin
 from hpc_portal.infrastructure.slurm.slurm_client import admin_apps_snapshot
-from hpc_portal.presentation.schemas import HpcAdminAppsResponse
+from hpc_portal.presentation.schemas.responses.admin_apps import HpcAdminAppsResponse
 
 
 class HpcAdminAppsApiHandler(BaseHandler):

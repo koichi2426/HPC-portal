@@ -8,11 +8,11 @@ from hpc_portal.bootstrap.container import get_container
 from hpc_portal.domain.errors import UseCaseError
 from hpc_portal.infrastructure.config.settings import HPC_PORTAL_GRANT_SUDO
 from hpc_portal.infrastructure.linux.user_account_gateway import is_portal_admin
-from hpc_portal.presentation.schemas import (
-    HpcAdminUsersRequest,
+from hpc_portal.presentation.schemas.request_validation import (
     HpcRequestValidationError,
     parse_json_request,
 )
+from hpc_portal.presentation.schemas.requests.admin_users import HpcAdminUsersRequest
 from hpc_portal.presentation.storage_formatter import format_storage_bytes
 
 

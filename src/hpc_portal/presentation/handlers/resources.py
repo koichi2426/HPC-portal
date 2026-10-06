@@ -13,7 +13,7 @@ from hpc_portal.infrastructure.filesystem.static_asset_versions import (
     HPC_PORTAL_JS_DIR,
     HPC_PORTAL_JS_FILES,
 )
-from hpc_portal.presentation.schemas.resources import HpcResourceSnapshot
+from hpc_portal.presentation.schemas.responses.resources import HpcResourceSnapshot
 
 
 class HpcResourceStatusHandler(BaseHandler):

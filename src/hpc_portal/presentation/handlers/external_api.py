@@ -12,7 +12,10 @@ from hpc_portal.presentation.api_presenter import (
     ApiPublicationPresenter,
     public_candidate,
 )
-from hpc_portal.presentation.schemas.external_api import Operation, Registration
+from hpc_portal.presentation.schemas.requests.external_api import (
+    Operation,
+    Registration,
+)
 
 
 class BrowserHandler(BaseHandler):

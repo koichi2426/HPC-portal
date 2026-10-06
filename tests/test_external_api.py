@@ -32,7 +32,7 @@ from hpc_portal.infrastructure.persistence.encrypted_record_store import (
 )
 from hpc_portal.presentation.api_presenter import ApiPublicationPresenter
 from hpc_portal.presentation.handlers import api_gateway, external_api
-from hpc_portal.presentation.schemas.external_api import Registration
+from hpc_portal.presentation.schemas.requests.external_api import Registration
 
 
 class FakeHub:
