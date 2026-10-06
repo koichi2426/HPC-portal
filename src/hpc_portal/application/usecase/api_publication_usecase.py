@@ -46,6 +46,7 @@ class RegisterApiPublicationUseCase:
         self.publish_registration = publish_registration
 
     async def execute(self, user, settings):
+        """所有者・認証状態・待受候補を確認し、登録を保存して公開設定へ進む。"""
         async with self.queries.publication_lock(user.name):
             key = self.queries.publication_key(user.name, settings.name)
             old = self.store.get("publications", key)
@@ -87,6 +88,7 @@ class RegisterApiPublicationUseCase:
             }
             if old:
                 record.update({k: old[k] for k in ("cf_app_id", "cf_aud") if k in old})
+
             publication = ApiPublication(
                 credentials.owner,
                 settings.name,
@@ -124,6 +126,7 @@ class ConfigureApiPublicationUseCase:
         self.listeners = listeners
 
     async def execute(self, record, credential):
+        """ポート保護と接続確認後、本人のService Tokenだけを許可する公開先を設定する。"""
         key = self.queries.publication_key(record["username"], record["name"])
         publication = self.publication_repository.load_publication(
             record["username"], record["name"]
@@ -181,6 +184,7 @@ class ChangeApiPublicationUseCase:
         self.remove_remote_publication = remove_remote_publication
 
     async def execute(self, user, name, action):
+        """本人の登録を確認し、再公開・公開停止・削除の希望を反映する。"""
         async with self.queries.publication_lock(user.name):
             record = self.queries.get_publication(user, name)
             publication = self.publication_repository.load_publication(user.name, name)
@@ -224,6 +228,7 @@ class RemoveRemoteApiPublicationUseCase:
         self.queries = queries
 
     async def execute(self, record):
+        """Cloudflareの公開先を削除し、同期処理が再試行できる形で結果を保存する。"""
         if record.get("remote_clean") and (not record.get("cf_app_id")):
             return
         await self.cloudflare.remove_app(
@@ -263,6 +268,7 @@ class RefreshApiPublicationUseCase:
         self.remove_remote_publication = remove_remote_publication
 
     async def execute(self, record):
+        """希望状態と現在の認証・待受状態を照合し、公開設定や削除を再試行する。"""
         async with self.queries.publication_lock(record["username"]):
             key = self.queries.publication_key(record["username"], record["name"])
             record = self.store.get("publications", key)
@@ -276,6 +282,7 @@ class RefreshApiPublicationUseCase:
                 if record["desired"] == "deleted":
                     self.store.delete("publications", key)
                 return
+
             credential = self.store.get("credentials", record["username"])
             credentials = self.credential_repository.load_credentials(
                 record["username"]
@@ -302,6 +309,7 @@ class RefreshApiPublicationUseCase:
                         publication.complete_publication()
                     except Exception:
                         publication.disconnect()
+
             record.update(
                 state=publication.state.value, desired=publication.desired.value
             )
@@ -324,6 +332,7 @@ class UnpublishUserApisUseCase:
         self.remove_remote_publication = remove_remote_publication
 
     async def execute(self, username):
+        """全登録を先に公開停止へ変更し、その後Cloudflareの公開先を削除する。"""
         async with self.queries.publication_lock(username):
             records = [
                 self.store.get("publications", k)
@@ -343,6 +352,7 @@ class UnpublishUserApisUseCase:
                     self.queries.publication_key(username, record["name"]),
                     record,
                 )
+
             for record in records:
                 await self.remove_remote_publication.execute(record)
 
@@ -358,5 +368,6 @@ class ListApiPortsUseCase:
         self.listeners = listeners
 
     async def execute(self, user):
+        """本人の待受プロセスと、その時点で利用できる空きポート候補を取得する。"""
         entry = self.accounts.getpwnam(user.name)
         return await asyncio.to_thread(self.listeners.ports, entry.pw_uid)

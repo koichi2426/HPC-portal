@@ -1,4 +1,4 @@
-"""Small account-scoped Cloudflare client. Error bodies never reach logs/UI."""
+"""Cloudflare Accessを管理し、エラー本文を画面やログへ流さない。"""
 
 import aiohttp
 
@@ -58,7 +58,7 @@ class CloudflareAccessClient:
         if len(matches) > 1:
             raise CloudflareError("重複した管理トークンを確認してください")
         if matches:
-            # Recover a create whose response/secret was lost. Never reuse an unknown secret.
+            # 作成応答を失って秘密値が分からない場合、同名トークンを再発行して回復する。
             return await self.rotate(matches[0]["id"])
         if len(rows) >= self.config.token_limit:
             raise CloudflareError("Service Token の発行上限に達しています")
@@ -137,7 +137,7 @@ class CloudflareAccessClient:
                     raise CloudflareError("管理 Access アプリの所有を確認してください")
                 await self.request("DELETE", f"/apps/{existing_id}", allow_missing=True)
                 return
-        # Recover an uncertain create, including an old ID missing in the account.
+        # 作成応答や保存IDが失われた場合も、管理名で探して削除を再試行する。
         matches = [r for r in await self.listing("/apps") if r.get("name") == name]
         if len(matches) > 1:
             raise CloudflareError("重複した管理 Access アプリを確認してください")

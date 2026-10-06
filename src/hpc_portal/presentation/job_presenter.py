@@ -273,6 +273,3 @@ def spawner_detail_context(spawner, server_name: str, user) -> dict:
         # 気付けるよう、自分のアプリの使用状況を渡す。
         **spawner_memory_usage(jid, alloc.get("memory", "")),
     }
-
-
-# ホーム画面のアプリカードから自分のメモリ超過を見えるようにする

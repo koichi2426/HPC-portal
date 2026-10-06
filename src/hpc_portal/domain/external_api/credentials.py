@@ -6,6 +6,8 @@ from enum import StrEnum
 
 @dataclass(frozen=True)
 class ApiOwner:
+    """同名ユーザーの再作成を区別するため、Linux UIDとHubのIDも保持する。"""
+
     username: str
     uid: int
     hub_user_id: int
@@ -25,6 +27,8 @@ class CredentialState(StrEnum):
 
 @dataclass
 class ApiCredentials:
+    """秘密値を持たず、認証情報を利用できる条件と状態遷移を管理する。"""
+
     owner: ApiOwner
     enabled: bool = True
     state: CredentialState = CredentialState.ISSUING

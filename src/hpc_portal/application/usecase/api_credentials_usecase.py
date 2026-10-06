@@ -42,6 +42,7 @@ class IssueApiCredentialsUseCase:
         self.revoke_credential_record = revoke_credential_record
 
     async def execute(self, user):
+        """所有者を照合し、途中で止まった発行を再開して両サービスのトークンを揃える。"""
         async with self.queries.credential_lock(user.name):
             identity = self.queries.credential_identity(user)
             record = self.store.get("credentials", user.name)
@@ -49,6 +50,8 @@ class IssueApiCredentialsUseCase:
                 await self.revoke_credential_record.execute(user.name, record)
                 self.store.delete("credentials", user.name)
                 record = None
+
+            # 外部サービスの応答が途切れても続きから再試行できるよう、各工程を保存する。
             record = record or {**identity, "enabled": True, "state": "issuing"}
             self.store.put("credentials", user.name, record)
             if not record["enabled"]:
@@ -84,6 +87,7 @@ class IssueApiCredentialsUseCase:
             for token_id in record.get("revoke_pending", []):
                 self.hub_tokens.revoke(token_id)
             record.pop("revoke_pending", None)
+
             credentials = self.credential_repository.load_credentials(user.name)
             credentials.complete_issuance()
             record.update(
@@ -112,6 +116,7 @@ class RotateApiCredentialsUseCase:
         self.hub_tokens = hub_tokens
 
     async def execute(self, user, kind):
+        """選ばれたサービスのトークンだけを再発行し、古い接続情報を無効にする。"""
         if kind not in {"cloudflare", "jupyterhub"}:
             raise ValueError("再発行対象が不正です")
         async with self.queries.credential_lock(user.name):
@@ -132,6 +137,7 @@ class RotateApiCredentialsUseCase:
                 self.store.put("credentials", user.name, record)
                 self.hub_tokens.revoke(old_id)
                 record.pop("revoke_pending", None)
+
             credentials = self.credential_repository.load_credentials(user.name)
             credentials.complete_issuance()
             record.update(
@@ -158,6 +164,7 @@ class RevokeCredentialRecordUseCase:
         self.store = store
 
     async def execute(self, username, record):
+        """ローカルで利用を拒否し、HubとCloudflareのトークンを失効させる。"""
         credentials = self.credential_repository.load_credentials(username)
         credentials.begin_revocation()
         record.update(enabled=credentials.enabled, state=credentials.state.value)
@@ -191,6 +198,7 @@ class RevokeApiCredentialsUseCase:
         self.revoke_credential_record = revoke_credential_record
 
     async def execute(self, username):
+        """ユーザー単位で排他し、保存済みの認証情報を失効させる。"""
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
             if record:
@@ -212,6 +220,7 @@ class EnableApiCredentialsUseCase:
         self.issue_credentials = issue_credentials
 
     async def execute(self, user):
+        """失効処理の完了を確認し、古い登録を消して認証情報を新規発行する。"""
         async with self.queries.credential_lock(user.name):
             record = self.store.get("credentials", user.name)
             if record:
@@ -219,6 +228,7 @@ class EnableApiCredentialsUseCase:
                     user.name
                 ).require_reenableable()
             self.store.delete("credentials", user.name)
+        # 発行処理も同じロックを取得するため、ここで解放してから呼び出す。
         return await self.issue_credentials.execute(user)
 
 
@@ -241,6 +251,7 @@ class DisableUserApisUseCase:
         self.unpublish_all = unpublish_all
 
     async def execute(self, username):
+        """認証を先に拒否し、全APIの公開停止とトークン失効を進める。"""
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
             if record:
@@ -251,6 +262,7 @@ class DisableUserApisUseCase:
                 )
                 self.credential_repository.save_credentials(credentials)
                 self.hub_tokens.revoke(record.get("hub_token_id"))
+
         try:
             await self.unpublish_all.execute(username)
         finally:
@@ -270,6 +282,7 @@ class DeleteUserApiRecordsUseCase:
         self.remove_remote_publication = remove_remote_publication
 
     async def execute(self, username):
+        """失効完了を確認し、Cloudflareの公開先とローカル登録を削除する。"""
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
             if record and record.get("state") != "disabled":

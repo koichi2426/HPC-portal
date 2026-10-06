@@ -63,17 +63,18 @@ def options_from_form(formdata):
 
 
 def configure_jupyterhub(c):
+    """共有containerを取得し、Hub設定・画面・Spawner・定期処理を接続する。"""
     nest_asyncio.apply()
     install_session_hooks()
     install_proxy_hooks()
     dependencies = get_container()
+
     c.JupyterHub.bind_url = f"http://0.0.0.0:{JUPYTERHUB_PORT}"
     c.JupyterHub.hub_bind_url = f"http://127.0.0.1:{JUPYTERHUB_HUB_PORT}/hub/"
     c.JupyterHub.hub_connect_url = f"http://127.0.0.1:{JUPYTERHUB_HUB_PORT}/hub/"
     c.JupyterHub.hub_ip = "127.0.0.1"
     c.JupyterHub.hub_connect_ip = "127.0.0.1"
-    # cloudflared → 127.0.0.1:8000 経由の X-Forwarded-* を信頼しないと、Proto/Port がブレて
-    # /hub/user/... ↔ https://gx10.../user/... のリダイレクトループになる（journal に Redirect loop が出る）
+    # cloudflared経由の公開URLを正しく認識し、HTTP/HTTPS間のリダイレクトを防ぐ。
     c.JupyterHub.trusted_downstream_ips = ["127.0.0.1", "::1"]
     c.JupyterHub.default_url = "/hub/home"
     c.JupyterHub.template_paths = ["/etc/jupyterhub/templates"]
@@ -87,13 +88,12 @@ def configure_jupyterhub(c):
 
     c.Authenticator.admin_users = set(HPC_PORTAL_ADMIN_USERS)
 
-    # サブドメイン方式: ゾーンは <base-domain>（job<N>.<base-domain> を CHP が受ける）
+    # Hubと各ジョブを別ホストで公開し、CHPがジョブ用ホストを受け持つ。
     c.JupyterHub.subdomain_host = f"{HPC_PUBLIC_SCHEME}://{HPC_JOB_DNS_DOMAIN}"
-    # Hub のブラウザ向け URL（ログイン・ダッシュは <hub-subdomain>.<base-domain>）
     c.JupyterHub.public_url = f"{HPC_PUBLIC_SCHEME}://{HPC_PUBLIC_DOMAIN}/"
     c.JupyterHub.subdomain_hook = hpc_subdomain_hook
-    # gx10.<zone> と job<id>.<zone> 間で認証/ XSRF cookie を共有
-    # traitlets の LazyConfigValue では setdefault が使えないため dict を直接代入する
+    # Hubとジョブ用ホストで認証・XSRF Cookieを共有する。
+    # traitletsのLazyConfigValueではsetdefaultを使えないため、dictを直接代入する。
     c.JupyterHub.tornado_settings = {
         "headers": {
             "Content-Security-Policy": f"frame-ancestors 'self' https://*.{HPC_JOB_DNS_DOMAIN}",
@@ -136,10 +136,12 @@ def configure_jupyterhub(c):
     c.Spawner.cmd = ["jupyterhub-singleuser"]
     c.Spawner.environment = {"OPENWEBUI_LITELLM_BASE_URL": OPENWEBUI_LITELLM_BASE_URL}
     c.Spawner.apply_user_options = apply_user_options
+
     register_handlers(c)
     external = ExternalApiConfig.from_env()
     c.JupyterHub.template_vars["hpc_external_api_enabled"] = external.enabled
     if external.enabled:
+        # 通常のHubトークンと区別し、所有者本人のAPIだけを呼べる権限を追加する。
         c.JupyterHub.token_expires_in_max_seconds = 0
         c.JupyterHub.custom_scopes = {
             "custom:external-api:invoke": {

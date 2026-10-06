@@ -176,10 +176,9 @@ def render_options_form(
         jid = getattr(s, "job_id", "") or ""
         public_url = getattr(s, "public_url", "") or ""
         if is_openwebui and jid:
-            # OpenWebUI は job サブドメイン直下で開く
             url = public_url or f"{settings.public_scheme}://{job_host(jid)}/"
-        # spawn 時に渡された public_url が gx10 側のまま残ることがあるため active+JOBID では ORM の base_url を優先
         elif s.active and jid:
+            # 起動時のpublic_urlがHubを指したままでも、現在のserver.base_urlを優先する。
             srv = getattr(s, "server", None)
             base = getattr(srv, "base_url", None) if srv else None
             if base:

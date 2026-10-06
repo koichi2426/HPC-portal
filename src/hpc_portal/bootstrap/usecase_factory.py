@@ -131,6 +131,7 @@ def build_llm_usecases(
     ollama_base_url: str,
     accounts: UserAccountGateway,
 ) -> LlmUseCases:
+    """LLMキー管理とモデル登録の操作を、共有するgatewayへ接続する。"""
     generate_key = IssueLlmKeyUseCase(client=client, gateway=gateway)
     user_external_api_state = GetLlmAccessStateUseCase(gateway=gateway)
     delete_portal_external_keys = DeleteManagedLlmKeysUseCase(
@@ -217,6 +218,7 @@ def build_api_usecases(
     users_snapshot: Callable[[], list[dict]],
     relay: HttpRelay,
 ) -> ExternalApiUseCases:
+    """認証情報・公開先・同期の操作を組み立て、ロックを共有させる。"""
     sync_lock = asyncio.Lock()
     rotate_credentials = RotateApiCredentialsUseCase(
         queries=queries,
@@ -367,6 +369,7 @@ def build_accounts_usecases(
     issue_llm_key: IssueLlmKeyUseCase,
     revoke_llm_access: RevokeLlmAccessUseCase,
 ) -> AccountUseCases:
+    """アカウント操作と、関連するAPI権限・ジョブ停止の操作を接続する。"""
     display_name = ChangeAccountDisplayNameUseCase(settings=settings, accounts=accounts)
     password_regenerate = ResetAccountPasswordUseCase(
         settings=settings, accounts=accounts
@@ -443,6 +446,7 @@ def build_jobs_usecases(
     commands: CommandRunner,
     ensure_openwebui_key: EnsureOpenWebuiKeyUseCase,
 ) -> JobUseCases:
+    """実行条件の検証、Open WebUIキーの準備、ジョブ停止を組み立てる。"""
     options_from_form = PrepareJobUseCase(
         policy=policy, resources=resources, settings=settings
     )
@@ -467,6 +471,7 @@ def build_ollama_usecases(
     unregister_model: UnregisterLlmModelUseCase,
     gateway: LlmManagementGateway,
 ) -> InferenceUseCases:
+    """共有推論の操作を組み立て、モデルごとの監視タスクを共有する。"""
     registration_tasks: dict[str, asyncio.Task[None]] = {}
     ollama_register_model = RegisterInstalledModelUseCase(
         backend=backend, register_model=register_model

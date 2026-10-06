@@ -285,10 +285,9 @@ def gpu_process_snapshot() -> tuple[list[dict], bool]:
         return [], False
 
 
-# テンプレートからホーム画面のリソースメーターを描画する
-
-
 class LinuxResourceInventory:
+    """usecaseが使うOS計測とSlurm/GPU照会を、同じ契約で提供する。"""
+
     metrics = psutil
 
     def slurm_free_resources(self):

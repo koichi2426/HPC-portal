@@ -1,4 +1,4 @@
-"""Browser-only credentials, live port inventory, and application publication."""
+"""ログイン済みブラウザから、個人別トークン・待受候補・API公開設定を操作する。"""
 
 import json
 
@@ -16,6 +16,8 @@ from hpc_portal.presentation.schemas.external_api import Operation, Registration
 
 
 class BrowserHandler(BaseHandler):
+    """トークン認証からの設定変更を拒否し、本人のログインセッションを要求する。"""
+
     async def prepare(self):
         await super().prepare()
         if self.get_auth_token() or getattr(self, "_token_authenticated", False):
@@ -137,7 +139,7 @@ class ApiPublications(BrowserHandler):
     @web.authenticated
     async def get(self):
         usecase = self.services()
-        # Reconciliation is background work; page refresh never invokes remote mutations.
+        # ページ更新で外部設定を書き換えないよう、再同期は定期処理に任せる。
         rows = usecase.queries.list_publications(self.current_user)
         self.finish(
             {

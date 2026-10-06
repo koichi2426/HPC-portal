@@ -1,4 +1,4 @@
-"""Bounded, streaming HTTP with identity checks before sending application data."""
+"""接続先のプロセスを再確認し、認証ヘッダーを除いてHTTPを転送する。"""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -21,6 +21,7 @@ PRIVATE_HEADERS = {"authorization", "cookie", "set-cookie", "x-hpc-internal-toke
 
 
 def clean_headers(headers, *, response=False):
+    """接続単位のヘッダーと認証情報を除き、転送する情報を限定する。"""
     nominated = set()
     for key, value in headers.items():
         if key.lower() == "connection":
@@ -43,7 +44,7 @@ class VerifiedConnector(aiohttp.TCPConnector):
         await asyncio.to_thread(self.inventory.validate, self.target)
         protocol = await super()._create_connection(req, traces, timeout)
         try:
-            # Check again after connect and before aiohttp sends headers/body.
+            # 接続中のプロセス交代も検出し、別アプリへ本文やヘッダーを送らない。
             await asyncio.to_thread(self.inventory.validate, self.target)
         except Exception:
             protocol.close()

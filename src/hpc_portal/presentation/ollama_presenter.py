@@ -1,3 +1,5 @@
+"""共有Ollamaの状態とモデル一覧を、画面表示用の情報へ整える。"""
+
 from hpc_portal.bootstrap.container import get_container
 from hpc_portal.infrastructure.config.settings import (
     HPC_OLLAMA_DEFAULT_CONTEXT_LENGTH,

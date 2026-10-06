@@ -1,4 +1,4 @@
-"""Publication settings only: never commands, arbitrary URLs, or PIDs."""
+"""検出済みのAPIを公開する入力。任意の起動コマンドや接続先URLは受け付けない。"""
 
 from typing import Literal
 

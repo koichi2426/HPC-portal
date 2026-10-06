@@ -7,6 +7,8 @@ from hpc_portal.domain.external_api.credentials import ApiOwner
 
 
 class PublicationState(StrEnum):
+    """接続確認や外部設定を反映した、現在の公開状態。"""
+
     CHECKING = "checking"
     CONFIGURING = "configuring"
     PUBLISHED = "published"
@@ -17,6 +19,8 @@ class PublicationState(StrEnum):
 
 
 class DesiredPublicationState(StrEnum):
+    """利用者が指定した状態。同期処理は現在の状態をここへ近づける。"""
+
     PUBLISHED = "published"
     UNPUBLISHED = "unpublished"
     DELETED = "deleted"

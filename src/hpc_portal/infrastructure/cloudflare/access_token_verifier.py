@@ -1,4 +1,4 @@
-"""Cloudflare assertions are signature-verified against a fixed team issuer."""
+"""固定したチームURLの署名鍵で、Cloudflare Access JWTを検証する。"""
 
 import asyncio
 import secrets

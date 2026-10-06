@@ -1,4 +1,4 @@
-"""HPCポータルAPIの入力Schemaと検証関数を公開する。"""
+"""ポータルAPIの入力・応答モデルと、共通の入力検証を公開する。"""
 
 from hpc_portal.presentation.schemas.admin_apps import HpcAdminAppsResponse
 from hpc_portal.presentation.schemas.admin_users import HpcAdminUsersRequest

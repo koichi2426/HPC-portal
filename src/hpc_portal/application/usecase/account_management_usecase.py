@@ -34,8 +34,6 @@ if TYPE_CHECKING:
 
 
 HPC_USER_ADMIN_LOG = logging.getLogger("jupyterhub.hpc-user-admin")
-
-
 HPC_PASSWORD_LOG = logging.getLogger("jupyterhub.hpc-password")
 
 
@@ -73,6 +71,7 @@ class CreateAccountUseCase:
         self.provision_external_api = provision_external_api
 
     async def execute(self, actor, request):
+        """入力を検証してLinuxユーザーを作り、外部APIとLLMの認証情報を準備する。"""
         username = request.username
         err = validate_username(username, self.settings.protected_users)
         if err:
@@ -92,9 +91,11 @@ class CreateAccountUseCase:
         )
         if err:
             raise UseCaseError(err)
+
         try:
             await self.provision_external_api.execute(username)
         except Exception:
+            # Linuxユーザー作成は確定済み。外部APIの発行は定期同期で再試行する。
             HPC_USER_ADMIN_LOG.warning("External API issuance pending for %s", username)
         if grant_sudo:
             log_user_admin_success("sudo_enable", actor, username)
@@ -121,6 +122,7 @@ class ChangeAccountDisplayNameUseCase:
         self.accounts = accounts
 
     async def execute(self, actor, request):
+        """対象アカウントを確認し、Linuxの表示名を更新する。"""
         username = request.username
         account = Account(username, username in self.settings.protected_users)
         account.require_named()
@@ -150,9 +152,12 @@ class DeleteAccountUseCase:
         self.disable_external_api = disable_external_api
 
     async def execute(self, actor, request):
+        """削除可否を確認し、外部APIを失効させてからLinuxユーザーを削除する。"""
         username = request.username
         account = Account(username, username in self.settings.protected_users)
         account.require_deletable_by(actor)
+
+        # 同名ユーザーを再作成しても、以前の接続情報が使われないよう先に失効する。
         try:
             await self.disable_external_api.execute(username)
         except Exception:
@@ -181,6 +186,7 @@ class ResetAccountPasswordUseCase:
         self.accounts = accounts
 
     async def execute(self, actor, request):
+        """保護対象を確認し、対象ユーザーの初期パスワードを再発行する。"""
         username = request.username
         account = Account(username, username in self.settings.protected_users)
         account.require_password_resettable()
@@ -205,6 +211,7 @@ class SetAccountSudoUseCase:
         self.accounts = accounts
 
     async def execute(self, actor, request):
+        """保護対象と管理者自身の権限を確認し、sudo権限を切り替える。"""
         action = request.action
         username = request.username
         account = Account(username, username in self.settings.protected_users)
@@ -230,6 +237,7 @@ class SetAccountApiAccessUseCase:
         self.enable_external_api = enable_external_api
 
     async def execute(self, actor, request):
+        """保護対象を確認し、ユーザー自身のHTTP APIへの外部アクセスを切り替える。"""
         action = request.action
         username = request.username
         account = Account(username, username in self.settings.protected_users)
@@ -259,6 +267,7 @@ class SetAccountLlmAccessUseCase:
         self.stop_openwebui_jobs = stop_openwebui_jobs
 
     async def execute(self, actor, request):
+        """LLM利用権限を切り替え、停止時は利用者のOpen WebUIも終了する。"""
         action = request.action
         username = request.username
         account = Account(username, username in self.settings.protected_users)
@@ -291,6 +300,7 @@ class ChangeAccountPasswordUseCase:
     async def execute(
         self, username, current_password, new_password, confirmation, pam_service
     ):
+        """現在のパスワードと新しい入力を検証し、本人のパスワードを変更する。"""
         if new_password != confirmation:
             raise UseCaseError("新しいパスワードが確認入力と一致しません")
         error = validate_password(new_password)
@@ -328,7 +338,9 @@ class ListAccountsUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self):
+        """Linuxユーザー一覧に、LLM・外部APIの状態とホーム使用量を付ける。"""
         rows = await asyncio.to_thread(self.accounts.linux_users_snapshot)
+        # 外部APIとディスク走査は負荷が異なるため、同時実行数を別々に制限する。
         api_semaphore = asyncio.Semaphore(8)
         storage_semaphore = asyncio.Semaphore(4)
 
@@ -346,6 +358,7 @@ class ListAccountsUseCase:
                 used, storage_error = await asyncio.to_thread(
                     self.accounts.home_storage_usage, row["home"]
                 )
+
             updated = dict(
                 row,
                 api_access=state,
@@ -376,6 +389,7 @@ class ProvisionAccountApiUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self, username):
+        """外部API公開が有効な場合、対象ユーザーの接続情報を準備する。"""
         usecase = self.external_api_factory()
         if usecase:
             await usecase.issue_credentials.execute(
@@ -392,6 +406,7 @@ class DisableAccountApiUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self, username):
+        """外部API公開が有効な場合、対象ユーザーの公開先と認証情報を無効にする。"""
         usecase = self.external_api_factory()
         if usecase:
             await usecase.disable_user.execute(username)
@@ -406,6 +421,7 @@ class EnableAccountApiUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self, username):
+        """外部API公開が有効な場合、失効済みの接続情報を新しく発行する。"""
         usecase = self.external_api_factory()
         if usecase:
             await usecase.enable_credentials.execute(
@@ -422,6 +438,7 @@ class DeleteAccountApiRecordsUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self, username):
+        """外部API公開が有効な場合、失効済みユーザーの登録を削除する。"""
         usecase = self.external_api_factory()
         if usecase:
             await usecase.delete_user_records.execute(username)

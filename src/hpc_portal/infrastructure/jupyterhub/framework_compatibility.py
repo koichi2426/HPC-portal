@@ -52,11 +52,7 @@ except Exception:  # noqa: S110
         """メトリクスAPIがないJupyterHub向けの代替実装。"""
 
         def observe(self, _t):
-            """計測値を受け取り、互換性維持のため何もしない。
-
-            Args:
-                _t: 観測対象の経過時間。
-            """
+            """メトリクスAPIがない環境では、計測値の保存を省略する。"""
             pass
 
     CHECK_ROUTES_DURATION_SECONDS = _DummyMetric()

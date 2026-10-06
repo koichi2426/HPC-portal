@@ -17,6 +17,7 @@ class StartInferenceRuntimeUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """要求されたリソースと推論設定で共有Ollamaを起動する。"""
         data, err = await asyncio.to_thread(
             self.backend.command,
             "start",
@@ -45,6 +46,7 @@ class StopInferenceRuntimeUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """共有Ollamaを停止し、操作結果を返す。"""
         data, err = await asyncio.to_thread(self.backend.command, "stop")
         if err:
             raise UseCaseError(err)
@@ -60,6 +62,7 @@ class CheckInferenceUpdateUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """共有Ollamaに適用できるバージョン更新を確認する。"""
         data, err = await asyncio.to_thread(self.backend.command, "update-check")
         if err:
             raise UseCaseError(err)
@@ -75,6 +78,7 @@ class UpdateInferenceRuntimeUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """共有Ollamaの更新処理を実行し、結果を返す。"""
         data, err = await asyncio.to_thread(self.backend.command, "update")
         if err:
             raise UseCaseError(err)
@@ -90,6 +94,7 @@ class GetInferenceRuntimeUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """共有Ollamaの実行状態を取得する。"""
         data, err = await asyncio.to_thread(self.backend.command, "status")
         if err:
             raise UseCaseError(err)
@@ -105,6 +110,7 @@ class ListInstalledModelsUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """共有Ollamaに保存されているモデルを取得する。"""
         data, err = await asyncio.to_thread(self.backend.command, "tags")
         if err:
             raise UseCaseError(err)

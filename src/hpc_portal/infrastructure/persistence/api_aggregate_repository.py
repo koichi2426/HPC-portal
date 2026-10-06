@@ -43,6 +43,7 @@ class ApiAggregateRepository:
             record["uid"], record["hub_user_id"]
         ):
             raise ValueError("所有者が変更された認証情報は更新できません")
+        # domainが持たない秘密値は既存レコードへ残し、所有者と状態だけを更新する。
         record.update(self.credential_fields(credentials))
         self.store.put("credentials", name, record)
 

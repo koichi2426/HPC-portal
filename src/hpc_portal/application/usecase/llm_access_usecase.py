@@ -19,7 +19,7 @@ class IssueLlmKeyUseCase:
         self.gateway = gateway
 
     def execute(self, username: str) -> tuple[str | None, str | None]:
-        """利用者向け外部API用Virtual Keyを発行する。
+        """外部からLLMを呼び出すためのVirtual Keyを発行する。
 
         Args:
             username: Keyを所有するLinuxユーザー名。
@@ -60,7 +60,7 @@ class GetLlmAccessStateUseCase:
         self.gateway = gateway
 
     def execute(self, username: str) -> tuple[str, str | None]:
-        """管理画面向けに外部APIの利用状態を取得する。
+        """管理画面向けにLLM APIの利用状態を取得する。
 
         Args:
             username: 状態を取得するLinuxユーザー名。
@@ -282,7 +282,7 @@ class SetLlmAccessUseCase:
         self.set_user_keys_blocked = set_user_keys_blocked
 
     def execute(self, username: str, enabled: bool) -> tuple[str | None, str | None]:
-        """利用者単位で外部APIとOpen WebUIの利用可否を切り替える。
+        """利用者単位でLLM APIとOpen WebUIの利用可否を切り替える。
 
         Args:
             username: 対象のLinuxユーザー名。
@@ -330,6 +330,7 @@ class SetLlmAccessUseCase:
         openwebui_err = self.set_openwebui_key_blocked.execute(username, False)
         errors = [error for error in (external_err, openwebui_err) if error]
         if errors:
+            # 一部だけ利用可能になるのを避け、失敗時は両用途のキーを停止へ戻す。
             joined = "; ".join(errors)
             self.gateway.set_user_admin_disabled(username, True)
             self.set_user_keys_blocked.execute(
@@ -607,6 +608,7 @@ class EnsureOpenWebuiKeyUseCase:
         )
         if issuance_error:
             return (None, issuance_error)
+
         existing_key = self.key_store.read(username)
         if existing_key:
             _info, state, info_error = self.gateway.openwebui_key_info(
@@ -640,11 +642,13 @@ class EnsureOpenWebuiKeyUseCase:
                     None,
                     info_error or "Open WebUI 用 API key の確認に失敗しました",
                 )
+
         key, err = self.generate_openwebui_key.execute(username)
         if err:
             return (None, err)
         write_err = self.key_store.write(username, key or "")
         if write_err:
+            # 保存できなかったキーを有効なまま残さず、次の起動で再確認できるようにする。
             try:
                 self.client.request("/key/block", {"key": key})
             except RuntimeError:

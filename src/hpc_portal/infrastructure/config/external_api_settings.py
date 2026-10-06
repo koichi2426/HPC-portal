@@ -1,4 +1,4 @@
-"""Single-node, opt-in publication settings; no user executable settings."""
+"""単一ホストでの外部API公開設定。有効化時だけ専用設定を検証する。"""
 
 import json
 import os

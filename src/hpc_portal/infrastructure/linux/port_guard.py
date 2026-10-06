@@ -1,4 +1,4 @@
-"""Owner-only loopback protection in a dedicated nftables table."""
+"""専用nftablesテーブルで、APIへの接続をloopbackのrootと所有者に制限する。"""
 
 import asyncio
 import hashlib
@@ -77,7 +77,7 @@ class NftablesPortGuard:
             ["nft", "-j", "list", "table", "inet", TABLE], missing_ok=True
         )
         if raw is None:
-            # Distinguish absent table from permission/runtime failures.
+            # テーブル未作成と、権限不足などでnft自体を実行できない状態を区別する。
             await command(["nft", "-j", "list", "tables"])
             return None
         data = json.loads(raw)
@@ -91,7 +91,7 @@ class NftablesPortGuard:
         script, fingerprint = ruleset(self.entries(), existing is not None)
         if existing and existing.get("comment") == MARKER + fingerprint:
             return
-        # One nft transaction replaces only this table, without an unprotected interval.
+        # 保護が途切れないよう、専用テーブルだけを1回のトランザクションで置き換える。
         await command(["nft", "-f", "-"], stdin=script.encode())
 
     async def protect(self, target):
@@ -121,8 +121,8 @@ class NftablesPortGuard:
                 try:
                     await asyncio.to_thread(self.inventory.validate, target)
                 except ValueError:
-                    # A selected worker can exit while sibling workers still listen.
-                    # Keep the port protected, without ever relinking the publication.
+                    # 登録プロセス終了後も、同じユーザーの待受が残る間はポートを保護する。
+                    # 公開先をそのworkerへ自動で付け替えることはしない。
                     listeners = await asyncio.to_thread(
                         self.inventory.listeners, target["uid"]
                     )

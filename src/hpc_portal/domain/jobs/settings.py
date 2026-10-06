@@ -4,14 +4,7 @@ from dataclasses import dataclass
 
 
 def runtime_from_hours_choice(hours_value: str) -> tuple[str, str]:
-    """起動フォームの hours 値から (runtime, #SBATCH 行) を生成する
-
-    Args:
-        hours_value: フォームで選択された実行時間。
-
-    Returns:
-        Slurm形式の実行時間と、対応する``#SBATCH --time``行の組。
-    """
+    """フォームの時間指定を、Slurmの実行時間と対応する#SBATCH行へ変換する。"""
     raw = str(hours_value or "").strip().lower()
     if raw in ("unlimited", "infinite", "none", "0"):
         return "UNLIMITED", "#SBATCH --time=UNLIMITED"

@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         RefreshApiPublicationUseCase,
     )
 
-
 log = logging.getLogger("jupyterhub.external-api")
 
 
@@ -49,6 +48,7 @@ class SynchronizeUserApisUseCase:
         self.refresh_publication = refresh_publication
 
     async def execute(self):
+        """重複実行を避け、削除ユーザーの失効・未完了の発行・公開状態を順に同期する。"""
         if self.sync_lock.locked():
             return
         async with self.sync_lock:
@@ -61,6 +61,7 @@ class SynchronizeUserApisUseCase:
                         await self.disable_user.execute(name)
                     except Exception:
                         log.warning("External API revocation pending for %s", name)
+
             for row in rows:
                 try:
                     await self.issue_credentials.execute(
@@ -68,6 +69,7 @@ class SynchronizeUserApisUseCase:
                     )
                 except Exception:
                     log.warning("External API issuance pending for %s", row["username"])
+
             for key in self.store.names("publications"):
                 try:
                     await self.refresh_publication.execute(
@@ -75,4 +77,5 @@ class SynchronizeUserApisUseCase:
                     )
                 except Exception:
                     log.warning("External API publication recovery pending for %s", key)
+
             await self.port_guard.reconcile()

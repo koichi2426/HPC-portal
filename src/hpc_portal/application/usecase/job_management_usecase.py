@@ -148,6 +148,7 @@ class PrepareOpenwebuiLaunchUseCase:
         self.ensure_openwebui_key = ensure_openwebui_key
 
     async def execute(self, username, another_active):
+        """同時起動制限を確認し、Open WebUIへ渡す専用キーを準備する。"""
         ExecutionRequest.require_openwebui_slot(username, another_active)
         key, error = await asyncio.to_thread(
             self.ensure_openwebui_key.execute, username

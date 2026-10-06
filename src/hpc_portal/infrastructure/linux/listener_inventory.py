@@ -1,4 +1,4 @@
-"""Read-only host socket inventory. No shell commands or user-supplied proc paths."""
+"""ホスト上の待受プロセスと空きポート候補を調べ、公開先の所有者を照合する。"""
 
 import hashlib
 import os
@@ -10,6 +10,7 @@ import psutil
 
 
 def candidate_id(row):
+    """PIDやポートが再利用されても、別の待受プロセスを同じ候補として扱わない。"""
     identity = [row[k] for k in ("uid", "pid", "started_at", "inode", "netns", "port")]
     return hashlib.sha256(repr(identity).encode()).hexdigest()
 
@@ -24,7 +25,7 @@ def process_snapshot(pid, proc_root=Path("/proc")):
         cwd = proc.cwd()
     except psutil.AccessDenied:
         cwd = ""
-    # Never read cmdline/environment: both can contain application secrets.
+    # コマンド引数や環境変数には秘密値が含まれるため、候補の表示情報に使わない。
     return {
         "pid": pid,
         "uid": uid,
@@ -40,7 +41,7 @@ class LinuxListenerInventory:
         self.config = config
 
     def sockets(self):
-        # Failure is propagated: incomplete inventory must not imply free ports.
+        # 取得失敗を空きポートと誤認しないよう、一覧取得の失敗は呼び出し元へ伝える。
         return psutil.net_connections(kind="tcp")
 
     def listeners(self, uid):
@@ -116,6 +117,7 @@ class LinuxListenerInventory:
         return row
 
     def validate(self, target):
+        """登録時のプロセスとソケットが、現在も同じ所有者で待ち受けているか確認する。"""
         try:
             before = process_snapshot(target["pid"])
             if any(
@@ -144,6 +146,7 @@ class LinuxListenerInventory:
             raise ValueError("接続先が終了または変更されています") from None
 
     def ports(self, uid):
+        """使用中・予約済みポートを除き、bind可能な候補を返す。予約は行わない。"""
         rows = self.listeners(uid)
         used = {c.laddr.port for c in self.sockets() if c.laddr}
         try:

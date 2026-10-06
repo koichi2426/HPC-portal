@@ -1,4 +1,4 @@
-"""API-only gateway: dedicated Hub token plus validated Cloudflare service identity."""
+"""本人専用のHubトークンとCloudflare認証を照合し、登録済みAPIへ転送する。"""
 
 import asyncio
 from urllib.parse import quote
@@ -53,7 +53,7 @@ class ApiGateway(APIHandler):
                 target += "?" + self.request.query
             if self._semaphore is None:
                 type(self)._semaphore = asyncio.Semaphore(usecase.config.concurrency)
-            # Bound queued work as well as running work.
+            # 同時転送数を制限し、枠を待つ時間は2秒までにする。
             try:
                 await asyncio.wait_for(self._semaphore.acquire(), 2)
             except TimeoutError:
@@ -94,6 +94,7 @@ class ApiGateway(APIHandler):
             raise
         except (OSError, aiohttp.ClientError, TimeoutError, ValueError):
             if started:
+                # 本文を返し始めた後はHTTPステータスを変更できないため、接続を閉じる。
                 self.request.connection.close()
                 return
             raise web.HTTPError(502) from None

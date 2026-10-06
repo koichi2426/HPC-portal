@@ -1,4 +1,4 @@
-"""Root-private durable encrypted records; ciphertext is bound to record identity."""
+"""所有者以外が読めないSQLiteへ、レコードの識別情報と秘密値を暗号化して保存する。"""
 
 import json
 import os
@@ -22,6 +22,7 @@ class EncryptedRecordStore:
         key_path = directory / "key"
         db_path = directory / "state.sqlite"
         if not key_path.exists() and db_path.exists():
+            # DBが残る場合は鍵を作り直さず、復元が必要な状態として止める。
             raise ValueError(
                 "既存 DB の暗号鍵がありません。バックアップから復元してください"
             )
@@ -71,6 +72,7 @@ class EncryptedRecordStore:
         if not row:
             return None
         payload = json.loads(self.cipher.decrypt(row[0]))
+        # 正しい暗号文でも、別ユーザー・別種類のレコードへ移された場合は拒否する。
         if payload.pop("_record") != [kind, name]:
             raise ValueError("encrypted record identity mismatch")
         return payload

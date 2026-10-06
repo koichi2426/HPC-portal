@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 
 def public_candidate(row, home):
+    """内部のプロセス識別情報を除き、候補名とホーム基準の作業パスを返す。"""
     cwd = row["workdir"]
     if cwd == home or cwd.startswith(home.rstrip("/") + "/"):
         cwd = "~" + cwd[len(home) :]

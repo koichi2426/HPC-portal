@@ -1,4 +1,4 @@
-"""LLMモデルの登録・同期・登録解除の操作手順。"""
+"""LLMモデルの登録・同期・削除と、ダウンロード開始・監視・中止の手順。"""
 
 from __future__ import annotations
 
@@ -13,8 +13,6 @@ from hpc_portal.domain.errors import UseCaseError
 from hpc_portal.domain.llm.model import ModelName, ModelPullProgress
 
 HPC_LITELLM_LOG = logging.getLogger("jupyterhub.hpc-litellm")
-
-
 _HPC_LITELLM_OLLAMA_SOURCE = "hpc-portal-ollama"
 
 
@@ -153,6 +151,7 @@ class RegisterLlmModelUseCase:
                 except RuntimeError as exc:
                     return (None, self.gateway.safe_litellm_error(exc))
                 created = True
+
             verified_response, err = self.gateway.model_info()
             if err:
                 return (None, f"登録後の確認に失敗しました: {err}")
@@ -310,6 +309,7 @@ class RegisterInstalledModelUseCase:
         self.register_model = register_model
 
     async def execute(self, request):
+        """Ollamaでの存在を確認し、モデルをLiteLLMへ登録する。"""
         model = request.model
         exists, err = await asyncio.to_thread(self.backend.has_model, model)
         if err or not exists:
@@ -329,6 +329,7 @@ class SynchronizeInstalledModelsUseCase:
         self.synchronize_models = synchronize_models
 
     async def execute(self, request):
+        """Ollamaの保存済みモデルをLiteLLMへ同期する。"""
         result, err = await asyncio.to_thread(self.synchronize_models.execute)
         if err:
             raise UseCaseError(err)
@@ -348,6 +349,7 @@ class DeleteInstalledModelUseCase:
         self.register_model = register_model
 
     async def execute(self, request):
+        """LiteLLMの登録とOllamaのモデルを削除し、失敗時は登録を戻す。"""
         model = request.model
         tags, err = await asyncio.to_thread(self.backend.command, "tags")
         if err:
@@ -364,6 +366,7 @@ class DeleteInstalledModelUseCase:
         if exists:
             _data, err = await asyncio.to_thread(self.backend.command, "delete", model)
             if err:
+                # 本体の削除に失敗した場合、残ったモデルを再びLLM APIから使えるようにする。
                 await asyncio.to_thread(self.register_model.execute, model)
                 raise UseCaseError(err)
         litellm_err = await asyncio.to_thread(self.unregister_model.execute, model)
@@ -383,6 +386,7 @@ class PullLlmModelUseCase:
         self.start_registration_watcher = start_registration_watcher
 
     async def execute(self, request):
+        """ダウンロードを開始し、完了後のLiteLLM登録を監視する。"""
         model = request.model
         data, err = await asyncio.to_thread(self.backend.command, "pull", model)
         if err:
@@ -400,6 +404,7 @@ class CancelLlmModelPullUseCase:
         self.backend = backend
 
     async def execute(self, request):
+        """対象モデルのダウンロードを中止する。"""
         model = request.model
         data, err = await asyncio.to_thread(self.backend.command, "pull-cancel", model)
         if err:
@@ -418,6 +423,7 @@ class GetLlmModelPullStatusUseCase:
         self.register_model = register_model
 
     async def execute(self, request):
+        """進捗を取得し、完了済みモデルはLiteLLMへの登録も確認する。"""
         model = request.model
         data, err = await asyncio.to_thread(self.backend.pull_progress, model or None)
         if not err and data and (data.get("state") == "completed"):

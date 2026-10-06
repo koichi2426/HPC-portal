@@ -36,6 +36,7 @@ class AuthorizeApiInvocationUseCase:
         self.port_guard = port_guard
 
     async def execute(self, user, token, username, name, headers, body_size):
+        """本人の両トークン・Access JWT・公開状態を確認し、転送可能な登録を返す。"""
         if not token or not token.user or (not user) or (user.name != username):
             raise UseCaseError("APIへのアクセスが許可されていません", "forbidden")
         try:
@@ -53,6 +54,7 @@ class AuthorizeApiInvocationUseCase:
             or expected_scope not in token.scopes
         ):
             raise UseCaseError("APIへのアクセスが許可されていません", "forbidden")
+
         # 再発行前の認証情報で作られたAccess JWTも利用できないようにする。
         for header, key in (
             ("CF-Access-Client-ID", "client_id"),
@@ -62,6 +64,7 @@ class AuthorizeApiInvocationUseCase:
                 headers.get(header, "").encode(), record[key].encode()
             ):
                 raise UseCaseError("APIへのアクセスが許可されていません", "forbidden")
+
         try:
             app = self.queries.get_publication(user, name)
             publication = self.publication_repository.load_publication(username, name)
@@ -69,6 +72,7 @@ class AuthorizeApiInvocationUseCase:
             raise UseCaseError("APIの登録が見つかりません", "missing") from None
         if not publication or not publication.available:
             raise UseCaseError("APIは公開されていません", "unavailable")
+
         try:
             await self.access_verifier.verify(
                 headers.get("Cf-Access-Jwt-Assertion", ""), app, record
@@ -77,6 +81,7 @@ class AuthorizeApiInvocationUseCase:
             raise UseCaseError(
                 "APIへのアクセスが許可されていません", "forbidden"
             ) from None
+
         if body_size > self.config.body_limit:
             raise UseCaseError("リクエスト本文が大きすぎます", "too_large")
         await self.port_guard.check(app["target"])

@@ -1,4 +1,4 @@
-"""秘密値を引数に載せずOSコマンドを実行する。"""
+"""OSコマンド実行を共通化し、パスワード等を標準入力で渡せるようにする。"""
 
 from hpc_portal.infrastructure.linux.user_account_gateway import run_cmd
 
