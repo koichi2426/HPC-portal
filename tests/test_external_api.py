@@ -176,7 +176,7 @@ async def test_api_page_exposes_only_state_and_public_url(credentials, monkeypat
 
     page = SimpleNamespace(
         current_user=user,
-        services=lambda: service,
+        api_usecases=lambda: service,
         render_template=render,
         finish=lambda body: None,
     )

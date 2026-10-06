@@ -7,13 +7,17 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader
 from jupyterhub.app import JupyterHub
+from tornado import web
+from tornado.httputil import HTTPServerRequest
 from traitlets.config import Config
 
 from hpc_portal.bootstrap import container
 from hpc_portal.entrypoints import jupyterhub as entrypoint
 from hpc_portal.infrastructure.jupyterhub.slurm_spawner import HPCSlurmSpawner
+from hpc_portal.presentation.handlers import external_api
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -114,8 +118,21 @@ for module in pkgutil.iter_modules(package.__path__, package.__name__ + '.'):
     assert result.returncode == 0, result.stderr
 
 
-def test_frontend_templates_inherit_hub_templates_and_render_api_page():
-    """AnsibleでそのままコピーするHTMLをHubのJinja環境で描画できる。"""
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_frontend_templates_inherit_hub_templates_and_render_api_page(
+    enabled, monkeypatch
+):
+    """有効・無効のどちらでも、HubのHandler経由でAPI画面を描画できる。"""
+    monkeypatch.setenv("HPC_EXTERNAL_API_ENABLED", str(enabled).lower())
+    monkeypatch.setattr(
+        external_api,
+        "get_external_api",
+        lambda: SimpleNamespace(
+            queries=SimpleNamespace(
+                credential_record=lambda user: {"enabled": True, "state": "ready"}
+            )
+        ),
+    )
     templates = REPOSITORY_ROOT / "frontend/templates"
     base_path = JupyterHub()._template_paths_default()[0]
     environment = Environment(
@@ -126,24 +143,55 @@ def test_frontend_templates_inherit_hub_templates_and_render_api_page():
             ]
         ),
         autoescape=True,
+        enable_async=True,
     )
     for path in templates.glob("*.html"):
         environment.get_template(path.name)
 
-    rendered = environment.get_template("api_publications.html").render(
-        credential_state="利用可能",
-        configured=True,
-        api_available=True,
-        public_url_prefix="https://portal.example.com/hub/user-api/alice/",
+    application = web.Application(
+        hub=SimpleNamespace(base_url="/hub/"),
         base_url="/hub/",
-        static_url=lambda path, **kwargs: "/hub/static/" + path,
-        hpc_static_versions={
-            "js/core.js": "1",
-            "js/external-api.js": "1",
-            "js/api-publications.js": "1",
+        authenticator=SimpleNamespace(login_service="Test"),
+        login_url="/hub/login",
+        logout_url="/hub/logout",
+        jinja2_env=environment,
+        template_vars={
+            "hpc_static_versions": {
+                "portal_css": "1",
+                "js/core.js": "1",
+                "js/external-api.js": "1",
+                "js/api-publications.js": "1",
+            },
+            "hpc_external_api_enabled": enabled,
         },
-        hpc_external_api_enabled=True,
     )
+    request = HTTPServerRequest(
+        method="GET",
+        uri="/hub/api-publications",
+        connection=SimpleNamespace(set_close_callback=lambda callback: None),
+    )
+    handler = external_api.ApiPublicationsPage(application, request)
+    handler._jupyterhub_user = SimpleNamespace(
+        name="alice",
+        json_escaped_name="alice",
+        spawner=SimpleNamespace(options_form=""),
+    )
+    handler.parsed_scopes, handler.expanded_scopes = {}, set()
+    monkeypatch.setattr(
+        external_api.ApiPublicationsPage, "xsrf_token", property(lambda self: b"test")
+    )
+    monkeypatch.setattr(
+        handler, "static_url", lambda path, **kwargs: "/hub/static/" + path
+    )
+    responses = []
+    monkeypatch.setattr(handler, "finish", responses.append)
+
+    # テンプレートの共通変数も本番のBaseHandlerで生成し、属性名の衝突を検知する。
+    await handler.get()
+    rendered = responses[0]
 
     assert rendered.strip()
     assert "{% extends" not in rendered
+    assert handler.services == {}
+    assert ('href="/hub/api-publications"' in rendered) is enabled
+    assert ("API機能は未設定です。" in rendered) is not enabled

@@ -10,9 +10,20 @@
     group: root
     mode: "0755"
 
-- name: Apptainer PPA signing key を配置
-  ansible.builtin.get_url:
+# キーサーバーはHEADを拒否するため、チェックモードでもGETで読み取りだけ行う。
+- name: Apptainer PPA signing key をGETで取得
+  ansible.builtin.uri:
     url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6B0F5193D4F3301EF491FF0AFE36534FC6218AE"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: apptainer_ppa_key_response
+  check_mode: false
+  changed_when: false
+
+- name: Apptainer PPA signing key を配置
+  ansible.builtin.copy:
+    content: "{{ apptainer_ppa_key_response.content }}"
     dest: /etc/apt/keyrings/apptainer-ppa.asc
     owner: root
     group: root

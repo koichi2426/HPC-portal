@@ -47,7 +47,7 @@ class BrowserHandler(BaseHandler):
             {"error": "操作できません。入力・接続先の状態・管理設定を確認してください"}
         )
 
-    def services(self):
+    def api_usecases(self):
         """外部APIの共有操作を取得し、無効・設定不備をHTTPエラーへ変換する。
 
         Returns:
@@ -78,7 +78,7 @@ class ExternalApiCredentials(BrowserHandler):
         """本人の接続情報を表示・ダウンロード・サービス別に再発行する。"""
         try:
             op = Operation.model_validate_json(self.request.body)
-            usecase = self.services()
+            usecase = self.api_usecases()
             if op.action in {"reveal", "download"}:
                 record = usecase.queries.credential_record(self.current_user)
             elif op.action in {"rotate_cloudflare", "rotate_jupyterhub"}:
@@ -124,7 +124,9 @@ class ApiPublicationsPage(BrowserHandler):
         available, state = False, "未設定"
         if config.enabled:
             try:
-                record = self.services().queries.credential_record(self.current_user)
+                record = self.api_usecases().queries.credential_record(
+                    self.current_user
+                )
                 state_key = record.get("state", "issuing")
                 available = bool(record.get("enabled")) and state_key == "ready"
                 state = {
@@ -158,7 +160,7 @@ class ApiPorts(BrowserHandler):
     @web.authenticated
     async def get(self):
         """本人の待受候補と空きポートを取得し、画面向けの情報をJSONで返す。"""
-        usecase = self.services()
+        usecase = self.api_usecases()
         try:
             data = await usecase.list_ports.execute(self.current_user)
         except (OSError, ValueError):
@@ -172,7 +174,7 @@ class ApiPublications(BrowserHandler):
     @web.authenticated
     async def get(self):
         """外部設定を変更せず、現在のAPI公開登録をJSONで返す。"""
-        usecase = self.services()
+        usecase = self.api_usecases()
         # ページ更新で外部設定を書き換えないよう、再同期は定期処理に任せる。
         rows = usecase.queries.list_publications(self.current_user)
         self.finish(
@@ -190,7 +192,7 @@ class ApiPublications(BrowserHandler):
     async def post(self):
         """JSON入力を検証し、API登録・再公開・公開停止・削除を実行する。"""
         try:
-            usecase = self.services()
+            usecase = self.api_usecases()
             data = json.loads(self.request.body)
             if not isinstance(data, dict):
                 raise ValueError("JSON オブジェクトが必要です")
