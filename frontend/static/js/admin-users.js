@@ -5,6 +5,33 @@
   var portal = window.HpcPortal;
   var sortKey = "username";
   var sortDirection = "asc";
+  function apiCredentialStateLabel(state) {
+    return {
+      issuing: "準備中",
+      rotating_cloudflare: "更新中",
+      rotating_jupyterhub: "更新中",
+      revoking: "停止処理中",
+      unknown: "設定エラー"
+    }[state] || "";
+  }
+  function appendExternalApiCell(row, user) {
+    var cell = document.createElement("td");
+    cell.className = "hpc-external-api-cell";
+    var enabled = user.external_api_enabled;
+    var state = user.external_api_state || "unknown";
+    var status = document.createElement("span");
+    status.className = "hpc-api-status-badge is-" + (enabled == null ? "unknown" : enabled ? "enabled" : "disabled");
+    status.textContent = enabled == null ? "確認不可" : enabled ? "有効" : "無効";
+    cell.appendChild(status);
+    var label = apiCredentialStateLabel(state);
+    if (label) {
+      var note = document.createElement("span");
+      note.className = "hpc-api-state-note hpc-muted";
+      note.textContent = label;
+      cell.appendChild(note);
+    }
+    row.appendChild(cell);
+  }
   function apiUrl() { return portal.apiUrl("/hub/admin/users/api"); }
   function apiHeaders() { return portal.apiHeaders(); }
   function showMsg(el, text, ok) {
@@ -290,9 +317,19 @@
       btn.onclick = async function () {
         var name = btn.dataset.username, action = btn.dataset.action;
         closeUserActionMenus();
-        if (!confirm(name + " の外部 API 利用状態を変更しますか？停止時はトークンを失効させます。")) return;
+        var enabling = action === "external_api_enable";
+        var actionLabel = enabling ? "有効化" : "無効化";
+        var confirmText = enabling
+          ? name + " の自作API公開を有効化しますか？新しい認証情報を発行します。"
+          : name + " の自作API公開を無効化しますか？\n公開を停止し、トークンを失効させます。アプリやSlurmジョブは停止しません。";
+        if (!confirm(confirmText)) return;
         btn.disabled = true;
-        try { await postAction({action: action, username: name}); await reloadUsers(); }
+        try {
+          await postAction({action: action, username: name});
+          showMsg(document.getElementById("list-msg"), name + " の自作API公開を" + actionLabel + "しました", true);
+          try { await reloadUsers(); }
+          catch (error) { showWarn(document.getElementById("list-msg"), "自作API公開は" + actionLabel + "しましたが、一覧を再読み込みできませんでした: " + error.message); }
+        }
         catch (error) { showMsg(document.getElementById("list-msg"), error.message, false); }
         finally { btn.disabled = false; }
       };
@@ -407,6 +444,10 @@
           apiStatusCell.appendChild(apiStatus);
           tr.appendChild(apiStatusCell);
 
+          if (tbody.closest("table").dataset.externalApiEnabled === "true") {
+            appendExternalApiCell(tr, u);
+          }
+
           var operationCell = document.createElement("td");
           operationCell.className = "hpc-user-actions-cell";
           var actionTrigger = document.createElement("button");
@@ -438,10 +479,6 @@
           var displayAction = appendActionItem("表示名を変更", "hpc-display-name-btn", "", "", false, "");
           displayAction.setAttribute("data-display-name", u.display_name || "");
           if (!u.protected) {
-            if (u.external_api_state) {
-              var externalEnabled = u.external_api_state !== "disabled";
-              appendActionItem("外部 API: " + u.external_api_state + (externalEnabled ? "／利用停止" : "／有効化"), "hpc-external-access-btn", externalEnabled ? "external_api_disable" : "external_api_enable", "", false, "");
-            }
             appendActionItem("パスワード再発行", "hpc-pw-btn", "", "", false, "");
             if (apiAccess === "enabled") {
               appendActionItem("LLM API無効化", "hpc-api-access-btn", "api_disable", "enabled", false, "");
@@ -449,6 +486,11 @@
               appendActionItem("LLM API有効化", "hpc-api-access-btn", "api_enable", "disabled", false, "");
             } else if (apiAccess === "unissued") {
               appendActionItem("LLM API有効化", "hpc-api-access-btn", "api_enable", "unissued", false, "");
+            }
+            if (tbody.closest("table").dataset.externalApiEnabled === "true" && u.external_api_enabled != null) {
+              var externalEnabled = u.external_api_enabled;
+              var externalPending = ["rotating_cloudflare", "rotating_jupyterhub", "revoking"].indexOf(u.external_api_state) >= 0;
+              appendActionItem("自作API公開" + (externalEnabled ? "無効化" : "有効化"), "hpc-external-access-btn", externalEnabled ? "external_api_disable" : "external_api_enable", "", externalPending, externalPending ? "処理中です" : "");
             }
           }
           var sudoDivider = document.createElement("div");

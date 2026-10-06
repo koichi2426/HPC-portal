@@ -36,7 +36,7 @@ class PreviewHandler(web.RequestHandler):
 
     def require_external_api(self):
         if not self.state.accounts[self.current_user.name]["external_api_enabled"]:
-            raise web.HTTPError(403, reason="外部 API は利用停止中です")
+            raise web.HTTPError(403, reason="自作API公開は利用停止中です")
 
     def json_body(self):
         try:

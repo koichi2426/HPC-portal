@@ -2,7 +2,47 @@
 
 from types import SimpleNamespace
 
+import pytest
+
+from hpc_portal.application.usecase.account_management_usecase import (
+    ListAccountsUseCase,
+)
 from hpc_portal.infrastructure.linux import user_account_gateway as users
+
+
+@pytest.mark.parametrize(
+    "record, expected_enabled, expected_state",
+    [
+        ({"enabled": True, "state": "ready"}, True, "ready"),
+        ({"enabled": False, "state": "revoking"}, False, "revoking"),
+        (
+            {"enabled": True, "state": "rotating_cloudflare"},
+            True,
+            "rotating_cloudflare",
+        ),
+        (None, True, "issuing"),
+    ],
+)
+async def test_account_list_separates_api_permission_from_credential_state(
+    record, expected_enabled, expected_state
+):
+    """発行・更新・失効の途中でも、利用許可を発行状態と分けて一覧へ返す。"""
+    usecase = ListAccountsUseCase(
+        accounts=SimpleNamespace(
+            linux_users_snapshot=lambda: [{"username": "alice", "home": "/home/alice"}],
+            home_storage_usage=lambda home: (0, None),
+        ),
+        llm_client=SimpleNamespace(enabled=lambda: False),
+        get_llm_access_state=None,
+        external_api_factory=lambda: SimpleNamespace(
+            store=SimpleNamespace(get=lambda category, username: record)
+        ),
+    )
+
+    row = (await usecase.execute())[0]
+
+    assert row["external_api_enabled"] is expected_enabled
+    assert row["external_api_state"] == expected_state
 
 
 def test_create_user_uses_argv_and_rolls_back_when_password_setting_fails(monkeypatch):

@@ -229,10 +229,21 @@ create_application()
             ).code
             == 200
         )
+        assert self.state.accounts["alice"]["external_api_enabled"] is False
+        page = self.fetch("/hub/admin/users", headers=self.headers("admin"))
+        assert "<th>自作API公開</th>" in page.body.decode()
+        assert "外部 API:" not in page.body.decode()
         assert (
             self.post_json("/hub/external-api/credentials", {"action": "reveal"}).code
             == 403
         )
+        assert (
+            self.post_json(
+                path, {"action": "external_api_enable", "username": "alice"}, "admin"
+            ).code
+            == 200
+        )
+        assert self.state.accounts["alice"]["external_api_enabled"] is True
         assert self.post_json(path, {"action": "ollama_stop"}, "admin").code == 200
         assert not self.state.ollama["running"]
         assert (

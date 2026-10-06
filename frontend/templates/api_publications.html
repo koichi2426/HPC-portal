@@ -3,7 +3,7 @@
 {% block main %}
 <div class="hpc-page hpc-api-page" data-api-page data-api-available="{{ 'true' if api_available else 'false' }}" data-public-url-prefix="{{ public_url_prefix }}">
   <div class="hpc-page-header">
-    <h2 class="hpc-page-title">API公開</h2>
+    <h2 class="hpc-page-title">自作API公開</h2>
   </div>
 
   {% if configured %}
@@ -126,7 +126,7 @@
     </form>
   </dialog>
   {% else %}
-  <p class="hpc-empty">API機能は未設定です。</p>
+  <p class="hpc-empty">自作API公開は未設定です。</p>
   {% endif %}
 </div>
 {% endblock %}

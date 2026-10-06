@@ -378,7 +378,7 @@ class SetAccountApiAccessUseCase:
                 await self.enable_external_api.execute(username)
         except Exception:
             raise UseCaseError(
-                "外部 API の変更を完了できません。再試行してください", "unavailable"
+                "自作API公開の変更を完了できません。再試行してください", "unavailable"
             )
         return {"ok": True}
 
@@ -564,8 +564,13 @@ class ListAccountsUseCase:
                     updated["external_api_state"] = (record or {}).get(
                         "state", "issuing"
                     )
+                    # 利用許可と発行状態を分け、更新中のトークンも無効と誤表示しない。
+                    updated["external_api_enabled"] = (record or {}).get(
+                        "enabled", True
+                    )
             except Exception:
                 updated["external_api_state"] = "unknown"
+                updated["external_api_enabled"] = None
             return updated
 
         return list(await asyncio.gather(*(enrich(row) for row in rows)))

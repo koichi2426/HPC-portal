@@ -194,4 +194,36 @@ async def test_frontend_templates_inherit_hub_templates_and_render_api_page(
     assert "{% extends" not in rendered
     assert handler.services == {}
     assert ('href="/hub/api-publications"' in rendered) is enabled
-    assert ("API機能は未設定です。" in rendered) is not enabled
+    assert ("自作API公開は未設定です。" in rendered) is not enabled
+
+    users = [
+        dict(
+            username=name,
+            uid=1001 + index,
+            home=f"/home/{name}",
+            display_name="",
+            protected=name == "admin",
+            sudo_enabled=name == "admin",
+            api_access="disabled" if name == "bob" else "enabled",
+            api_access_message="",
+            storage_used_bytes=0,
+            storage_used_label="0 B",
+            storage_message="",
+            external_api_enabled=name != "bob",
+            external_api_state="disabled" if name == "bob" else "ready",
+        )
+        for index, name in enumerate(["alice", "bob", "admin"])
+    ]
+    admin_page = await handler.render_template(
+        "admin_users.html", users=users, grant_sudo_default=False
+    )
+
+    assert ("<th>自作API公開</th>" in admin_page) is enabled
+    assert ('data-action="external_api_enable"' in admin_page) is enabled
+    assert ('data-action="external_api_disable"' in admin_page) is enabled
+    assert "LLM API有効化" in admin_page
+    assert "LLM API無効化" in admin_page
+    assert ("自作API公開有効化" in admin_page) is enabled
+    assert ("自作API公開無効化" in admin_page) is enabled
+    assert 'role="switch"' not in admin_page
+    assert "外部 API:" not in admin_page

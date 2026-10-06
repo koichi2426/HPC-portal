@@ -41,6 +41,13 @@
   background: var(--hpc-surface-subtle);
 }
 
+.hpc-api-state-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .hpc-sudo-status-badge {
   display: inline-flex;
   min-width: 52px;

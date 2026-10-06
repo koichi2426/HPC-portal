@@ -59,7 +59,7 @@ class BrowserHandler(BaseHandler):
         try:
             usecase = get_external_api()
             if usecase is None:
-                raise ValueError("外部 API 公開は管理者が有効化していません")
+                raise ValueError("自作API公開は管理者が有効化していません")
             return usecase
         except ValueError as exc:
             raise web.HTTPError(503, str(exc)) from None
