@@ -8,13 +8,26 @@ from pathlib import Path
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader
 from jupyterhub.app import JupyterHub
-from tornado import ioloop, web
+from tornado import autoreload, ioloop, web
 
 from dev.preview.handlers import ControlsHandler, MockApiHandler, PageHandler
 from dev.preview.mock_data import MockState
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_ROOT = REPOSITORY_ROOT / "frontend"
+
+
+def watch_source_tree():
+    """未読込のsrcモジュールやファイルの追加・削除も、サーバー再起動の対象にする。"""
+    source_root = REPOSITORY_ROOT / "src"
+    autoreload.watch(str(source_root))
+
+    # ディレクトリも監視し、既存ファイルの更新だけでなく追加・削除を検知する。
+    for path in source_root.rglob("*"):
+        if "__pycache__" in path.parts:
+            continue
+        if path.is_dir() or path.suffix == ".py":
+            autoreload.watch(str(path))
 
 
 def portal_css():
@@ -153,6 +166,7 @@ def main():
         parser.error("ポートは1〜65535で指定してください")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     logging.getLogger("tornado.access").setLevel(logging.WARNING)
+    watch_source_tree()
     application = create_application(autoreload=True)
     try:
         server = application.listen(args.port, address="127.0.0.1")

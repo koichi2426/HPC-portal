@@ -122,6 +122,15 @@
   display: block;
 }
 
+/* API操作は狭い画面で折り返し、ボタン同士の間隔を保つ。 */
+.hpc-api-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
 .gx10-admin-btn,
 .gx10-key-btn,
 .gx10-primary-btn,

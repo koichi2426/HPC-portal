@@ -88,6 +88,8 @@
         card.appendChild(el("p", "ポート：" + row.port + " ／ " + row.state + " ／ 起動：" + date(row.started_at)));
         var button = el("button", selected === row.candidate ? "選択中" : "このアプリを選択");
         button.type = "button";
+        button.className = "gx10-admin-btn " + (selected === row.candidate ? "gx10-admin-btn-primary" : "gx10-admin-btn-muted");
+        button.setAttribute("aria-pressed", String(selected === row.candidate));
         button.addEventListener("click", function () {
           selected = row.candidate;
           var form = root.querySelector("[data-publication-form]");
@@ -137,9 +139,12 @@
         card.appendChild(el("p", (app.workdir || "作業フォルダ不明") + " ／ ポート：" + app.port + " ／ 起動：" + date(app.started_at)));
         var url = el("input"); url.className = "form-control"; url.readOnly = true; url.value = app.url; url.setAttribute("aria-label", "公開 URL");
         card.appendChild(url);
+        var actions = el("div"); actions.className = "hpc-api-actions";
         var copyButton = el("button", "URL をコピー"); copyButton.type = "button";
-        copyButton.addEventListener("click", function () { copy(app.url); }); card.appendChild(copyButton);
+        copyButton.className = "gx10-admin-btn gx10-admin-btn-muted";
+        copyButton.addEventListener("click", function () { copy(app.url); }); actions.appendChild(copyButton);
         var edit = el("button", "接続先を変更"); edit.type = "button";
+        edit.className = "gx10-admin-btn gx10-admin-btn-muted";
         edit.addEventListener("click", function () {
           var form = root.querySelector("[data-publication-form]");
           form.elements.name.value = app.name; form.elements.display_name.value = app.display_name;
@@ -147,11 +152,15 @@
           selected = ""; root.querySelector("[data-selected-candidate]").textContent = "新しい接続先を選択してください";
           renderCandidates(); form.scrollIntoView({behavior: "smooth"}); form.elements.name.focus();
         });
-        card.appendChild(edit);
+        actions.appendChild(edit);
         [["publish", "公開・再試行"], ["unpublish", "公開停止"], ["delete", "登録削除"]].forEach(function (item) {
           var button = el("button", item[1]); button.type = "button";
-          button.addEventListener("click", function () { operate(app.name, item[0]); }); card.appendChild(button);
+          // 公開・停止・削除を、既存の管理画面と同じ色で区別する。
+          var variant = item[0] === "publish" ? "primary" : item[0] === "delete" ? "danger" : "warn";
+          button.className = "gx10-admin-btn gx10-admin-btn-" + variant;
+          button.addEventListener("click", function () { operate(app.name, item[0]); }); actions.appendChild(button);
         });
+        card.appendChild(actions);
         list.appendChild(card);
       });
     }
