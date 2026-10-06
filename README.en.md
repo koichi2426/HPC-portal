@@ -210,6 +210,7 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make deploy-restart` | Stop all jobs and restart related services, with `restart` confirmation |
 | `make ping` | Connectivity check |
 | `make check` | Dry run (`--check --diff`) |
+| `make dev` | Start the UI preview with mock data at http://localhost:8001, without connecting to the target host |
 | `make test` | Run pytest locally without connecting to the target host |
 | `make smoke` | Run read-only checks against services, APIs, and deployed assets |
 | `make nfs-mounts` | Apply only the read-only NAS/NFS configuration |

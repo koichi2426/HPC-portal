@@ -210,6 +210,7 @@ Open WebUIはLiteLLMのOpenAI互換`/v1/chat/completions`を利用し、LiteLLM�
 | `make deploy-restart` | 全ジョブ停止・関連サービス再起動を伴う全体反映（`restart`確認あり） |
 | `make ping` | 接続確認 |
 | `make check` | ドライラン（`--check --diff`） |
+| `make dev` | モックデータで画面確認サーバーを起動（http://localhost:8001、実機接続なし） |
 | `make test` | ローカルでpytestを実行（実機接続なし） |
 | `make smoke` | 実機の主要サービス・API・配置物を読み取り専用で確認 |
 | `make nfs-mounts` | NASの読み取り専用NFS設定だけを反映 |
