@@ -360,38 +360,147 @@ def verify_linux_password(
 
 class LinuxUserAccountGateway:
     def getpwnam(self, username):
+        """Linuxユーザー名からアカウント情報を取得する。
+
+        Args:
+            username: 対象のLinuxユーザー名。
+
+        Returns:
+            UID・ホームなどを持つLinuxアカウント情報。
+
+        Raises:
+            KeyError: Linuxユーザーが存在しない場合。
+        """
         return pwd.getpwnam(username)
 
     def linux_users_snapshot(self, *args, **kwargs):
+        """ポータル管理対象のLinuxユーザー一覧を取得する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            ユーザー名、表示名、UID、ホーム、シェル、保護状態、sudo状態を含む辞書の一覧。
+        """
         return linux_users_snapshot(*args, **kwargs)
 
     def user_has_sudo(self, *args, **kwargs):
+        """ユーザーが設定されたsudoグループに所属するか判定する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            プライマリまたは補助グループとしてsudoグループに所属すればTrue。
+        """
         return user_has_sudo(*args, **kwargs)
 
     def home_storage_usage(self, *args, **kwargs):
+        """ホームディレクトリが実際に使用しているストレージ量を取得する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            ``(使用バイト数, エラー)``。集計は同一ファイルシステム内に限定する。
+        """
         return home_storage_usage(*args, **kwargs)
 
     def ensure_user_home(self, *args, **kwargs):
+        """ユーザーのホームディレクトリを0700で準備する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            正常ならNone、失敗時はエラーメッセージ。
+        """
         return ensure_user_home(*args, **kwargs)
 
     def create_linux_user(self, *args, **kwargs):
+        """Linuxユーザーを作成して初期パスワードを設定する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            正常ならNone、失敗時はエラーメッセージ。
+        """
         return create_linux_user(*args, **kwargs)
 
     def set_linux_sudo(self, *args, **kwargs):
+        """Linuxユーザーのsudoグループ所属を変更する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            正常ならNone、失敗時はエラーメッセージ。
+        """
         return set_linux_sudo(*args, **kwargs)
 
     def set_linux_display_name(self, *args, **kwargs):
+        """Linux GECOS欄の表示名を設定または削除する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            正常ならNone、失敗時はエラーメッセージ。
+        """
         return set_linux_display_name(*args, **kwargs)
 
     def delete_linux_user(self, *args, **kwargs):
+        """ユーザーのジョブとプロセスを停止してLinuxユーザーを削除する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            正常ならNone、失敗時はエラーメッセージ。
+        """
         return delete_linux_user(*args, **kwargs)
 
     def set_linux_password(self, *args, **kwargs):
+        """Linuxユーザーのパスワードを再設定する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            正常ならNone、失敗時はエラーメッセージ。
+        """
         return set_linux_password(*args, **kwargs)
 
     def verify_linux_password(self, *args, **kwargs):
+        """PAMでログイン中ユーザーの現在のパスワードを確認する。
+
+        Args:
+            args: 委譲先の同名関数へ渡す位置引数。
+            kwargs: 委譲先の同名関数へ渡すキーワード引数。
+
+        Returns:
+            認証成功ならTrueとNone、失敗時はFalseとエラーの組。
+        """
         return verify_linux_password(*args, **kwargs)
 
 
 def validate_username(username):
+    """環境設定の保護対象も含めて、Linuxユーザー名を検証する。
+
+    Args:
+        username: 対象のLinuxユーザー名。
+
+    Returns:
+        不正なら理由、問題がなければNone。
+    """
     return validate_username_policy(username, HPC_PORTAL_PROTECTED_USERS)

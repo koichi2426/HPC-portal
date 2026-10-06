@@ -5,6 +5,11 @@ from hpc_portal.domain.resources.snapshot import memory_display_label
 
 class ExecutionPolicy:
     def __init__(self, settings):
+        """ジョブの実行条件を判断する設定を保持する。
+
+        Args:
+            settings: アプリの起動条件・リソース上限・実行時間・公開先の設定。
+        """
         self.settings = settings
 
     def app_resource_recommendations(self) -> dict[str, dict[str, str]]:
@@ -85,6 +90,7 @@ class ExecutionPolicy:
         Args:
             nprocs: 要求vCPU数。
             memory: 要求メモリ（Slurm表記）。
+            free: Slurmが返す割当可能リソース。取得できない場合はNone。
 
         Returns:
             起動できない理由。起動できる場合、またはSlurmへ問い合わせられない場合は空文字列。

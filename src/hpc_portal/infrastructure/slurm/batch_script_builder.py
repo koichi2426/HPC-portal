@@ -30,6 +30,11 @@ OPENWEBUI_DEFAULT_MODEL_PARAMS_JSON = (
 
 
 def build_batch_script():
+    """設定値とBatchSpawnerの置換項目を含む、Apptainer起動スクリプトを作る。
+
+    Returns:
+        SlurmのSBATCH指定とアプリ起動処理を含むシェルスクリプト。
+    """
     return f"""#!/bin/bash
 #SBATCH --job-name={js} job_name {je}
 #SBATCH --partition={js} partition {je}

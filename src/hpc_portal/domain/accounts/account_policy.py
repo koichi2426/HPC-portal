@@ -21,6 +21,7 @@ def validate_username(username: str, protected_users=()) -> str | None:
 
     Args:
         username: 検証対象のユーザー名。
+        protected_users: 作成・変更の制限対象となるユーザー名の集合。
 
     Returns:
         正常ならNone、不正なら利用者向けエラーメッセージ。
@@ -34,7 +35,14 @@ def validate_username(username: str, protected_users=()) -> str | None:
 
 
 def validate_password(password: str) -> str | None:
-    """パスワードの長さと禁止文字を検証し、不正なら理由を返す。"""
+    """パスワードの長さと禁止文字を検証し、不正なら理由を返す。
+
+    Args:
+        password: 設定または本人確認に使うパスワード。
+
+    Returns:
+        不正なら利用者向けの理由、問題がなければNone。
+    """
     if not password or len(password) < 8:
         return "パスワードは8文字以上にしてください"
     if any(char in password for char in (":", "\n", "\r")):
@@ -62,7 +70,11 @@ def validate_display_name(display_name: str) -> str | None:
 
 
 def generate_password() -> str:
-    """英大文字・英小文字・数字を各1文字以上含む初期パスワードを生成する。"""
+    """英大文字・英小文字・数字を各1文字以上含む初期パスワードを生成する。
+
+    Returns:
+        英大文字・英小文字・数字を含む12文字のランダムパスワード。
+    """
     while True:
         password = "".join(
             secrets.choice(_HPC_RANDOM_PASSWORD_ALPHABET)

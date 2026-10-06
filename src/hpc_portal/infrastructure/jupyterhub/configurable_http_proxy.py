@@ -345,7 +345,6 @@ async def proxy_delete_user(self, user, server_name="", client=None):
     """停止したserverのCHP主ルートと公開aliasを削除する。
 
     Args:
-        self: JupyterHub Proxyインスタンス。
         user: 対象のJupyterHubユーザー。
         server_name: named server名。
         client: 互換性維持用の未使用引数。
@@ -372,4 +371,5 @@ async def proxy_delete_user(self, user, server_name="", client=None):
 
 
 def install_proxy_hooks():
+    """ジョブ停止時のルート削除処理を、ポータルの実装へ差し替える。"""
     Proxy.delete_user = proxy_delete_user

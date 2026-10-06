@@ -6,6 +6,12 @@ from hpc_portal.domain.resources.snapshot import resource_status
 
 class ResourceQueryUseCase:
     def __init__(self, inventory: ResourceInventory, gpu_count: int):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            inventory: OS・Slurm・GPUのリソース情報を取得する接続先。
+            gpu_count: Slurm情報を取得できない場合に使うGPU数。
+        """
         self.inventory = inventory
         self.gpu_count = gpu_count
 

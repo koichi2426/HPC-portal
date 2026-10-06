@@ -103,9 +103,31 @@ def render_options_form(
     static_versions,
     settings: JobFormSettings,
 ):
-    """取得済みの表示データから本番・プレビュー共通の起動フォームを描画する。"""
+    """取得済みの表示データから本番・プレビュー共通の起動フォームを描画する。
+
+    Args:
+        spawner: 対象アプリを管理するJupyterHub Spawner。
+        resource: 取得済みのCPU・メモリ・ストレージ・GPU状態。
+        portal_admin: 閲覧者がポータル管理者か。
+        shared: 共有Ollamaの表示情報。
+        recommendations: アプリごとの推奨リソースと案内文。
+        shared_ollama_gpu_label: 共有OllamaのGPU割当を示す文言。
+        static_versions: 静的ファイル名とキャッシュ更新用バージョンの対応。
+        settings: フォームに表示するバージョン・選択肢・公開先の設定。
+
+    Returns:
+        本番とプレビューで共通の起動フォームHTML。
+    """
 
     def job_host(job_id):
+        """ジョブIDと描画設定から、ジョブ用ホスト名を組み立てる。
+
+        Args:
+            job_id: 対象のSlurmジョブID。
+
+        Returns:
+            ジョブ公開用のホスト名。
+        """
         return f"job{job_id}.{settings.job_dns_domain}"
 
     cpu_available = resource["cpu_available"]

@@ -2,7 +2,14 @@
 
 
 def format_storage_bytes(value: int) -> str:
-    """バイト数を、単位付きの短いストレージ使用量へ整える。"""
+    """バイト数を、単位付きの短いストレージ使用量へ整える。
+
+    Args:
+        value: 表示するストレージ使用量。単位はバイト。
+
+    Returns:
+        B・KB・MBなどの単位付き使用量。
+    """
     size = float(max(value, 0))
     units = ("B", "KB", "MB", "GB", "TB", "PB")
     for unit in units:
@@ -15,7 +22,14 @@ def format_storage_bytes(value: int) -> str:
 
 
 def resource_status(available_pct):
-    """0〜100の空き率を、画面表示用の混雑度へ変換する。"""
+    """0〜100の空き率を、画面表示用の混雑度へ変換する。
+
+    Args:
+        available_pct: リソースの空き率。範囲は0〜100。
+
+    Returns:
+        余裕あり・やや混雑・逼迫のいずれか。
+    """
     if available_pct >= 50:
         return "余裕あり"
     if available_pct >= 25:
@@ -24,7 +38,14 @@ def resource_status(available_pct):
 
 
 def memory_display_label(memory: str) -> str:
-    """Slurmの32G・32GB表記を、画面用の32 GB表記へ整える。"""
+    """Slurmの32G・32GB表記を、画面用の32 GB表記へ整える。
+
+    Args:
+        memory: 表示するメモリ量。数値またはG・GB表記を使う。
+
+    Returns:
+        GB単位の表示文字列。
+    """
     normalized = str(memory).strip().upper()
     if normalized.endswith("GB"):
         normalized = normalized[:-2]

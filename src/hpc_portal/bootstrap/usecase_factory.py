@@ -131,7 +131,19 @@ def build_llm_usecases(
     ollama_base_url: str,
     accounts: UserAccountGateway,
 ) -> LlmUseCases:
-    """LLMキー管理とモデル登録の操作を、共有するgatewayへ接続する。"""
+    """LLMキー管理とモデル登録の操作を、共有するgatewayへ接続する。
+
+    Args:
+        client: LiteLLM管理APIへ接続するクライアント。
+        gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        key_store: Open WebUI専用キーを読み書きする保存先。
+        model_inventory: 保存済みモデルの存在や機能を確認する接続先。
+        ollama_base_url: LiteLLMから接続するOllamaのベースURL。
+        accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+
+    Returns:
+        キー管理とLLMモデル管理の操作。
+    """
     generate_key = IssueLlmKeyUseCase(client=client, gateway=gateway)
     user_external_api_state = GetLlmAccessStateUseCase(gateway=gateway)
     delete_portal_external_keys = DeleteManagedLlmKeysUseCase(
@@ -218,7 +230,27 @@ def build_api_usecases(
     users_snapshot: Callable[[], list[dict]],
     relay: HttpRelay,
 ) -> ExternalApiUseCases:
-    """認証情報・公開先・同期の操作を組み立て、ロックを共有させる。"""
+    """認証情報・公開先・同期の操作を組み立て、ロックを共有させる。
+
+    Args:
+        queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+        credential_repository: 認証情報の所有者と状態を読み書きする保存先。
+        cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
+        store: 認証情報・公開設定・ポート保護のレコード保存先。
+        hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
+        publication_repository: API公開設定の所有者と状態を読み書きする保存先。
+        port_guard: 公開先ポートへの直接接続を制限・確認する接続先。
+        health: 公開先APIの保護状態とHTTP応答を確認する処理。
+        config: 接続先・認証・公開条件などの設定。
+        listeners: 待受候補の取得とプロセスの同一性確認を行う接続先。
+        accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+        access_verifier: Cloudflare Access JWTの署名と所有者を検証する接続先。
+        users_snapshot: 現在のLinuxユーザー一覧を返す関数。
+        relay: プロセスの同一性を確認してHTTPを転送する接続先。
+
+    Returns:
+        個人別認証情報・API公開・同期の操作。
+    """
     sync_lock = asyncio.Lock()
     rotate_credentials = RotateApiCredentialsUseCase(
         queries=queries,
@@ -369,7 +401,22 @@ def build_accounts_usecases(
     issue_llm_key: IssueLlmKeyUseCase,
     revoke_llm_access: RevokeLlmAccessUseCase,
 ) -> AccountUseCases:
-    """アカウント操作と、関連するAPI権限・ジョブ停止の操作を接続する。"""
+    """アカウント操作と、関連するAPI権限・ジョブ停止の操作を接続する。
+
+    Args:
+        settings: 保護対象ユーザー・初期sudo権限・LLM公開URLの設定。
+        accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+        set_llm_access: LLM APIとOpen WebUIの利用権限を切り替える操作。
+        stop_openwebui_jobs: 対象ユーザーのOpen WebUIジョブを停止する操作。
+        llm_client: LiteLLM管理APIへ接続するクライアント。
+        get_llm_access_state: 対象ユーザーのLLM利用状態を取得する操作。
+        external_api_factory: 外部APIの共有usecaseを返す関数。機能無効時はNoneを返す。
+        issue_llm_key: 外部からLLMを呼び出すキーを発行する操作。
+        revoke_llm_access: 対象ユーザーのLLMキーを無効化する操作。
+
+    Returns:
+        ユーザー管理と関連するアクセス権の操作。
+    """
     display_name = ChangeAccountDisplayNameUseCase(settings=settings, accounts=accounts)
     password_regenerate = ResetAccountPasswordUseCase(
         settings=settings, accounts=accounts
@@ -446,7 +493,20 @@ def build_jobs_usecases(
     commands: CommandRunner,
     ensure_openwebui_key: EnsureOpenWebuiKeyUseCase,
 ) -> JobUseCases:
-    """実行条件の検証、Open WebUIキーの準備、ジョブ停止を組み立てる。"""
+    """実行条件の検証、Open WebUIキーの準備、ジョブ停止を組み立てる。
+
+    Args:
+        policy: ジョブの入力条件とリソース割当を検証するルール。
+        resources: OS・Slurm・GPUのリソース情報を取得する接続先。
+        settings: アプリの起動条件・リソース上限・実行時間・公開先の設定。
+        user_jobs: 利用者のHub管理ジョブを取得・停止する接続先。
+        gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        commands: OSコマンドを実行する接続先。
+        ensure_openwebui_key: 有効なOpen WebUI専用キーを取得・発行する操作。
+
+    Returns:
+        ジョブ準備と停止の操作。
+    """
     options_from_form = PrepareJobUseCase(
         policy=policy, resources=resources, settings=settings
     )
@@ -471,7 +531,18 @@ def build_ollama_usecases(
     unregister_model: UnregisterLlmModelUseCase,
     gateway: LlmManagementGateway,
 ) -> InferenceUseCases:
-    """共有推論の操作を組み立て、モデルごとの監視タスクを共有する。"""
+    """共有推論の操作を組み立て、モデルごとの監視タスクを共有する。
+
+    Args:
+        backend: 共有Ollamaの実行・モデル管理を行う接続先。
+        register_model: OllamaモデルをLiteLLMへ登録する操作。
+        synchronize_models: 保存済みOllamaモデルをLiteLLMへ一括登録する操作。
+        unregister_model: Ollamaモデルに対応するLiteLLM登録を削除する操作。
+        gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+
+    Returns:
+        共有Ollamaとモデルダウンロード監視の操作。
+    """
     registration_tasks: dict[str, asyncio.Task[None]] = {}
     ollama_register_model = RegisterInstalledModelUseCase(
         backend=backend, register_model=register_model

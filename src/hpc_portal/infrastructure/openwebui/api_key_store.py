@@ -8,6 +8,12 @@ from hpc_portal.domain.accounts.account_policy import validate_username
 
 class OpenWebuiKeyStore:
     def __init__(self, directory: str, protected_users=()):
+        """専用キーの保存先と、操作を制限するユーザーを保持する。
+
+        Args:
+            directory: ユーザー別のOpen WebUI専用キーを保存するディレクトリ。
+            protected_users: 専用キーの読み書きを許可しない保護対象ユーザー。
+        """
         self.directory = directory
         self.protected_users = frozenset(protected_users)
 

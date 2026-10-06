@@ -44,7 +44,11 @@ from hpc_portal.presentation.handlers.spawn import (
 
 
 def register_handlers(config) -> None:
-    """標準Handlerの差し替えとポータル固有ルートの追加を一度だけ行う。"""
+    """標準Handlerの差し替えとポータル固有ルートの追加を一度だけ行う。
+
+    Args:
+        config: ハンドラーと静的ファイルを登録するJupyterHubのtraitlets設定。
+    """
 
     for handlers in (
         _jh_pages_handlers.default_handlers,

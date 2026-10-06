@@ -33,6 +33,17 @@ class IssueApiCredentialsUseCase:
         config: ApiConfiguration,
         revoke_credential_record: RevokeCredentialRecordUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+            credential_repository: 認証情報の所有者と状態を読み書きする保存先。
+            hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
+            cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
+            config: 外部APIの公開ドメイン・接続制限・保存先などの設定。
+            revoke_credential_record: 保存された両サービスのトークンを失効させる操作。
+        """
         self.queries = queries
         self.store = store
         self.credential_repository = credential_repository
@@ -42,8 +53,16 @@ class IssueApiCredentialsUseCase:
         self.revoke_credential_record = revoke_credential_record
 
     async def execute(self, user):
-        """所有者を照合し、途中で止まった発行を再開して両サービスのトークンを揃える。"""
+        """所有者を照合し、途中で止まった発行を再開して両サービスのトークンを揃える。
+
+        Args:
+            user: 操作対象のJupyterHubユーザー。
+
+        Returns:
+            発行済みまたは利用停止中の認証情報レコード。
+        """
         async with self.queries.credential_lock(user.name):
+            # 同名アカウントが作り直された場合は、以前の所有者の秘密値を引き継がない。
             identity = self.queries.credential_identity(user)
             record = self.store.get("credentials", user.name)
             if record and any((record.get(k) != v for k, v in identity.items())):
@@ -61,6 +80,7 @@ class IssueApiCredentialsUseCase:
             ).available and self.hub_tokens.valid(record, user):
                 return record
             self.store.put("credentials", user.name, record)
+
             if not record.get("cf_token_id"):
                 token = await self.cloudflare.issue(
                     f"HPC {self.config.public_host} {user.name} {identity['uid']} {identity['hub_user_id']}"
@@ -76,6 +96,7 @@ class IssueApiCredentialsUseCase:
                 record.update(client_secret=token["client_secret"])
                 record["state"] = "issuing"
                 self.store.put("credentials", user.name, record)
+
             if not self.hub_tokens.valid(record, user) or record.get(
                 "hub_token_id"
             ) in record.get("revoke_pending", []):
@@ -84,6 +105,8 @@ class IssueApiCredentialsUseCase:
                 )
                 record.update(self.hub_tokens.issue(user))
                 self.store.put("credentials", user.name, record)
+
+            # 新しい秘密値を保存してから、再発行途中で残った旧トークンを失効する。
             for token_id in record.get("revoke_pending", []):
                 self.hub_tokens.revoke(token_id)
             record.pop("revoke_pending", None)
@@ -109,6 +132,15 @@ class RotateApiCredentialsUseCase:
         store: RecordStore,
         hub_tokens: HubTokens,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+            credential_repository: 認証情報の所有者と状態を読み書きする保存先。
+            cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+            hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
+        """
         self.queries = queries
         self.credential_repository = credential_repository
         self.cloudflare = cloudflare
@@ -116,9 +148,21 @@ class RotateApiCredentialsUseCase:
         self.hub_tokens = hub_tokens
 
     async def execute(self, user, kind):
-        """選ばれたサービスのトークンだけを再発行し、古い接続情報を無効にする。"""
+        """選ばれたサービスのトークンだけを再発行し、古い接続情報を無効にする。
+
+        Args:
+            user: 操作対象のJupyterHubユーザー。
+            kind: 再発行するサービス。cloudflareまたはjupyterhub。
+
+        Returns:
+            選択したトークンを更新した認証情報レコード。
+
+        Raises:
+            ValueError: 再発行対象が不正、または認証情報が利用できない場合。
+        """
         if kind not in {"cloudflare", "jupyterhub"}:
             raise ValueError("再発行対象が不正です")
+
         async with self.queries.credential_lock(user.name):
             record = self.queries.credential_record(user)
             credentials = self.credential_repository.load_credentials(user.name)
@@ -126,6 +170,7 @@ class RotateApiCredentialsUseCase:
             record["state"] = credentials.state.value
             # 再発行中は旧トークンによる呼び出しも拒否する。
             self.credential_repository.save_credentials(credentials)
+
             if kind == "cloudflare":
                 token = await self.cloudflare.rotate(record["cf_token_id"])
                 record["client_secret"] = token["client_secret"]
@@ -158,23 +203,40 @@ class RevokeCredentialRecordUseCase:
         cloudflare: CloudflareAccess,
         store: RecordStore,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            credential_repository: 認証情報の所有者と状態を読み書きする保存先。
+            hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
+            cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+        """
         self.credential_repository = credential_repository
         self.hub_tokens = hub_tokens
         self.cloudflare = cloudflare
         self.store = store
 
     async def execute(self, username, record):
-        """ローカルで利用を拒否し、HubとCloudflareのトークンを失効させる。"""
+        """ローカルで利用を拒否し、HubとCloudflareのトークンを失効させる。
+
+        Args:
+            username: 対象のLinuxユーザー名。
+            record: 対象の認証情報またはAPI公開設定の保存レコード。
+        """
         credentials = self.credential_repository.load_credentials(username)
         credentials.begin_revocation()
         record.update(enabled=credentials.enabled, state=credentials.state.value)
+        # 外部サービスの失効に失敗しても、ポータルでの利用は先に停止する。
         self.credential_repository.save_credentials(credentials)
+
         self.hub_tokens.revoke(record.get("hub_token_id"))
         self.hub_tokens.revoke_orphans(username)
         for token_id in record.get("revoke_pending", []):
             self.hub_tokens.revoke(token_id)
         if record.get("cf_token_id"):
             await self.cloudflare.remove(record["cf_token_id"])
+
+        # 両サービスの失効を確認したら、保存済みの秘密値を破棄する。
         credentials.complete_revocation()
         record = {
             "uid": credentials.owner.uid,
@@ -193,12 +255,23 @@ class RevokeApiCredentialsUseCase:
         store: RecordStore,
         revoke_credential_record: RevokeCredentialRecordUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+            revoke_credential_record: 保存された両サービスのトークンを失効させる操作。
+        """
         self.queries = queries
         self.store = store
         self.revoke_credential_record = revoke_credential_record
 
     async def execute(self, username):
-        """ユーザー単位で排他し、保存済みの認証情報を失効させる。"""
+        """ユーザー単位で排他し、保存済みの認証情報を失効させる。
+
+        Args:
+            username: 対象のLinuxユーザー名。
+        """
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
             if record:
@@ -214,13 +287,31 @@ class EnableApiCredentialsUseCase:
         credential_repository: ApiCredentialRepository,
         issue_credentials: IssueApiCredentialsUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+            credential_repository: 認証情報の所有者と状態を読み書きする保存先。
+            issue_credentials: 両サービスのトークンを揃える操作。
+        """
         self.queries = queries
         self.store = store
         self.credential_repository = credential_repository
         self.issue_credentials = issue_credentials
 
     async def execute(self, user):
-        """失効処理の完了を確認し、古い登録を消して認証情報を新規発行する。"""
+        """失効処理の完了を確認し、古い登録を消して認証情報を新規発行する。
+
+        Args:
+            user: 操作対象のJupyterHubユーザー。
+
+        Returns:
+            新しく発行した認証情報レコード。
+
+        Raises:
+            ValueError: 認証情報の失効が完了していない場合。
+        """
         async with self.queries.credential_lock(user.name):
             record = self.store.get("credentials", user.name)
             if record:
@@ -228,6 +319,7 @@ class EnableApiCredentialsUseCase:
                     user.name
                 ).require_reenableable()
             self.store.delete("credentials", user.name)
+
         # 発行処理も同じロックを取得するため、ここで解放してから呼び出す。
         return await self.issue_credentials.execute(user)
 
@@ -243,6 +335,16 @@ class DisableUserApisUseCase:
         revoke_credentials: RevokeApiCredentialsUseCase,
         unpublish_all: UnpublishUserApisUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+            credential_repository: 認証情報の所有者と状態を読み書きする保存先。
+            hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
+            revoke_credentials: ユーザー単位で認証情報を失効させる操作。
+            unpublish_all: 対象ユーザーの全APIを公開停止にする操作。
+        """
         self.queries = queries
         self.store = store
         self.credential_repository = credential_repository
@@ -251,7 +353,11 @@ class DisableUserApisUseCase:
         self.unpublish_all = unpublish_all
 
     async def execute(self, username):
-        """認証を先に拒否し、全APIの公開停止とトークン失効を進める。"""
+        """認証を先に拒否し、全APIの公開停止とトークン失効を進める。
+
+        Args:
+            username: 対象のLinuxユーザー名。
+        """
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
             if record:
@@ -266,6 +372,7 @@ class DisableUserApisUseCase:
         try:
             await self.unpublish_all.execute(username)
         finally:
+            # 公開先の削除が失敗してもトークンの失効を試み、定期同期で残りを回収する。
             await self.revoke_credentials.execute(username)
 
 
@@ -277,20 +384,36 @@ class DeleteUserApiRecordsUseCase:
         store: RecordStore,
         remove_remote_publication: RemoveRemoteApiPublicationUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
+            remove_remote_publication: Cloudflareの公開先を削除する操作。
+        """
         self.queries = queries
         self.store = store
         self.remove_remote_publication = remove_remote_publication
 
     async def execute(self, username):
-        """失効完了を確認し、Cloudflareの公開先とローカル登録を削除する。"""
+        """失効完了を確認し、Cloudflareの公開先とローカル登録を削除する。
+
+        Args:
+            username: 対象のLinuxユーザー名。
+
+        Raises:
+            ValueError: 認証情報の失効が完了していない場合。
+        """
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
             if record and record.get("state") != "disabled":
                 raise ValueError("資格情報の失効が未完了です")
+
             for key in self.store.names("publications"):
                 if key.startswith(username + "/"):
                     await self.remove_remote_publication.execute(
                         self.store.get("publications", key)
                     )
                     self.store.delete("publications", key)
+
             self.store.delete("credentials", username)

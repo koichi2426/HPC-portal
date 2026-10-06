@@ -4,7 +4,14 @@ from dataclasses import dataclass
 
 
 def runtime_from_hours_choice(hours_value: str) -> tuple[str, str]:
-    """フォームの時間指定を、Slurmの実行時間と対応する#SBATCH行へ変換する。"""
+    """フォームの時間指定を、Slurmの実行時間と対応する#SBATCH行へ変換する。
+
+    Args:
+        hours_value: フォームで選択した時間数または無制限の指定。
+
+    Returns:
+        Slurm形式の実行時間と対応する#SBATCH行の組。
+    """
     raw = str(hours_value or "").strip().lower()
     if raw in ("unlimited", "infinite", "none", "0"):
         return "UNLIMITED", "#SBATCH --time=UNLIMITED"

@@ -47,6 +47,16 @@ from hpc_portal.presentation.ollama_presenter import shared_ollama_detail_contex
 
 
 def hpc_subdomain_hook(name, domain, kind):
+    """OAuth処理中のジョブホストを優先して、公開先のホスト名を返す。
+
+    Args:
+        name: Hubが渡すユーザー名またはサービス名。
+        domain: JupyterHubが渡す公開ドメイン。
+        kind: ユーザーまたはサービスの種別。
+
+    Returns:
+        ユーザーまたはサービスを公開するホスト名。
+    """
     host = _oauth_job_host_ctx.get()
     if kind == "user" and host:
         return host
@@ -56,6 +66,17 @@ def hpc_subdomain_hook(name, domain, kind):
 
 
 def options_from_form(formdata):
+    """起動フォームをusecaseへ渡し、入力エラーをHTTPエラーへ変換する。
+
+    Args:
+        formdata: JupyterHubが渡す、各項目を複数値で持つフォーム辞書。
+
+    Returns:
+        検証・正規化済みのSpawner起動オプション。
+
+    Raises:
+        web.HTTPError: 実行条件またはリソースの指定が不正な場合。
+    """
     try:
         return get_container().jobs.options_from_form.execute(formdata)
     except UseCaseError as exc:
@@ -63,7 +84,11 @@ def options_from_form(formdata):
 
 
 def configure_jupyterhub(c):
-    """共有containerを取得し、Hub設定・画面・Spawner・定期処理を接続する。"""
+    """共有containerを取得し、Hub設定・画面・Spawner・定期処理を接続する。
+
+    Args:
+        c: JupyterHubのtraitlets設定。
+    """
     nest_asyncio.apply()
     install_session_hooks()
     install_proxy_hooks()

@@ -15,6 +15,12 @@ class IssueLlmKeyUseCase:
         client: LlmClient,
         gateway: LlmManagementGateway,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        """
         self.client = client
         self.gateway = gateway
 
@@ -57,6 +63,11 @@ class GetLlmAccessStateUseCase:
         *,
         gateway: LlmManagementGateway,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        """
         self.gateway = gateway
 
     def execute(self, username: str) -> tuple[str, str | None]:
@@ -96,6 +107,12 @@ class DeleteManagedLlmKeysUseCase:
         gateway: LlmManagementGateway,
         client: LlmClient,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            client: LiteLLM管理APIへ接続するクライアント。
+        """
         self.gateway = gateway
         self.client = client
 
@@ -171,6 +188,12 @@ class SetUserLlmKeysBlockedUseCase:
         gateway: LlmManagementGateway,
         client: LlmClient,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            client: LiteLLM管理APIへ接続するクライアント。
+        """
         self.gateway = gateway
         self.client = client
 
@@ -236,6 +259,12 @@ class EnsureLlmKeyUseCase:
         gateway: LlmManagementGateway,
         generate_key: IssueLlmKeyUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            generate_key: LLM API用キーを新しく発行する操作。
+        """
         self.gateway = gateway
         self.generate_key = generate_key
 
@@ -274,6 +303,16 @@ class SetLlmAccessUseCase:
         set_openwebui_key_blocked: SetOpenWebuiKeyBlockedUseCase,
         set_user_keys_blocked: SetUserLlmKeysBlockedUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            ensure_external_api_key: 有効なLLM API用キーの存在を確認・準備する操作。
+            set_openwebui_key_blocked: Open WebUI専用キーの停止状態を切り替える操作。
+            set_user_keys_blocked: 対象ユーザーのLLMキーを一括で停止・再開する操作。
+        """
         self.client = client
         self.accounts = accounts
         self.gateway = gateway
@@ -297,7 +336,9 @@ class SetLlmAccessUseCase:
             self.accounts.getpwnam(username)
         except KeyError:
             return (None, "ユーザーが見つかりません")
+
         if not enabled:
+            # 新しいキーの発行を先に止めてから、既存の両用途のキーを停止する。
             user_err = self.gateway.set_user_admin_disabled(username, True)
             if user_err:
                 self.gateway.log_litellm_action(
@@ -320,10 +361,12 @@ class SetLlmAccessUseCase:
                 return (None, joined)
             self.gateway.log_litellm_action("api_disable", username, "ok")
             return (None, None)
+
         user_err = self.gateway.ensure_user(username)
         if user_err:
             self.gateway.log_litellm_action("api_enable", username, "failed", user_err)
             return (None, user_err)
+
         external_err = self.set_user_keys_blocked.execute(
             username, blocked=False, mark_admin_disabled=False, include_openwebui=False
         )
@@ -342,6 +385,8 @@ class SetLlmAccessUseCase:
             self.set_openwebui_key_blocked.execute(username, True)
             self.gateway.log_litellm_action("api_enable", username, "failed", joined)
             return (None, joined)
+
+        # 既存キーの再開を確認した後に、ユーザー単位の停止状態を解除する。
         user_err = self.gateway.set_user_admin_disabled(username, False)
         if user_err:
             self.set_user_keys_blocked.execute(
@@ -353,6 +398,7 @@ class SetLlmAccessUseCase:
             self.set_openwebui_key_blocked.execute(username, True)
             self.gateway.log_litellm_action("api_enable", username, "failed", user_err)
             return (None, user_err)
+
         api_key, key_err = self.ensure_external_api_key.execute(username)
         if key_err:
             self.gateway.set_user_admin_disabled(username, True)
@@ -384,6 +430,15 @@ class RotateLlmKeyUseCase:
         delete_portal_external_keys: DeleteManagedLlmKeysUseCase,
         generate_key: IssueLlmKeyUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            client: LiteLLM管理APIへ接続するクライアント。
+            accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+            delete_portal_external_keys: ポータルが発行したLLM API用キーを削除する操作。
+            generate_key: LLM API用キーを新しく発行する操作。
+        """
         self.gateway = gateway
         self.client = client
         self.accounts = accounts
@@ -414,6 +469,8 @@ class RotateLlmKeyUseCase:
             )
             if issuance_error:
                 return (None, issuance_error)
+
+            # 漏えいした旧キーを残さないよう、削除が完了してから新しいキーを発行する。
             err = self.delete_portal_external_keys.execute(username)
             if err:
                 return (None, err)
@@ -437,6 +494,13 @@ class RevokeLlmAccessUseCase:
         client: LlmClient,
         set_user_keys_blocked: SetUserLlmKeysBlockedUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            key_store: Open WebUI専用キーを読み書きする保存先。
+            client: LiteLLM管理APIへ接続するクライアント。
+            set_user_keys_blocked: 対象ユーザーのLLMキーを一括で停止・再開する操作。
+        """
         self.key_store = key_store
         self.client = client
         self.set_user_keys_blocked = set_user_keys_blocked
@@ -474,6 +538,12 @@ class IssueOpenWebuiKeyUseCase:
         client: LlmClient,
         gateway: LlmManagementGateway,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        """
         self.client = client
         self.gateway = gateway
 
@@ -527,6 +597,13 @@ class SetOpenWebuiKeyBlockedUseCase:
         client: LlmClient,
         gateway: LlmManagementGateway,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            key_store: Open WebUI専用キーを読み書きする保存先。
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        """
         self.key_store = key_store
         self.client = client
         self.gateway = gateway
@@ -581,6 +658,14 @@ class EnsureOpenWebuiKeyUseCase:
         key_store: KeyStore,
         generate_openwebui_key: IssueOpenWebuiKeyUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            key_store: Open WebUI専用キーを読み書きする保存先。
+            generate_openwebui_key: Open WebUI専用キーを新しく発行する操作。
+        """
         self.client = client
         self.gateway = gateway
         self.key_store = key_store
@@ -609,6 +694,7 @@ class EnsureOpenWebuiKeyUseCase:
         if issuance_error:
             return (None, issuance_error)
 
+        # ローカルに保存されたキーでも、現在の所有者とLiteLLM上の状態を確認する。
         existing_key = self.key_store.read(username)
         if existing_key:
             _info, state, info_error = self.gateway.openwebui_key_info(
@@ -646,6 +732,7 @@ class EnsureOpenWebuiKeyUseCase:
         key, err = self.generate_openwebui_key.execute(username)
         if err:
             return (None, err)
+
         write_err = self.key_store.write(username, key or "")
         if write_err:
             # 保存できなかったキーを有効なまま残さず、次の起動で再確認できるようにする。

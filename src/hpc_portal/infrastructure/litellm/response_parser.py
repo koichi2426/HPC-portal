@@ -128,6 +128,14 @@ class LiteLlmResponseParser:
         return deployments
 
     def key(self, record):
+        """LiteLLMのキー応答を、用途と所有者を照合できるdomainモデルへ変換する。
+
+        Args:
+            record: LiteLLMから取得したキーレコード。
+
+        Returns:
+            所有者ID・alias・sourceを持つLLMキー。
+        """
         metadata = self.metadata(record.get("metadata"))
         return LlmKey(
             frozenset(

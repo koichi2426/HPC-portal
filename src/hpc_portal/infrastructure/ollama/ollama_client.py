@@ -8,6 +8,13 @@ _HPC_OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,128}$")
 
 class OllamaClient:
     def __init__(self, commands, policy, settings):
+        """Ollamaの起動・停止とモデル操作に使う依存を保持する。
+
+        Args:
+            commands: OSコマンドを実行する接続先。
+            policy: 共有Ollamaのリソース指定を検証・正規化するルール。
+            settings: 共有OllamaのCPU・メモリ・GPUの既定値と上限。
+        """
         self.commands = commands
         self.policy = policy
         self.settings = settings

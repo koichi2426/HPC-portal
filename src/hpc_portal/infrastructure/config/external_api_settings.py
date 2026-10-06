@@ -40,6 +40,14 @@ class ExternalApiSettings:
 
     @classmethod
     def from_env(cls):
+        """外部API公開に使う環境変数を、既定値付きで読み込む。
+
+        Returns:
+            外部APIの接続・保存先・ポート範囲の設定。
+
+        Raises:
+            ValueError: 整数や予約ポート一覧の環境変数を解釈できない場合。
+        """
         return cls(
             enabled=os.environ.get("HPC_EXTERNAL_API_ENABLED", "false").lower()
             == "true",
@@ -65,6 +73,11 @@ class ExternalApiSettings:
         )
 
     def validate(self):
+        """有効化された外部APIの管理設定と保存先・ポート範囲を検証する。
+
+        Raises:
+            ValueError: 機能が無効、必要な設定が不足、または設定形式が不正な場合。
+        """
         if not self.enabled:
             raise ValueError("外部 API 公開は管理者が有効化していません")
         if not re.fullmatch(r"[0-9a-f]{32}", self.account_id) or not self.api_token:

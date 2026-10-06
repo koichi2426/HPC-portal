@@ -3,6 +3,11 @@
 
 class OllamaResourcePolicy:
     def __init__(self, settings):
+        """共有OllamaのCPU・メモリ・GPUを判断する設定を保持する。
+
+        Args:
+            settings: 共有OllamaのCPU・メモリ・GPUの既定値と上限。
+        """
         self.settings = settings
 
     def normalize_ollama_choice(

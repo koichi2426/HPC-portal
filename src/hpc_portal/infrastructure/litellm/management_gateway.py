@@ -13,6 +13,15 @@ HPC_LITELLM_LOG = logging.getLogger("jupyterhub.hpc-litellm")
 
 class LiteLlmManagementGateway(LiteLlmResponseParser):
     def __init__(self, client, ollama, key_store, accounts, ollama_base_url: str):
+        """LLM管理の依存と、ユーザー・モデル単位の共有ロックを準備する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            ollama: 共有Ollamaの実行状態とモデル情報を取得する接続先。
+            key_store: Open WebUI専用キーを読み書きする保存先。
+            accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+            ollama_base_url: LiteLLMから接続するOllamaのベースURL。
+        """
         self.client = client
         self.ollama = ollama
         self.key_store = key_store
@@ -130,6 +139,15 @@ class LiteLlmManagementGateway(LiteLlmResponseParser):
         )
 
     def key_belongs_to_user(self, record: dict, username: str) -> bool:
+        """LLMキーが対象ユーザーの所有物か確認する。
+
+        Args:
+            record: LiteLLMから取得したキーレコード。
+            username: 対象のLinuxユーザー名。
+
+        Returns:
+            所有者情報が一致する場合はTrue。
+        """
         return self.key(record).belongs_to(username)
 
     def list_user_keys(self, username: str) -> tuple[list[dict], str | None]:
@@ -167,6 +185,15 @@ class LiteLlmManagementGateway(LiteLlmResponseParser):
         return ([], errors[-1] if errors and (not succeeded) else None)
 
     def is_portal_external_key(self, record: dict, username: str) -> bool:
+        """LLMキーのaliasが対象ユーザーの外部利用用か確認する。
+
+        Args:
+            record: LiteLLMから取得したキーレコード。
+            username: 対象のLinuxユーザー名。
+
+        Returns:
+            aliasがユーザー名と一致する場合はTrue。
+        """
         return self.key(record).is_external_key_for(username)
 
     def external_api_key_lock(self, username: str):

@@ -64,10 +64,19 @@ class PortalContainer:
     external_api: ExternalApiUseCases | None = None
 
     def get_external_api(self) -> ExternalApiUseCases | None:
-        """外部APIが有効な場合だけ、設定を検証して一度組み立てる。"""
+        """外部APIが有効な場合だけ共有する操作を取得する。
+
+        Returns:
+            外部APIの共有usecase。機能無効時はNone。
+
+        Raises:
+            ValueError: 外部APIの専用設定や保存先の条件が不正な場合。
+        """
         config = ExternalApiSettings.from_env()
         if not config.enabled:
             return None
+
+        # 設定を使う段階で保存先を準備し、以後は同じクライアントとロックを共有する。
         if self.external_api is None:
             config.validate()
             store = EncryptedRecordStore(config.state_dir)
@@ -85,6 +94,7 @@ class PortalContainer:
                 api_relay,
                 accounts.linux_users_snapshot,
             )
+
         return self.external_api
 
 
@@ -92,7 +102,11 @@ _container: PortalContainer | None = None
 
 
 def build_container() -> PortalContainer:
-    """通信を開始せずに実装を生成し、機能ごとのusecaseを組み合わせる。"""
+    """通信を開始せずに実装を生成し、機能ごとのusecaseを組み合わせる。
+
+    Returns:
+        クライアント・usecase・排他制御を保持するcontainer。
+    """
     accounts = LinuxUserAccountGateway()
     commands = LinuxCommandRunner()
     inventory = LinuxResourceInventory()
@@ -106,6 +120,8 @@ def build_container() -> PortalContainer:
     llm_gateway = LiteLlmManagementGateway(
         llm_client, ollama_client, key_store, accounts, settings.HPC_OLLAMA_API_BASE
     )
+
+    # 共通クライアントを先に揃え、機能ごとのfactoryへ必要な依存を明示して渡す。
     llm = build_llm_usecases(
         client=llm_client,
         model_inventory=ollama_client,
@@ -114,6 +130,7 @@ def build_container() -> PortalContainer:
         ollama_base_url=settings.HPC_OLLAMA_API_BASE,
         gateway=llm_gateway,
     )
+
     job_settings = JobSettings(
         settings.HPC_OPENWEBUI_VERSION,
         settings.HPC_JUPYTER_UBUNTU_VERSION,
@@ -125,6 +142,7 @@ def build_container() -> PortalContainer:
         frozenset(settings.HPC_PORTAL_PROTECTED_USERS),
         settings.HPC_LITELLM_PUBLIC_BASE_URL,
     )
+
     jobs = build_jobs_usecases(
         resources=inventory,
         commands=commands,
@@ -137,6 +155,11 @@ def build_container() -> PortalContainer:
 
     def external_api_factory() -> ExternalApiUseCases | None:
         # アカウント操作時に呼ぶため、containerの組み立て完了前には実行されない。
+        """組み立てたcontainer自身の外部API操作を取得する。
+
+        Returns:
+            外部APIの共有usecase。機能無効時はNone。
+        """
         return container.get_external_api()
 
     users = build_accounts_usecases(
@@ -167,18 +190,31 @@ def build_container() -> PortalContainer:
 
 
 def get_container() -> PortalContainer:
-    """Hubの設定が複製されても、同じクライアントとロックを返す。"""
+    """Hubの設定が複製されても、同じクライアントとロックを返す。
+
+    Returns:
+        クライアント・usecase・排他制御を保持するcontainer。
+    """
     global _container
     if _container is None:
         _container = build_container()
+
     return _container
 
 
 def get_external_api() -> ExternalApiUseCases | None:
-    """外部APIを使う呼び出し元へ、共有するusecaseを提供する。"""
+    """外部APIが有効な場合だけ共有する操作を取得する。
+
+    Returns:
+        外部APIの共有usecase。機能無効時はNone。
+
+    Raises:
+        ValueError: 外部APIの専用設定や保存先の条件が不正な場合。
+    """
     config = ExternalApiSettings.from_env()
     if not config.enabled:
         return None
+
     return get_container().get_external_api()
 
 
@@ -194,10 +230,28 @@ def build_external_api_usecases(
     relay,
     users_snapshot,
 ) -> ExternalApiUseCases:
-    """保存・監視・認証の実装を、外部APIのusecaseへ接続する。"""
+    """保存・監視・認証の実装を、外部APIのusecaseへ接続する。
+
+    Args:
+        store: 認証情報・公開設定・ポート保護のレコード保存先。
+        cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
+        hub: JupyterHubの専用トークン管理を行う接続先。
+        config: 接続先・認証・公開条件などの設定。
+        inventory: 公開対象の待受プロセスが登録時と同一か確認する接続先。
+        guard: 公開先ポートの保護状態を設定・確認する接続先。
+        access: Cloudflare Access JWTを検証する接続先。
+        accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+        relay: プロセスの同一性を確認してHTTPを転送する接続先。
+        users_snapshot: 現在のLinuxユーザー一覧を返す関数。
+
+    Returns:
+        認証情報・公開先・同期の操作をまとめたオブジェクト。
+    """
     repository = ApiAggregateRepository(store)
+    # 状態更新と読み取りが同じ所有者情報を扱うよう、repositoryを共用する。
     queries = ApiRecordQueries(store, accounts, repository, repository)
     health = ApiHealthChecker(guard, inventory, relay)
+
     return build_api_usecases(
         store=store,
         cloudflare=cloudflare,

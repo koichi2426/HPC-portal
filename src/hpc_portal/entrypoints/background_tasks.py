@@ -12,6 +12,7 @@ _callback = None
 
 
 async def synchronize_external_api():
+    """外部APIを同期し、失敗時は秘密値を含まない警告を記録する。"""
     try:
         usecase = get_external_api()
         if usecase:
@@ -22,6 +23,11 @@ async def synchronize_external_api():
 
 
 def start_background_tasks(enabled):
+    """外部API有効時に、初回同期と30秒間隔の定期同期を一度だけ登録する。
+
+    Args:
+        enabled: 外部APIの定期同期を有効にする場合はTrue。
+    """
     global _callback
     if not enabled or _callback is not None:
         return
@@ -29,6 +35,7 @@ def start_background_tasks(enabled):
     _callback.start()
 
     async def initial_sync():
+        """Hubの起動を5秒待ち、外部APIの初回同期を実行する。"""
         await asyncio.sleep(5)
         await synchronize_external_api()
 

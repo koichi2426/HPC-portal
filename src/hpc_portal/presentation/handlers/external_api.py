@@ -22,19 +22,39 @@ class BrowserHandler(BaseHandler):
     """トークン認証からの設定変更を拒否し、本人のログインセッションを要求する。"""
 
     async def prepare(self):
+        """トークン認証による設定操作を拒否し、秘密値のキャッシュを防ぐ。
+
+        Raises:
+            web.HTTPError: トークン認証で設定画面へアクセスした場合。
+        """
         await super().prepare()
         if self.get_auth_token() or getattr(self, "_token_authenticated", False):
             raise web.HTTPError(403, "ブラウザのログインセッションが必要です")
+
         self.set_header("Cache-Control", "no-store")
         self.set_header("Referrer-Policy", "no-referrer")
 
     def write_error(self, status_code, **kwargs):
+        """内部のエラー内容を出さず、設定操作の失敗をJSONで返す。
+
+        Args:
+            status_code: HTTPステータスコード。
+            **kwargs: Tornadoが渡す例外情報など。内部情報を応答へ出さず、ここでは参照しない。
+        """
         self.set_header("Cache-Control", "no-store")
         self.finish(
             {"error": "操作できません。入力・接続先の状態・管理設定を確認してください"}
         )
 
     def services(self):
+        """外部APIの共有操作を取得し、無効・設定不備をHTTPエラーへ変換する。
+
+        Returns:
+            外部APIの共有usecase。
+
+        Raises:
+            web.HTTPError: 外部APIが無効、または管理設定が不正な場合。
+        """
         try:
             usecase = get_external_api()
             if usecase is None:
@@ -47,6 +67,7 @@ class BrowserHandler(BaseHandler):
 class ExternalApiPage(BrowserHandler):
     @web.authenticated
     async def get(self):
+        """本人の認証情報の状態を確認して、外部API接続情報の画面を表示する。"""
         configured, state = ExternalApiSettings.from_env().enabled, "未設定"
         if configured:
             try:
@@ -74,6 +95,7 @@ class ExternalApiPage(BrowserHandler):
 class ExternalApiCredentials(BrowserHandler):
     @web.authenticated
     async def post(self):
+        """本人の接続情報を表示・ダウンロード・サービス別に再発行する。"""
         try:
             op = Operation.model_validate_json(self.request.body)
             usecase = self.services()
@@ -117,6 +139,7 @@ class ExternalApiCredentials(BrowserHandler):
 class ApiPublicationsPage(BrowserHandler):
     @web.authenticated
     async def get(self):
+        """API公開設定の画面を表示する。"""
         self.finish(
             await self.render_template(
                 "api_publications.html",
@@ -128,6 +151,7 @@ class ApiPublicationsPage(BrowserHandler):
 class ApiPorts(BrowserHandler):
     @web.authenticated
     async def get(self):
+        """本人の待受候補と空きポートを取得し、画面向けの情報をJSONで返す。"""
         usecase = self.services()
         try:
             data = await usecase.list_ports.execute(self.current_user)
@@ -141,6 +165,7 @@ class ApiPorts(BrowserHandler):
 class ApiPublications(BrowserHandler):
     @web.authenticated
     async def get(self):
+        """外部設定を変更せず、現在のAPI公開登録をJSONで返す。"""
         usecase = self.services()
         # ページ更新で外部設定を書き換えないよう、再同期は定期処理に任せる。
         rows = usecase.queries.list_publications(self.current_user)
@@ -157,6 +182,7 @@ class ApiPublications(BrowserHandler):
 
     @web.authenticated
     async def post(self):
+        """JSON入力を検証し、API登録・再公開・公開停止・削除を実行する。"""
         try:
             usecase = self.services()
             data = json.loads(self.request.body)

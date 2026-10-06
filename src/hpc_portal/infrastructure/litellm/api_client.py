@@ -7,6 +7,12 @@ import urllib.request
 
 class LiteLlmClient:
     def __init__(self, base_url: str, master_key: str):
+        """管理APIの接続先と認証キーを保持する。
+
+        Args:
+            base_url: 接続先サービスのベースURL。
+            master_key: LiteLLM管理APIの認証キー。
+        """
         self.base_url = base_url
         self.master_key = master_key
 

@@ -26,6 +26,13 @@ class PrepareJobUseCase:
         resources: ResourceInventory,
         settings: JobSettings,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            policy: ジョブの入力条件とリソース割当を検証するルール。
+            resources: OS・Slurm・GPUのリソース情報を取得する接続先。
+            settings: アプリの起動条件・リソース上限・実行時間・公開先の設定。
+        """
         self.policy = policy
         self.resources = resources
         self.settings = settings
@@ -53,8 +60,11 @@ class PrepareJobUseCase:
         if not memory.upper().endswith("G"):
             memory = f"{memory}G"
         nprocs = str(formdata.get("cpu", [recommendation["cpu"]])[0])
+
+        # フォームの表記を揃えてから、実際の空きリソースに対して要求を検証する。
         execution = ExecutionRequest(app_choice, nprocs, memory, runtime, g > 0)
         execution.require_resources(self.policy, self.resources.slurm_free_resources())
+
         return {
             "nprocs": nprocs,
             "memory": memory,
@@ -82,6 +92,13 @@ class StopUserOpenWebuiJobsUseCase:
         gateway: LlmManagementGateway,
         commands: CommandRunner,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            user_jobs: 利用者のHub管理ジョブを取得・停止する接続先。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            commands: OSコマンドを実行する接続先。
+        """
         self.user_jobs = user_jobs
         self.gateway = gateway
         self.commands = commands
@@ -106,6 +123,7 @@ class StopUserOpenWebuiJobsUseCase:
                 await self.user_jobs.stop_server(username, server_name)
             except Exception as exc:
                 errors.append(self.gateway.safe_litellm_error(exc))
+
         # Hubに残っていないジョブも、Open WebUI専用の名前で回収する。
         queue = await asyncio.to_thread(
             self.commands.run,
@@ -127,6 +145,7 @@ class StopUserOpenWebuiJobsUseCase:
                     )
         else:
             errors.append((queue.stderr or queue.stdout or "squeue failed").strip())
+
         if errors:
             joined = "; ".join(
                 (self.gateway.safe_litellm_error(error) for error in errors)
@@ -145,14 +164,32 @@ class PrepareOpenwebuiLaunchUseCase:
         *,
         ensure_openwebui_key: EnsureOpenWebuiKeyUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            ensure_openwebui_key: 有効なOpen WebUI専用キーを取得・発行する操作。
+        """
         self.ensure_openwebui_key = ensure_openwebui_key
 
     async def execute(self, username, another_active):
-        """同時起動制限を確認し、Open WebUIへ渡す専用キーを準備する。"""
+        """同時起動制限を確認し、Open WebUIへ渡す専用キーを準備する。
+
+        Args:
+            username: 対象のLinuxユーザー名。
+            another_active: 同じユーザーのOpen WebUIが既に稼働しているか。
+
+        Returns:
+            Open WebUIの起動時に渡す専用キーの環境変数。
+
+        Raises:
+            ValueError: 同時起動制限に該当する場合、またはキーを準備できない場合。
+        """
         ExecutionRequest.require_openwebui_slot(username, another_active)
+
         key, error = await asyncio.to_thread(
             self.ensure_openwebui_key.execute, username
         )
         if error:
             raise ValueError(f"Open WebUI を起動できません: {error}")
+
         return {"OPENWEBUI_LITELLM_API_KEY": key or ""}

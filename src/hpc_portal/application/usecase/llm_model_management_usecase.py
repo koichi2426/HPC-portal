@@ -23,6 +23,12 @@ class ListLlmModelsUseCase:
         client: LlmClient,
         gateway: LlmManagementGateway,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        """
         self.client = client
         self.gateway = gateway
 
@@ -76,6 +82,14 @@ class RegisterLlmModelUseCase:
         model_inventory: ModelInventory,
         ollama_base_url: str,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            model_inventory: 保存済みモデルの存在や機能を確認する接続先。
+            ollama_base_url: LiteLLMから接続するOllamaのベースURL。
+        """
         self.client = client
         self.gateway = gateway
         self.model_inventory = model_inventory
@@ -206,6 +220,12 @@ class SynchronizeLlmModelsUseCase:
         model_inventory: ModelInventory,
         register_ollama_model: RegisterLlmModelUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            model_inventory: 保存済みモデルの存在や機能を確認する接続先。
+            register_ollama_model: OllamaモデルをLiteLLMへ登録する操作。
+        """
         self.model_inventory = model_inventory
         self.register_ollama_model = register_ollama_model
 
@@ -254,6 +274,12 @@ class UnregisterLlmModelUseCase:
         client: LlmClient,
         gateway: LlmManagementGateway,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            client: LiteLLM管理APIへ接続するクライアント。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+        """
         self.client = client
         self.gateway = gateway
 
@@ -305,15 +331,32 @@ class RegisterInstalledModelUseCase:
         backend: OllamaBackend,
         register_model: RegisterLlmModelUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            backend: 共有Ollamaの実行・モデル管理を行う接続先。
+            register_model: OllamaモデルをLiteLLMへ登録する操作。
+        """
         self.backend = backend
         self.register_model = register_model
 
     async def execute(self, request):
-        """Ollamaでの存在を確認し、モデルをLiteLLMへ登録する。"""
+        """Ollamaでの存在を確認し、モデルをLiteLLMへ登録する。
+
+        Args:
+            request: 検証済みの操作リクエスト。
+
+        Returns:
+            成功状態とLiteLLMへのモデル登録結果。
+
+        Raises:
+            UseCaseError: Ollama上のモデルを確認できない、またはLiteLLMへ登録できない場合。
+        """
         model = request.model
         exists, err = await asyncio.to_thread(self.backend.has_model, model)
         if err or not exists:
             raise UseCaseError(err or "Ollamaにモデルがありません")
+
         registration, err = await asyncio.to_thread(self.register_model.execute, model)
         if err:
             raise UseCaseError(err)
@@ -326,10 +369,25 @@ class SynchronizeInstalledModelsUseCase:
         *,
         synchronize_models: SynchronizeLlmModelsUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            synchronize_models: 保存済みOllamaモデルをLiteLLMへ一括登録する操作。
+        """
         self.synchronize_models = synchronize_models
 
     async def execute(self, request):
-        """Ollamaの保存済みモデルをLiteLLMへ同期する。"""
+        """Ollamaの保存済みモデルをLiteLLMへ同期する。
+
+        Args:
+            request: 共通の管理APIから渡される入力。この操作では参照しない。
+
+        Returns:
+            成功状態と保存済みモデルの同期結果。
+
+        Raises:
+            UseCaseError: 保存済みモデルの同期処理がエラーを返した場合。
+        """
         result, err = await asyncio.to_thread(self.synchronize_models.execute)
         if err:
             raise UseCaseError(err)
@@ -344,12 +402,29 @@ class DeleteInstalledModelUseCase:
         unregister_model: UnregisterLlmModelUseCase,
         register_model: RegisterLlmModelUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            backend: 共有Ollamaの実行・モデル管理を行う接続先。
+            unregister_model: Ollamaモデルに対応するLiteLLM登録を削除する操作。
+            register_model: OllamaモデルをLiteLLMへ登録する操作。
+        """
         self.backend = backend
         self.unregister_model = unregister_model
         self.register_model = register_model
 
     async def execute(self, request):
-        """LiteLLMの登録とOllamaのモデルを削除し、失敗時は登録を戻す。"""
+        """LiteLLMの登録とOllamaのモデルを削除し、失敗時は登録を戻す。
+
+        Args:
+            request: 検証済みの操作リクエスト。
+
+        Returns:
+            成功状態と削除対象のモデル名・deletedフラグ。
+
+        Raises:
+            UseCaseError: Ollamaからの削除、またはLiteLLMの登録削除を完了できない場合。
+        """
         model = request.model
         tags, err = await asyncio.to_thread(self.backend.command, "tags")
         if err:
@@ -360,6 +435,8 @@ class DeleteInstalledModelUseCase:
                 for item in (tags or {}).get("models", []) or []
             )
         )
+
+        # 本体を削除する前に公開登録を外し、削除途中のモデルがAPIで選ばれるのを避ける。
         litellm_err = await asyncio.to_thread(self.unregister_model.execute, model)
         if litellm_err:
             raise UseCaseError("LiteLLMモデルを削除できませんでした: " + litellm_err)
@@ -369,6 +446,7 @@ class DeleteInstalledModelUseCase:
                 # 本体の削除に失敗した場合、残ったモデルを再びLLM APIから使えるようにする。
                 await asyncio.to_thread(self.register_model.execute, model)
                 raise UseCaseError(err)
+
         litellm_err = await asyncio.to_thread(self.unregister_model.execute, model)
         if litellm_err:
             raise UseCaseError("LiteLLMモデルを削除できませんでした: " + litellm_err)
@@ -382,15 +460,33 @@ class PullLlmModelUseCase:
         backend: OllamaBackend,
         start_registration_watcher: Callable[[str], None],
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            backend: 共有Ollamaの実行・モデル管理を行う接続先。
+            start_registration_watcher: ダウンロード完了後のモデル登録を監視する関数。
+        """
         self.backend = backend
         self.start_registration_watcher = start_registration_watcher
 
     async def execute(self, request):
-        """ダウンロードを開始し、完了後のLiteLLM登録を監視する。"""
+        """ダウンロードを開始し、完了後のLiteLLM登録を監視する。
+
+        Args:
+            request: 検証済みの操作リクエスト。
+
+        Returns:
+            成功状態とダウンロード開始結果。
+
+        Raises:
+            UseCaseError: Ollamaのダウンロード開始処理がエラーを返した場合。
+        """
         model = request.model
         data, err = await asyncio.to_thread(self.backend.command, "pull", model)
         if err:
             raise UseCaseError(err)
+
+        # HTTP操作は開始結果を返し、時間のかかる完了確認は独立した監視へ渡す。
         self.start_registration_watcher(model)
         return {"ok": True, "data": data}
 
@@ -401,10 +497,25 @@ class CancelLlmModelPullUseCase:
         *,
         backend: OllamaBackend,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            backend: 共有Ollamaの実行・モデル管理を行う接続先。
+        """
         self.backend = backend
 
     async def execute(self, request):
-        """対象モデルのダウンロードを中止する。"""
+        """対象モデルのダウンロードを中止する。
+
+        Args:
+            request: 検証済みの操作リクエスト。
+
+        Returns:
+            成功状態とダウンロード中止結果。
+
+        Raises:
+            UseCaseError: Ollamaのダウンロード中止処理がエラーを返した場合。
+        """
         model = request.model
         data, err = await asyncio.to_thread(self.backend.command, "pull-cancel", model)
         if err:
@@ -419,11 +530,27 @@ class GetLlmModelPullStatusUseCase:
         backend: OllamaBackend,
         register_model: RegisterLlmModelUseCase,
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            backend: 共有Ollamaの実行・モデル管理を行う接続先。
+            register_model: OllamaモデルをLiteLLMへ登録する操作。
+        """
         self.backend = backend
         self.register_model = register_model
 
     async def execute(self, request):
-        """進捗を取得し、完了済みモデルはLiteLLMへの登録も確認する。"""
+        """進捗を取得し、完了済みモデルはLiteLLMへの登録も確認する。
+
+        Args:
+            request: 検証済みの操作リクエスト。
+
+        Returns:
+            成功状態とダウンロード進捗。完了時はLiteLLM登録の状態も含む。
+
+        Raises:
+            UseCaseError: Ollamaの進捗取得処理がエラーを返した場合。
+        """
         model = request.model
         data, err = await asyncio.to_thread(self.backend.pull_progress, model or None)
         if not err and data and (data.get("state") == "completed"):
@@ -450,6 +577,14 @@ class WatchLlmModelPullUseCase:
         register_model: RegisterLlmModelUseCase,
         registration_tasks: dict[str, asyncio.Task[None]],
     ):
+        """この操作に必要な接続先と処理の依存を保持する。
+
+        Args:
+            backend: 共有Ollamaの実行・モデル管理を行う接続先。
+            gateway: LLMの管理操作・応答解析・排他制御を提供する接続先。
+            register_model: OllamaモデルをLiteLLMへ登録する操作。
+            registration_tasks: モデル名と監視タスクを対応させる共有辞書。
+        """
         self.backend = backend
         self.gateway = gateway
         self.register_model = register_model
@@ -488,6 +623,8 @@ class WatchLlmModelPullUseCase:
                     return
                 if ModelPullProgress(state).terminal:
                     return
+
+                # 進捗が見つからない状態が続く場合は、監視を無期限に残さず終了する。
                 idle_count = idle_count + 1 if state == "idle" else 0
                 if idle_count >= 20:
                     HPC_OLLAMA_LOG.warning(

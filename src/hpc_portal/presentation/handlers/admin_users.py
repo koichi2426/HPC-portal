@@ -17,6 +17,11 @@ from hpc_portal.presentation.storage_formatter import format_storage_bytes
 
 
 async def admin_users_snapshot():
+    """ユーザー一覧を取得し、ホーム使用量を画面用の単位表記へ整える。
+
+    Returns:
+        利用状態とストレージ表示を含むユーザー一覧。
+    """
     rows = await get_container().users.snapshot.execute()
     for row in rows:
         used = row["storage_used_bytes"]
@@ -89,6 +94,7 @@ class HpcAdminUsersApiHandler(BaseHandler):
 
     @web.authenticated
     async def post(self):
+        """管理者権限とJSON入力を検証し、指定された管理操作のusecaseを実行する。"""
         self._require_admin()
         self.set_header("Cache-Control", "no-store")
         try:

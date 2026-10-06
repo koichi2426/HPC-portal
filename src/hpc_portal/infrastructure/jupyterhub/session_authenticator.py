@@ -51,7 +51,6 @@ def clear_login_cookie(self, name=None):
     """標準処理に加えて共有ドメインのCookieを削除する。
 
     Args:
-        self: JupyterHubハンドラ。
         name: 個別に削除するCookie名。
     """
     _hpc_original_clear_login_cookie(self, name=name)
@@ -188,6 +187,7 @@ _installed = False
 
 
 def install_session_hooks():
+    """ログイン・ログアウト・XSRF処理を、共有ドメイン対応の実装へ差し替える。"""
     global _installed
     if _installed:
         return

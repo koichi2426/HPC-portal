@@ -92,7 +92,14 @@ class HPCSlurmSpawner(SlurmSpawner):
 
     @property
     def portal_dependencies(self):
-        """設定の複製後も、同じサービスと排他制御を共有する。"""
+        """設定の複製後も、同じサービスと排他制御を共有する。
+
+        Returns:
+            ジョブ準備とOpen WebUI起動に使う共有usecase。
+
+        Raises:
+            RuntimeError: bootstrapによるサービス取得関数が設定されていない場合。
+        """
         if self.portal_dependencies_provider is None:
             raise RuntimeError("ポータルのサービス取得関数が未設定です")
         return self.portal_dependencies_provider()

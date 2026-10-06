@@ -4,7 +4,14 @@ import html
 
 
 def runtime_hours_label(runtime: str) -> str:
-    """Slurmの実行時間を時間単位へ短縮し、UNLIMITEDは無制限と表示する。"""
+    """Slurmの実行時間を時間単位へ短縮し、UNLIMITEDは無制限と表示する。
+
+    Args:
+        runtime: Slurm形式の実行時間。
+
+    Returns:
+        時間数または無制限を示す短い表示文字列。
+    """
     rt = str(runtime or "").strip()
     if rt.upper() in ("UNLIMITED", "INFINITE"):
         return "無制限"
@@ -18,7 +25,14 @@ def runtime_hours_label(runtime: str) -> str:
 
 
 def allocation_summary(user_options) -> dict:
-    """起動オプションから、CPU・メモリ・GPU・実行時間の表示情報を作る。"""
+    """起動オプションから、CPU・メモリ・GPU・実行時間の表示情報を作る。
+
+    Args:
+        user_options: Spawnerへ渡す検証済みの起動オプション。
+
+    Returns:
+        アプリ名・CPU・メモリ・GPU・時間の表示情報。
+    """
     uo = user_options or {}
     app_choice = str(uo.get("app_choice", "ubuntu-cli"))
     if app_choice == "open-webui":
@@ -50,7 +64,14 @@ def allocation_summary(user_options) -> dict:
 
 
 def allocation_html(user_options) -> str:
-    """割当リソースの要約を、起動フォーム・一覧向けのHTMLへ整える。"""
+    """割当リソースの要約を、起動フォーム・一覧向けのHTMLへ整える。
+
+    Args:
+        user_options: Spawnerへ渡す検証済みの起動オプション。
+
+    Returns:
+        割当内容を表示するHTML。
+    """
     a = allocation_summary(user_options)
     return (
         f'<span class="hpc-muted" style="display:block;margin-top:6px;font-size:0.75rem;'
@@ -59,7 +80,14 @@ def allocation_html(user_options) -> str:
 
 
 def stop_button_html(server_name: str) -> str:
-    """named serverの停止ボタンを作る。空の名前はデフォルトserverを表す。"""
+    """named serverの停止ボタンを作る。空の名前はデフォルトserverを表す。
+
+    Args:
+        server_name: 対象のnamed server名。空文字列はデフォルトserverを表す。
+
+    Returns:
+        server名をエスケープした停止ボタンのHTML。
+    """
     sn = html.escape(str(server_name or ""), quote=True)
     return (
         f'<button type="button" class="gx10-stop-btn" data-server-name="{sn}" '
