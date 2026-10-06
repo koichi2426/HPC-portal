@@ -151,6 +151,17 @@ create_application()
         assert response.code == 302
 
     def test_credentials_rotate_independently_and_publication_changes_persist(self):
+        # 統一画面には秘密値を埋め込まず、旧URLも同じ画面へ案内する。
+        response = self.fetch("/hub/api-publications")
+        body = response.body.decode()
+        assert response.code == 200
+        assert "data-api-credentials" in body and "data-publication-dialog" in body
+        assert self.state.credentials["alice"]["client_secret"] not in body
+        assert self.state.credentials["alice"]["jupyterhub_token"] not in body
+        legacy = self.fetch("/hub/external-api", follow_redirects=False)
+        assert legacy.code == 302
+        assert legacy.headers["Location"] == "/hub/api-publications#api-tokens"
+
         path = "/hub/external-api/credentials"
         original = json.loads(self.post_json(path, {"action": "reveal"}).body)
         rotated = json.loads(self.post_json(path, {"action": "rotate_cloudflare"}).body)

@@ -154,6 +154,45 @@ async def test_initial_sync_is_idempotent_and_does_not_publish_anything(credenti
     assert cf.issued == 1 and hub.counter == 1 and not cf.apps
 
 
+async def test_api_page_exposes_only_state_and_public_url(credentials, monkeypatch):
+    """本番の統一画面は秘密値を渡さず、表示時に外部設定を変更しない。"""
+    service, user, hub, cf = credentials
+    monkeypatch.setenv("HPC_EXTERNAL_API_ENABLED", "true")
+    monkeypatch.setenv("HPC_PUBLIC_DOMAIN", "portal.example.com")
+    rendered = {}
+
+    async def render(template, **context):
+        """画面へ渡すテンプレート名と公開情報だけを記録する。
+
+        Args:
+            template: 統一画面のテンプレート名。
+            **context: テンプレートへ渡す表示情報。
+
+        Returns:
+            検証用の画面本文。
+        """
+        rendered.update(template=template, **context)
+        return "page"
+
+    page = SimpleNamespace(
+        current_user=user,
+        services=lambda: service,
+        render_template=render,
+        finish=lambda body: None,
+    )
+    await external_api.ApiPublicationsPage.get(page)
+
+    assert rendered["template"] == "api_publications.html"
+    assert rendered["api_available"] is True
+    assert rendered["public_url_prefix"] == (
+        "https://portal.example.com/hub/user-api/alice/"
+    )
+    record = service.queries.credential_record(user)
+    assert record["client_secret"] not in json.dumps(rendered)
+    assert record["hub_token"] not in json.dumps(rendered)
+    assert cf.issued == 1 and not cf.apps and hub.counter == 1
+
+
 async def test_independent_rotation_and_old_hub_token_revocation(credentials):
     service, user, hub, cf = credentials
     old = service.queries.credential_record(user)

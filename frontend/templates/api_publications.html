@@ -1,57 +1,139 @@
 {% extends "page.html" %}
+
 {% block main %}
-<div class="hpc-page" data-api-publications>
-  <h2 class="hpc-page-title">API 公開設定</h2>
-  <p>自分で起動した HTTP アプリを選び、本人のトークンだけで利用できる URL を作成します。</p>
+<div class="hpc-page hpc-api-page" data-api-page data-api-available="{{ 'true' if api_available else 'false' }}" data-public-url-prefix="{{ public_url_prefix }}">
+  <div class="hpc-page-header">
+    <h2 class="hpc-page-title">API公開</h2>
+  </div>
+
   {% if configured %}
-  <section class="gx10-resource-card">
-    <h3>ポートを確認</h3>
-    <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-refresh-ports>候補を更新</button>
-    <p data-ports-checked></p>
-    <p>空きポート候補：<span data-free-ports>確認中…</span></p>
-    <p class="hpc-muted">空き候補は確認時点の情報です。予約ではありません。アプリを起動してから候補を更新してください。</p>
-    <details><summary>候補範囲・予約ポート</summary><p data-port-settings></p></details>
+  <section class="gx10-admin-card" id="api-tokens" data-api-credentials aria-labelledby="api-tokens-title">
+    <div class="hpc-row-between">
+      <div class="hpc-api-section-heading">
+        <h3 class="hpc-section-title" id="api-tokens-title">APIトークン</h3>
+        <span class="hpc-api-status-badge {{ 'is-enabled' if api_available else 'is-disabled' if credential_state == '利用停止中' else 'is-unissued' }}">{{ credential_state }}</span>
+      </div>
+    </div>
+    <div class="hpc-api-credentials" data-credential-fields>
+      <div class="hpc-api-credential-grid">
+        {% for key, label in [('client_id', 'Cloudflare Service Token — Client ID'), ('client_secret', 'Cloudflare Service Token — Client Secret'), ('jupyterhub_token', 'JupyterHub API Token')] %}
+        <div>
+          <label class="gx10-admin-label" for="credential-{{ key }}">{{ label }}</label>
+          <div class="hpc-api-copy-field">
+            <input id="credential-{{ key }}" class="form-control" data-credential-value="{{ key }}" type="{{ 'password' if key in ['client_secret', 'jupyterhub_token'] else 'text' }}" readonly autocomplete="off" spellcheck="false" placeholder="{{ '取得中…' if api_available else '—' }}">
+            <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-copy-credential="{{ key }}" aria-label="{{ label }}をコピー" disabled>コピー</button>
+            {% if key in ['client_secret', 'jupyterhub_token'] %}
+            <button type="button" class="gx10-admin-btn gx10-admin-btn-warn" data-credential-action="{{ 'rotate_cloudflare' if key == 'client_secret' else 'rotate_jupyterhub' }}" data-api-operation aria-label="{{ 'Cloudflare Service Token' if key == 'client_secret' else 'JupyterHub API Token' }}を再発行" {% if not api_available %}disabled{% endif %}>再発行</button>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="hpc-api-toolbar hpc-api-credential-actions">
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-credential-action="reveal" data-credential-retry hidden>再読み込み</button>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-copy-env disabled>.envをコピー</button>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-download-config data-api-operation {% if not api_available %}disabled{% endif %}>設定をダウンロード</button>
+      </div>
+    </div>
+    <p class="hpc-api-message" data-credential-message role="status" aria-live="polite" hidden></p>
   </section>
-  <section class="gx10-resource-card">
-    <h3>起動済みアプリを選択</h3>
-    <input class="form-control" type="search" data-candidate-search placeholder="名前・作業フォルダ・ポートで検索" aria-label="アプリを検索">
-    <div data-candidate-list></div>
-    <p data-candidate-empty hidden>候補がありません。アプリを 127.0.0.1 で待ち受けるように起動し、更新してください。</p>
+
+  <section class="gx10-admin-card" aria-labelledby="api-ports-title">
+    <div class="hpc-row-between hpc-api-section-header">
+      <h3 class="hpc-section-title" id="api-ports-title">空きポート候補</h3>
+      <div class="hpc-api-toolbar">
+        <span class="hpc-refresh-status" data-ports-refresh aria-live="polite">
+          <span class="hpc-refresh-spinner" aria-hidden="true"></span>
+          <span data-ports-checked>最終更新 --:--:--</span>
+          <span class="visually-hidden" data-ports-live></span>
+        </span>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-refresh-ports {% if not api_available %}disabled{% endif %}>更新</button>
+      </div>
+    </div>
+    <table class="hpc-api-port-table" aria-label="空きポート候補">
+      <tbody data-free-ports><tr><td colspan="3" class="hpc-empty">{{ '確認中…' if api_available else '—' }}</td></tr></tbody>
+    </table>
+    <p class="hpc-api-message" data-ports-message role="status" aria-live="polite" hidden></p>
   </section>
-  <section class="gx10-resource-card">
-    <h3>公開先を登録・変更</h3>
+
+  <section class="gx10-admin-card" aria-labelledby="api-candidates-title">
+    <div class="hpc-row-between hpc-api-section-header">
+      <h3 class="hpc-section-title" id="api-candidates-title">起動済みアプリ</h3>
+      <input class="gx10-admin-input hpc-api-search" type="search" data-candidate-search placeholder="アプリ名・作業フォルダ・ポートで検索" aria-label="起動済みアプリを検索">
+    </div>
+    <div class="hpc-api-table-scroll">
+      <table class="gx10-admin-table hpc-api-table" aria-label="起動済みアプリ">
+        <thead><tr><th scope="col">アプリ名</th><th scope="col">作業フォルダ</th><th scope="col">ポート</th><th scope="col">起動日時</th><th scope="col" class="hpc-api-actions-cell">操作</th></tr></thead>
+        <tbody data-candidate-list><tr><td colspan="5" class="hpc-empty">{{ '確認中…' if api_available else '—' }}</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="gx10-admin-card" aria-labelledby="api-publications-title">
+    <div class="hpc-row-between hpc-api-section-header">
+      <h3 class="hpc-section-title" id="api-publications-title">登録したAPI</h3>
+      <div class="hpc-api-toolbar">
+        <span class="hpc-refresh-status" data-publications-refresh aria-live="polite">
+          <span class="hpc-refresh-spinner" aria-hidden="true"></span>
+          <span data-publications-checked>最終更新 --:--:--</span>
+          <span class="visually-hidden" data-publications-live></span>
+        </span>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-refresh-publications>更新</button>
+      </div>
+    </div>
+    <div class="hpc-api-table-scroll">
+      <table class="gx10-admin-table hpc-api-table" aria-label="登録したAPI">
+        <thead><tr><th scope="col">API名</th><th scope="col">公開URL</th><th scope="col">ポート</th><th scope="col">状態</th><th scope="col" class="hpc-api-actions-cell">操作</th></tr></thead>
+        <tbody data-publication-list><tr><td colspan="5" class="hpc-empty">取得中…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hpc-api-message" data-publications-message role="status" aria-live="polite" hidden></p>
+  </section>
+
+  <dialog class="hpc-api-dialog" data-publication-dialog aria-labelledby="api-dialog-title">
     <form data-publication-form>
-      <div class="form-group"><label for="api-name">公開名</label>
-        <input id="api-name" class="form-control" name="name" required pattern="[a-z][a-z0-9-]{0,47}" maxlength="48" placeholder="my-api">
-        <p class="hpc-muted">同じ公開名で登録すると接続先を更新し、公開 URL を維持します。</p>
+      <div class="hpc-row-between hpc-api-dialog-header">
+        <h3 class="hpc-section-title" id="api-dialog-title" data-dialog-title>APIを公開</h3>
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-close-dialog aria-label="公開設定を閉じる">閉じる</button>
       </div>
-      <div class="form-group"><label for="api-display-name">表示名（任意）</label>
-        <input id="api-display-name" class="form-control" name="display_name" maxlength="80" placeholder="解析 API">
+      <div class="form-group">
+        <label class="gx10-admin-label" for="api-target">アプリ</label>
+        <select id="api-target" class="form-select" name="candidate" required></select>
+        <div class="hpc-api-target-info hpc-muted" data-selected-candidate></div>
       </div>
-      <p>選択したアプリ：<span data-selected-candidate>未選択</span></p>
-      <details><summary>ポートを手動指定・動作確認パス</summary>
-        <div class="form-group"><label for="api-port">接続先ポート</label>
-          <input id="api-port" class="form-control" name="port" type="number" min="1024" max="65535" placeholder="3000">
-          <p class="hpc-muted">手動指定でも本人の待ち受けであることを確認します。空きポートを指定してもアプリは起動しません。</p>
-        </div>
-        <div class="form-group"><label for="api-health">動作確認パス（任意）</label>
-          <input id="api-health" class="form-control" name="health_path" maxlength="512" placeholder="/health">
-        </div>
-      </details>
-      <button class="hpc-primary-btn" type="submit">接続を確認して公開</button>
+      <div class="form-group">
+        <label class="gx10-admin-label" for="api-display-name">API名（任意）</label>
+        <input id="api-display-name" class="form-control" name="display_name" maxlength="80" placeholder="解析API">
+      </div>
+      <div class="form-group">
+        <label class="gx10-admin-label" for="api-name">URLの名前</label>
+        <input id="api-name" class="form-control" name="name" required pattern="[a-z][a-z0-9-]{0,47}" maxlength="48" placeholder="my-api" spellcheck="false" autocapitalize="none" title="英小文字で始め、英小文字・数字・ハイフンで入力してください">
+        <div class="hpc-api-url-preview" data-url-preview></div>
+      </div>
+      <div class="form-group">
+        <label class="gx10-admin-label" for="api-port">ポートを手動指定</label>
+        <input id="api-port" class="form-control" name="port" type="number" min="1024" max="65535" placeholder="3000">
+      </div>
+      <div class="form-group">
+        <label class="gx10-admin-label" for="api-health">動作確認パス（任意）</label>
+        <input id="api-health" class="form-control" name="health_path" maxlength="512" placeholder="/health">
+      </div>
+      <p class="hpc-api-message" data-dialog-message role="status" aria-live="polite" hidden></p>
+      <div class="hpc-api-toolbar hpc-api-dialog-footer">
+        <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-close-dialog>キャンセル</button>
+        <button class="gx10-admin-btn gx10-admin-btn-primary" type="submit" data-api-operation data-publication-submit {% if not api_available %}disabled{% endif %}>公開する</button>
+      </div>
     </form>
-  </section>
-  <section class="gx10-resource-card"><h3>登録済み API</h3><div data-publication-list></div></section>
-  <p>公開停止・登録削除は URL へのアクセスを止めます。アプリのプロセスは終了しません。</p>
+  </dialog>
   {% else %}
-  <p>管理者による外部 API 公開の初期設定が必要です。</p>
+  <p class="hpc-empty">API機能は未設定です。</p>
   {% endif %}
-  <p data-external-message role="status" aria-live="polite"></p>
-  <a href="/hub/external-api">トークン・接続設定</a>
 </div>
 {% endblock %}
+
 {% block script %}
 <script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
 <script src="/hub/hpc-js/external-api.js?v={{ hpc_static_versions['js/external-api.js'] }}"></script>
+<script src="/hub/hpc-js/api-publications.js?v={{ hpc_static_versions['js/api-publications.js'] }}"></script>
 {{ super() }}
 {% endblock %}

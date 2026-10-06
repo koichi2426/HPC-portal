@@ -130,12 +130,18 @@ def test_frontend_templates_inherit_hub_templates_and_render_api_page():
     for path in templates.glob("*.html"):
         environment.get_template(path.name)
 
-    rendered = environment.get_template("external_api.html").render(
-        state="ready",
+    rendered = environment.get_template("api_publications.html").render(
+        credential_state="利用可能",
         configured=True,
+        api_available=True,
+        public_url_prefix="https://portal.example.com/hub/user-api/alice/",
         base_url="/hub/",
         static_url=lambda path, **kwargs: "/hub/static/" + path,
-        hpc_static_versions={"js/core.js": "1", "js/external-api.js": "1"},
+        hpc_static_versions={
+            "js/core.js": "1",
+            "js/external-api.js": "1",
+            "js/api-publications.js": "1",
+        },
         hpc_external_api_enabled=True,
     )
 

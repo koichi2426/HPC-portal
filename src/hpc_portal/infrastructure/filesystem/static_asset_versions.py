@@ -15,6 +15,7 @@ HPC_PORTAL_JS_FILES = (
     "ollama-admin.js",
     "llm-api.js",
     "external-api.js",
+    "api-publications.js",
     "password.js",
     "spawn-form.js",
 )

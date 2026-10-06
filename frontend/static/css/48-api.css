@@ -1,0 +1,193 @@
+/* API画面固有の配置。表・ボタン・状態バッジは管理画面の共通スタイルを使う。 */
+.hpc-api-page .hpc-section-title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.hpc-api-section-heading,
+.hpc-api-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hpc-api-section-heading {
+  gap: 12px;
+}
+
+.hpc-api-section-header {
+  margin-bottom: 12px;
+}
+
+.hpc-api-credentials {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hpc-border-muted);
+}
+
+.hpc-api-credential-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.hpc-api-copy-field {
+  /* 再発行のない行も操作列を確保し、入力欄の幅をそろえる。 */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, 4.5rem);
+  align-items: center;
+  gap: 8px;
+}
+
+.hpc-api-copy-field input {
+  width: 100%;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.hpc-api-copy-field button {
+  white-space: nowrap;
+}
+
+.hpc-api-actions-cell,
+.hpc-api-table time {
+  white-space: nowrap;
+}
+
+.hpc-api-credential-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.hpc-api-port-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hpc-api-port-table td {
+  padding: 10px 12px;
+  border: 1px solid var(--hpc-border);
+  color: var(--hpc-text);
+  background: var(--hpc-surface);
+}
+
+.hpc-api-port-table td.hpc-empty {
+  color: var(--hpc-muted);
+}
+
+.hpc-api-search {
+  width: min(100%, 310px);
+}
+
+.hpc-api-table-scroll {
+  overflow-x: auto;
+}
+
+.hpc-api-table {
+  min-width: 640px;
+}
+
+.hpc-api-table th {
+  white-space: nowrap;
+}
+
+.hpc-api-actions-cell {
+  width: 1%;
+}
+
+.hpc-api-actions-cell .hpc-api-toolbar {
+  flex-wrap: nowrap;
+}
+
+.hpc-api-url {
+  display: block;
+  max-width: 310px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.hpc-api-url-name {
+  margin-top: 3px;
+  color: var(--hpc-muted);
+  font-size: 11px;
+}
+
+.hpc-api-message {
+  margin: 12px 0 0;
+  color: var(--hpc-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.hpc-api-message.is-error {
+  color: var(--hpc-danger);
+}
+
+.hpc-api-message.is-success {
+  color: var(--hpc-success);
+}
+
+.hpc-api-dialog {
+  width: min(560px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 20px;
+  overflow-y: auto;
+  border: 1px solid var(--hpc-border);
+  border-radius: 12px;
+  background: var(--hpc-surface);
+  color: var(--hpc-text);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+}
+
+.hpc-api-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.hpc-api-dialog-header {
+  margin-bottom: 20px;
+}
+
+.hpc-api-dialog .form-group {
+  margin-bottom: 16px;
+}
+
+.hpc-api-target-info,
+.hpc-api-url-preview {
+  margin-top: 6px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.hpc-api-url-preview {
+  color: var(--hpc-muted);
+  font-family: monospace;
+}
+
+.hpc-api-dialog-footer {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+@media (max-width: 720px) {
+  .hpc-api-page .hpc-refresh-status {
+    font-size: 11px;
+  }
+
+  .hpc-api-dialog .hpc-api-dialog-header {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .hpc-api-port-table td {
+    padding: 8px 6px;
+    font-size: 12px;
+  }
+}

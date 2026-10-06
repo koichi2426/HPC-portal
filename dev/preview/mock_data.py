@@ -349,7 +349,7 @@ class MockState:
             else [
                 {
                     "candidate": "mock-analysis",
-                    "display_name": "解析 API",
+                    "display_name": "server.py（Python）",
                     "workdir": "~/projects/analysis",
                     "port": 3000,
                     "started_at": time.time() - 600,
@@ -357,7 +357,7 @@ class MockState:
                 },
                 {
                     "candidate": "mock-worker",
-                    "display_name": "計算 API",
+                    "display_name": "server.js（Node.js）",
                     "workdir": "~/projects/worker",
                     "port": 8080,
                     "started_at": time.time() - 300,

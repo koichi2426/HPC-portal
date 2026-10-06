@@ -120,14 +120,18 @@ class PageHandler(PreviewHandler):
         elif self.page == "home":
             self.render_page("home.html")
         elif self.page == "external_api":
+            self.redirect("/hub/api-publications#api-tokens")
+        elif self.page == "publications":
             enabled = self.state.accounts[user.name]["external_api_enabled"]
             self.render_page(
-                "external_api.html",
+                "api_publications.html",
                 configured=True,
-                state="利用可能" if enabled else "利用停止中",
+                api_available=enabled,
+                credential_state="利用可能" if enabled else "利用停止中",
+                public_url_prefix=(
+                    f"https://portal.example.com/hub/user-api/{user.name}/"
+                ),
             )
-        elif self.page == "publications":
-            self.render_page("api_publications.html", configured=True)
         elif self.page == "password":
             self.render_page("account_password.html")
         elif self.page == "llm_api":

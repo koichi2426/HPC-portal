@@ -8,6 +8,10 @@ from pathlib import Path
 
 import psutil
 
+from hpc_portal.infrastructure.linux.process_display_name import (
+    resolve_process_display_name,
+)
+
 
 def candidate_id(row):
     """PIDやポートが再利用されても、別の待受プロセスを同じ候補として扱わない。
@@ -46,7 +50,7 @@ def process_snapshot(pid, proc_root=Path("/proc")):
         cwd = proc.cwd()
     except psutil.AccessDenied:
         cwd = ""
-    # コマンド引数や環境変数には秘密値が含まれるため、候補の表示情報に使わない。
+    # 所有者の確認に使うスナップショットには、起動引数や環境変数を含めない。
     return {
         "pid": pid,
         "uid": uid,
@@ -120,6 +124,8 @@ class LinuxListenerInventory:
                 if before != after:
                     continue
                 row = {**before, "port": port, "inode": link, "fd": connection.fd}
+                # 表示名だけ補足し、所有者・ソケットの照合に使う識別情報は変えない。
+                row["display_name"] = resolve_process_display_name(before)
                 row["candidate"] = candidate_id(row)
                 rows.append(row)
             except (psutil.Error, OSError, ValueError):

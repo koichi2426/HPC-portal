@@ -1,6 +1,7 @@
 """ログイン済みブラウザから、個人別トークン・待受候補・API公開設定を操作する。"""
 
 import json
+from urllib.parse import quote
 
 from jupyterhub.handlers.base import BaseHandler
 from pydantic import ValidationError
@@ -67,29 +68,8 @@ class BrowserHandler(BaseHandler):
 class ExternalApiPage(BrowserHandler):
     @web.authenticated
     async def get(self):
-        """本人の認証情報の状態を確認して、外部API接続情報の画面を表示する。"""
-        configured, state = ExternalApiSettings.from_env().enabled, "未設定"
-        if configured:
-            try:
-                usecase = self.services()
-                state_key = usecase.queries.credential_record(self.current_user).get(
-                    "state", "issuing"
-                )
-                state = {
-                    "ready": "利用可能",
-                    "issuing": "発行準備中",
-                    "disabled": "利用停止中",
-                    "revoking": "利用停止中・失効処理待ち",
-                    "rotating_cloudflare": "Cloudflare トークン更新中",
-                    "rotating_jupyterhub": "JupyterHub トークン更新中",
-                }.get(state_key, "確認が必要です")
-            except (ValueError, web.HTTPError):
-                state = "発行待ち／管理設定を確認してください"
-        self.finish(
-            await self.render_template(
-                "external_api.html", state=state, configured=configured
-            )
-        )
+        """旧トークン画面のリンクから、統一画面のトークン欄へ移動する。"""
+        self.redirect("/hub/api-publications#api-tokens")
 
 
 class ExternalApiCredentials(BrowserHandler):
@@ -139,11 +119,37 @@ class ExternalApiCredentials(BrowserHandler):
 class ApiPublicationsPage(BrowserHandler):
     @web.authenticated
     async def get(self):
-        """API公開設定の画面を表示する。"""
+        """秘密値を画面へ渡さず、トークンの利用状態とAPI管理画面を表示する。"""
+        config = ExternalApiSettings.from_env()
+        available, state = False, "未設定"
+        if config.enabled:
+            try:
+                record = self.services().queries.credential_record(self.current_user)
+                state_key = record.get("state", "issuing")
+                available = bool(record.get("enabled")) and state_key == "ready"
+                state = {
+                    "ready": "利用可能" if available else "利用停止中",
+                    "issuing": "発行準備中",
+                    "disabled": "利用停止中",
+                    "revoking": "停止処理中",
+                    "rotating_cloudflare": "Cloudflare更新中",
+                    "rotating_jupyterhub": "JupyterHub更新中",
+                }.get(state_key, "確認が必要")
+            except (ValueError, web.HTTPError):
+                state = "準備中"
+
+        # URLのプレビューに必要な公開情報だけを渡し、トークンは操作時に取得する。
+        public_url_prefix = (
+            f"https://{config.public_host}/hub/user-api/"
+            f"{quote(self.current_user.name, safe='')}/"
+        )
         self.finish(
             await self.render_template(
                 "api_publications.html",
-                configured=ExternalApiSettings.from_env().enabled,
+                configured=config.enabled,
+                api_available=available,
+                credential_state=state,
+                public_url_prefix=public_url_prefix,
             )
         )
 
