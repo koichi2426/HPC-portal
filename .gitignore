@@ -4,6 +4,12 @@ ansible/inventory/group_vars/all/nfs_mounts.yml
 ansible/inventory/*.ini
 !ansible/inventory/production.ini.example
 
+# 移行前の設定が残っていても、秘密情報をGitへ追加しない。
+group_vars/all/secret.yml
+group_vars/all/nfs_mounts.yml
+inventory/*
+!inventory/production.ini.example
+
 # Ansible runtime artifacts
 .ansible/
 *.retry
