@@ -5,7 +5,7 @@ import logging
 
 from tornado.ioloop import IOLoop, PeriodicCallback
 
-from hpc_portal.bootstrap.container import get_external_api
+from hpc_portal.bootstrap.container import get_external_api, get_ssh_access
 
 log = logging.getLogger("jupyterhub.external-api")
 _callback = None
@@ -13,13 +13,16 @@ _callback = None
 
 async def synchronize_external_api():
     """外部APIを同期し、失敗時は秘密値を含まない警告を記録する。"""
-    try:
-        usecase = get_external_api()
-        if usecase:
-            await usecase.synchronize.execute()
-    except Exception:
-        # 外部サービスのエラー本文には秘密値が含まれ得るため、ログへ出さない。
-        log.warning("External API synchronization requires operator configuration")
+    for factory, label in ((get_external_api, "External API"), (get_ssh_access, "SSH")):
+        try:
+            usecase = factory()
+            if usecase:
+                if factory is get_external_api:
+                    await usecase.synchronize.execute()
+                else:
+                    await usecase.synchronize()
+        except Exception:
+            log.warning("%s synchronization requires operator configuration", label)
 
 
 def start_background_tasks(enabled):

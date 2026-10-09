@@ -13,6 +13,8 @@ HpcAdminAction = Literal[
     "sudo_disable",
     "external_api_enable",
     "external_api_disable",
+    "ssh_access_enable",
+    "ssh_access_disable",
     "api_enable",
     "api_disable",
     "ollama_register_model",

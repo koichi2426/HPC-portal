@@ -41,6 +41,7 @@ from hpc_portal.presentation.handlers.spawn import (
     HpcAdminRedirectHandler,
     HpcSpawnHandler,
 )
+from hpc_portal.presentation.handlers.ssh_access import SshAccessPage, SshCredentials
 
 
 def register_handlers(config) -> None:
@@ -64,6 +65,8 @@ def register_handlers(config) -> None:
         (r"/new", HpcNewApplicationHandler),
         (r"/external-api", ExternalApiPage),
         (r"/external-api/credentials", ExternalApiCredentials),
+        (r"/ssh-access", SshAccessPage),
+        (r"/ssh-access/credentials", SshCredentials),
         (r"/api-publications", ApiPublicationsPage),
         (r"/api-publications/api", ApiPublications),
         (r"/api-publications/ports", ApiPorts),

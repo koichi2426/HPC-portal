@@ -26,6 +26,8 @@ class ApiOwner:
 
 
 class CredentialState(StrEnum):
+    UNISSUED = "unissued"
+    REVOKING_CLOUDFLARE = "revoking_cloudflare"
     ISSUING = "issuing"
     READY = "ready"
     ROTATING_CLOUDFLARE = "rotating_cloudflare"

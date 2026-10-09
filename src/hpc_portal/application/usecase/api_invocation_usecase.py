@@ -78,6 +78,7 @@ class AuthorizeApiInvocationUseCase:
         if (
             not credentials
             or not credentials.available
+            or record.get("hub_state") in {"revoked", "rotating"}
             or token.id != record.get("hub_token_id")
             or expected_scope not in token.scopes
         ):

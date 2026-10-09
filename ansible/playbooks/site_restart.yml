@@ -15,6 +15,7 @@
     - search_mcp
     - ollama
     - litellm
+    - optional_features
     - jupyterhub
     - cloudflared
 
@@ -71,3 +72,9 @@
         msg: >-
           全体反映と関連サービスの再起動が完了しました。
           停止したSlurmアプリケーション（Ollamaなど）は、必要に応じてポータルから再起動してください。
+    - name: サービスへの変更反映を完了
+      ansible.builtin.meta: flush_handlers
+    - name: 任意機能の設定結果を最後に案内
+      ansible.builtin.include_role:
+        name: optional_features
+        tasks_from: summary

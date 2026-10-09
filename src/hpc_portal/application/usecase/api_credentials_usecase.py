@@ -53,7 +53,7 @@ class IssueApiCredentialsUseCase:
         self.revoke_credential_record = revoke_credential_record
 
     async def execute(self, user):
-        """所有者を照合し、途中で止まった発行を再開して両サービスのトークンを揃える。
+        """本人のService Token発行を依頼・復旧し、Hubトークンは独立して扱う。
 
         Args:
             user: 操作対象のJupyterHubユーザー。
@@ -71,14 +71,18 @@ class IssueApiCredentialsUseCase:
                 record = None
 
             # 外部サービスの応答が途切れても続きから再試行できるよう、各工程を保存する。
-            record = record or {**identity, "enabled": True, "state": "issuing"}
+            record = record or {**identity, "enabled": True, "state": "unissued"}
             self.store.put("credentials", user.name, record)
             if not record["enabled"]:
                 return record
-            if self.credential_repository.load_credentials(
-                user.name
-            ).available and self.hub_tokens.valid(record, user):
+            if record["state"] == "revoking_cloudflare":
+                raise ValueError("Service Tokenの失効処理が完了していません")
+            if self.credential_repository.load_credentials(user.name).available:
                 return record
+            record["state"] = (
+                "issuing" if record["state"] == "unissued" else record["state"]
+            )
+            record["service_requested"] = True
             self.store.put("credentials", user.name, record)
 
             if not record.get("cf_token_id"):
@@ -97,26 +101,37 @@ class IssueApiCredentialsUseCase:
                 record["state"] = "issuing"
                 self.store.put("credentials", user.name, record)
 
-            if not self.hub_tokens.valid(record, user) or record.get(
-                "hub_token_id"
-            ) in record.get("revoke_pending", []):
-                self.hub_tokens.revoke_orphans(
-                    user.name, keep_id=record.get("hub_token_id")
-                )
-                record.update(self.hub_tokens.issue(user))
-                self.store.put("credentials", user.name, record)
-
-            # 新しい秘密値を保存してから、再発行途中で残った旧トークンを失効する。
-            for token_id in record.get("revoke_pending", []):
-                self.hub_tokens.revoke(token_id)
-            record.pop("revoke_pending", None)
-
             credentials = self.credential_repository.load_credentials(user.name)
             credentials.complete_issuance()
             record.update(
                 state=credentials.state.value,
                 enabled=credentials.enabled,
                 updated_at=time.time(),
+            )
+            self.store.put("credentials", user.name, record)
+            return record
+
+    async def revoke_service(self, user):
+        """本人のService Tokenだけを失効し、Hubトークンと利用許可を維持する。
+
+        Args:
+            user: 操作対象のHubユーザー。
+
+        Returns:
+            Service Tokenの秘密値を除いた認証情報。
+        """
+        async with self.queries.credential_lock(user.name):
+            record = self.queries.credential_record(user)
+            if not record.get("enabled"):
+                raise ValueError("自作APIの利用は管理者が停止しています")
+            record["state"] = "revoking_cloudflare"
+            self.store.put("credentials", user.name, record)
+            if record.get("cf_token_id"):
+                await self.cloudflare.remove(record["cf_token_id"])
+            for key in ("cf_token_id", "client_id", "client_secret"):
+                record.pop(key, None)
+            record.update(
+                state="unissued", service_requested=False, updated_at=time.time()
             )
             self.store.put("credentials", user.name, record)
             return record
@@ -131,6 +146,8 @@ class RotateApiCredentialsUseCase:
         cloudflare: CloudflareAccess,
         store: RecordStore,
         hub_tokens: HubTokens,
+        hub_credentials,
+        config: ApiConfiguration,
     ):
         """この操作に必要な接続先と処理の依存を保持する。
 
@@ -140,12 +157,16 @@ class RotateApiCredentialsUseCase:
             cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
             store: 認証情報・公開設定・ポート保護のレコード保存先。
             hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
+            hub_credentials: Hubトークンの独立した再発行操作。
+            config: Service Token発行機能の有効状態。
         """
         self.queries = queries
         self.credential_repository = credential_repository
         self.cloudflare = cloudflare
         self.store = store
         self.hub_tokens = hub_tokens
+        self.hub_credentials = hub_credentials
+        self.config = config
 
     async def execute(self, user, kind):
         """選ばれたサービスのトークンだけを再発行し、古い接続情報を無効にする。
@@ -163,6 +184,8 @@ class RotateApiCredentialsUseCase:
         if kind not in {"cloudflare", "jupyterhub"}:
             raise ValueError("再発行対象が不正です")
 
+        if kind == "jupyterhub":
+            return await self.hub_credentials.execute(user, "rotate")
         async with self.queries.credential_lock(user.name):
             record = self.queries.credential_record(user)
             credentials = self.credential_repository.load_credentials(user.name)
@@ -171,17 +194,8 @@ class RotateApiCredentialsUseCase:
             # 再発行中は旧トークンによる呼び出しも拒否する。
             self.credential_repository.save_credentials(credentials)
 
-            if kind == "cloudflare":
-                token = await self.cloudflare.rotate(record["cf_token_id"])
-                record["client_secret"] = token["client_secret"]
-            else:
-                old_id = record["hub_token_id"]
-                record["revoke_pending"] = [old_id]
-                self.store.put("credentials", user.name, record)
-                record.update(self.hub_tokens.issue(user))
-                self.store.put("credentials", user.name, record)
-                self.hub_tokens.revoke(old_id)
-                record.pop("revoke_pending", None)
+            token = await self.cloudflare.rotate(record["cf_token_id"])
+            record["client_secret"] = token["client_secret"]
 
             credentials = self.credential_repository.load_credentials(user.name)
             credentials.complete_issuance()
@@ -285,7 +299,7 @@ class EnableApiCredentialsUseCase:
         queries: ApiQueries,
         store: RecordStore,
         credential_repository: ApiCredentialRepository,
-        issue_credentials: IssueApiCredentialsUseCase,
+        hub_credentials,
     ):
         """この操作に必要な接続先と処理の依存を保持する。
 
@@ -293,21 +307,21 @@ class EnableApiCredentialsUseCase:
             queries: 所有者を照合したレコード取得とユーザー単位の排他制御。
             store: 認証情報・公開設定・ポート保護のレコード保存先。
             credential_repository: 認証情報の所有者と状態を読み書きする保存先。
-            issue_credentials: 両サービスのトークンを揃える操作。
+            hub_credentials: Service Tokenから独立したHubトークンの準備操作。
         """
         self.queries = queries
         self.store = store
         self.credential_repository = credential_repository
-        self.issue_credentials = issue_credentials
+        self.hub_credentials = hub_credentials
 
     async def execute(self, user):
-        """失効処理の完了を確認し、古い登録を消して認証情報を新規発行する。
+        """失効完了後に利用を許可し、Hubトークンだけを自動で準備する。
 
         Args:
             user: 操作対象のJupyterHubユーザー。
 
         Returns:
-            新しく発行した認証情報レコード。
+            Hubトークンを準備したService Token未発行のレコード。
 
         Raises:
             ValueError: 認証情報の失効が完了していない場合。
@@ -318,10 +332,17 @@ class EnableApiCredentialsUseCase:
                 self.credential_repository.load_credentials(
                     user.name
                 ).require_reenableable()
-            self.store.delete("credentials", user.name)
+            self.store.put(
+                "credentials",
+                user.name,
+                {
+                    **self.queries.credential_identity(user),
+                    "enabled": True,
+                    "state": "unissued",
+                },
+            )
 
-        # 発行処理も同じロックを取得するため、ここで解放してから呼び出す。
-        return await self.issue_credentials.execute(user)
+        return await self.hub_credentials.execute(user)
 
 
 class DisableUserApisUseCase:
@@ -360,6 +381,14 @@ class DisableUserApisUseCase:
         """
         async with self.queries.credential_lock(username):
             record = self.store.get("credentials", username)
+            if record is None:
+                user = await self.hub_tokens.user(username)
+                record = {
+                    **self.queries.credential_identity(user),
+                    "enabled": True,
+                    "state": "unissued",
+                }
+                self.store.put("credentials", username, record)
             if record:
                 credentials = self.credential_repository.load_credentials(username)
                 credentials.begin_revocation()

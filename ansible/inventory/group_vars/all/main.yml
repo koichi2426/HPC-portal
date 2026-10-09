@@ -20,6 +20,8 @@ slurm_mem_spec_limit_mb: 4096
 jupyterhub_public_domain: "{{ hpc_hub_subdomain | default('hub') }}.{{ hpc_base_domain | default('example.com') }}"
 # 各ジョブのサブドメイン接尾辞（例: https://job4.example.com）
 jupyterhub_job_dns_domain: "{{ hpc_base_domain | default('example.com') }}"
+# SSH用Service Tokenが保護する公開ホスト。必要ならinventoryで上書きできる。
+hpc_ssh_public_host: "ssh.{{ hpc_base_domain | default('example.com') }}"
 
 # LiteLLM 公開ホスト
 hpc_llm_subdomain: llm

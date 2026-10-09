@@ -465,6 +465,13 @@
       else index = (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
       items[index].focus();
     });
+    window.addEventListener("hpc-api-credentials-changed", function () {
+      root.querySelectorAll("[data-api-operation], [data-refresh-ports]").forEach(function (button) {
+        button.disabled = root.dataset.apiAvailable !== "true";
+      });
+      refreshPorts(true);
+      refreshApps(true);
+    });
     window.addEventListener("resize", function () { closeMenu(false); });
     window.addEventListener("scroll", function () { closeMenu(false); }, true);
     document.addEventListener("visibilitychange", function () {

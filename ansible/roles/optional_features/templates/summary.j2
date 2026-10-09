@@ -1,0 +1,30 @@
+{% for name, label, file, flag in [('ssh', 'SSH', 'optional_features.yml', 'hpc_ssh_access_enabled'), ('external_api', '自作API', 'optional_features.yml', 'hpc_external_api_enabled')] %}
+{% set result = hpc_optional_states[name] %}
+[{{ label }}]
+{% if result.state == 'disabled' %}
+{% if name == 'external_api' %}
+設定で無効になっているため、自作APIの公開・呼び出し機能を停止します。
+発行済みのトークンとCloudflare設定は残しています。
+{% else %}
+設定で無効になっているため、ポータルからトークンを発行・再発行できません。
+既存のCloudflare設定と発行済みトークンは残しています。
+{% endif %}
+有効にするには、{{ file }}の{{ flag }}をtrueにし、必要な情報を揃えて再デプロイしてください。
+{% elif result.state == 'skipped' %}
+必要な情報が不足しているため、今回の設定を見送りました。導入済みの設定は変更していません。
+不足項目: {{ result.missing | join(', ') }}
+接続先は{{ file }}、管理用APIトークンとAccount IDはsecret.ymlに設定して再デプロイしてください。
+{% elif result.state == 'unspecified' %}
+設定が未指定のため、導入済みの設定を維持しました。未導入の場合は有効になりません。
+利用を始めるには、{{ file }}の{{ flag }}をtrueにし、必要な情報を揃えて再デプロイしてください。
+{% elif ansible_check_mode %}
+必要な情報が揃っています。今回は確認のみで、設定の反映は行っていません。
+反映するにはmake deployを実行してください。
+{% elif name == 'ssh' %}
+ポータルのSSH用Service Token発行設定を反映しました。
+Cloudflareの公開ルートとAccessアプリの保護状態は管理画面で確認してください。
+{% else %}
+自作APIの公開・呼び出しとAPI用Service Tokenの発行設定を反映しました。
+{% endif %}
+
+{% endfor %}

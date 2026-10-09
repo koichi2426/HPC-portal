@@ -1,0 +1,5 @@
+---
+- name: 任意機能の設定結果と対処方法を案内
+  ansible.builtin.debug:
+    msg: "{{ lookup('ansible.builtin.template', 'summary.j2').splitlines() }}"
+  when: hpc_optional_states is defined

@@ -1,5 +1,6 @@
 """外部接続とusecaseを組み立て、Hub内で共有する。"""
 
+import asyncio
 from dataclasses import dataclass, field
 
 from jupyterhub.app import JupyterHub
@@ -12,6 +13,7 @@ from hpc_portal.application.usecase.catalog import (
     LlmUseCases,
 )
 from hpc_portal.application.usecase.resource_query_usecase import ResourceQueryUseCase
+from hpc_portal.application.usecase.ssh_access_usecase import SshAccessUseCase
 from hpc_portal.bootstrap.usecase_factory import (
     build_accounts_usecases,
     build_api_usecases,
@@ -27,6 +29,7 @@ from hpc_portal.infrastructure.cloudflare.access_client import CloudflareAccessC
 from hpc_portal.infrastructure.cloudflare.access_token_verifier import AccessVerifier
 from hpc_portal.infrastructure.config import settings
 from hpc_portal.infrastructure.config.external_api_settings import ExternalApiSettings
+from hpc_portal.infrastructure.config.ssh_access_settings import SshAccessSettings
 from hpc_portal.infrastructure.http import api_relay
 from hpc_portal.infrastructure.http.api_health_checker import ApiHealthChecker
 from hpc_portal.infrastructure.jupyterhub.token_gateway import HubTokenGateway
@@ -62,6 +65,8 @@ class PortalContainer:
     resources: ResourceQueryUseCase
     openwebui_key_locks: dict = field(default_factory=dict)
     external_api: ExternalApiUseCases | None = None
+    ssh_access: SshAccessUseCase | None = None
+    cloudflare_token_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def get_external_api(self) -> ExternalApiUseCases | None:
         """外部APIが有効な場合だけ共有する操作を取得する。
@@ -84,7 +89,7 @@ class PortalContainer:
             accounts = self.users.accounts
             self.external_api = build_external_api_usecases(
                 store,
-                CloudflareAccessClient(config),
+                CloudflareAccessClient(config, token_lock=self.cloudflare_token_lock),
                 HubTokenGateway(JupyterHub.instance()),
                 config,
                 inventory,
@@ -96,6 +101,31 @@ class PortalContainer:
             )
 
         return self.external_api
+
+    def get_ssh_access(self) -> SshAccessUseCase | None:
+        """HTTP APIの有効状態に依存せず、SSH公開の共有操作を取得する。
+
+        Returns:
+            SSH用の操作。機能無効時はNone。
+
+        Raises:
+            ValueError: SSHの設定または暗号化保存先が不正な場合。
+        """
+        config = SshAccessSettings.from_env()
+        if not config.enabled:
+            return None
+        if self.ssh_access is None:
+            config.validate()
+            self.ssh_access = SshAccessUseCase(
+                config=config,
+                store=EncryptedRecordStore(config.state_dir),
+                cloudflare=CloudflareAccessClient(
+                    config, token_lock=self.cloudflare_token_lock
+                ),
+                accounts=self.users.accounts,
+                hub_users=HubTokenGateway(JupyterHub.instance()),
+            )
+        return self.ssh_access
 
 
 _container: PortalContainer | None = None
@@ -162,10 +192,19 @@ def build_container() -> PortalContainer:
         """
         return container.get_external_api()
 
+    def ssh_access_factory():
+        """このcontainerに所属するSSH操作を取得する。
+
+        Returns:
+            SSH機能の共有操作、または無効時はNone。
+        """
+        return container.get_ssh_access()
+
     users = build_accounts_usecases(
         accounts=accounts,
         settings=user_settings,
         external_api_factory=external_api_factory,
+        ssh_access_factory=ssh_access_factory,
         issue_llm_key=llm.generate_key,
         revoke_llm_access=llm.delete_user_keys,
         set_llm_access=llm.admin_set_api_access,
@@ -216,6 +255,17 @@ def get_external_api() -> ExternalApiUseCases | None:
         return None
 
     return get_container().get_external_api()
+
+
+def get_ssh_access() -> SshAccessUseCase | None:
+    """SSH公開が有効なときだけcontainerの共有操作を取得する。
+
+    Returns:
+        SSH公開の操作。機能無効時はNone。
+    """
+    if not SshAccessSettings.from_env().enabled:
+        return None
+    return get_container().get_ssh_access()
 
 
 def build_external_api_usecases(

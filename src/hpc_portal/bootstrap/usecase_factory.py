@@ -40,6 +40,7 @@ from hpc_portal.application.usecase.account_management_usecase import (
     ResetAccountPasswordUseCase,
     SetAccountApiAccessUseCase,
     SetAccountLlmAccessUseCase,
+    SetAccountSshAccessUseCase,
     SetAccountSudoUseCase,
 )
 from hpc_portal.application.usecase.api_credentials_usecase import (
@@ -72,6 +73,9 @@ from hpc_portal.application.usecase.catalog import (
     InferenceUseCases,
     JobUseCases,
     LlmUseCases,
+)
+from hpc_portal.application.usecase.hub_credentials_usecase import (
+    ManageHubCredentialsUseCase,
 )
 from hpc_portal.application.usecase.inference_runtime_usecase import (
     CheckInferenceUpdateUseCase,
@@ -252,13 +256,6 @@ def build_api_usecases(
         個人別認証情報・API公開・同期の操作。
     """
     sync_lock = asyncio.Lock()
-    rotate_credentials = RotateApiCredentialsUseCase(
-        queries=queries,
-        credential_repository=credential_repository,
-        cloudflare=cloudflare,
-        store=store,
-        hub_tokens=hub_tokens,
-    )
     publish_registration = ConfigureApiPublicationUseCase(
         queries=queries,
         publication_repository=publication_repository,
@@ -286,6 +283,21 @@ def build_api_usecases(
         hub_tokens=hub_tokens,
         cloudflare=cloudflare,
         store=store,
+    )
+    hub_credentials = ManageHubCredentialsUseCase(
+        queries=queries,
+        store=store,
+        hub_tokens=hub_tokens,
+        revoke_record=revoke_credential_record,
+    )
+    rotate_credentials = RotateApiCredentialsUseCase(
+        queries=queries,
+        credential_repository=credential_repository,
+        cloudflare=cloudflare,
+        store=store,
+        hub_tokens=hub_tokens,
+        hub_credentials=hub_credentials,
+        config=config,
     )
     issue_credentials = IssueApiCredentialsUseCase(
         queries=queries,
@@ -342,7 +354,7 @@ def build_api_usecases(
         queries=queries,
         store=store,
         credential_repository=credential_repository,
-        issue_credentials=issue_credentials,
+        hub_credentials=hub_credentials,
     )
     disable_user = DisableUserApisUseCase(
         queries=queries,
@@ -360,6 +372,7 @@ def build_api_usecases(
         port_guard=port_guard,
         disable_user=disable_user,
         issue_credentials=issue_credentials,
+        hub_credentials=hub_credentials,
         refresh_publication=refresh_publication,
     )
     return ExternalApiUseCases(
@@ -371,6 +384,7 @@ def build_api_usecases(
         relay=relay,
         listeners=listeners,
         issue_credentials=issue_credentials,
+        hub_credentials=hub_credentials,
         rotate_credentials=rotate_credentials,
         revoke_credentials=revoke_credentials,
         enable_credentials=enable_credentials,
@@ -397,6 +411,7 @@ def build_accounts_usecases(
     stop_openwebui_jobs: StopUserOpenWebuiJobsUseCase,
     llm_client: LlmClient,
     get_llm_access_state: GetLlmAccessStateUseCase,
+    ssh_access_factory=None,
     external_api_factory: Callable[[], ExternalApiUseCases | None],
     issue_llm_key: IssueLlmKeyUseCase,
     revoke_llm_access: RevokeLlmAccessUseCase,
@@ -411,6 +426,7 @@ def build_accounts_usecases(
         llm_client: LiteLLM管理APIへ接続するクライアント。
         get_llm_access_state: 対象ユーザーのLLM利用状態を取得する操作。
         external_api_factory: 外部APIの共有usecaseを返す関数。機能無効時はNoneを返す。
+        ssh_access_factory: SSH公開の共有操作を取得する関数。
         issue_llm_key: 外部からLLMを呼び出すキーを発行する操作。
         revoke_llm_access: 対象ユーザーのLLMキーを無効化する操作。
 
@@ -432,6 +448,7 @@ def build_accounts_usecases(
         accounts=accounts,
         llm_client=llm_client,
         get_llm_access_state=get_llm_access_state,
+        ssh_access_factory=ssh_access_factory,
         external_api_factory=external_api_factory,
     )
     provision_external_api = ProvisionAccountApiUseCase(
@@ -458,6 +475,7 @@ def build_accounts_usecases(
         revoke_llm_access=revoke_llm_access,
         delete_external_api_records=delete_external_api_records,
         disable_external_api=disable_external_api,
+        ssh_access_factory=ssh_access_factory,
     )
     external_api = SetAccountApiAccessUseCase(
         settings=settings,
@@ -473,6 +491,9 @@ def build_accounts_usecases(
         password_regenerate=password_regenerate,
         sudo=sudo,
         external_api=external_api,
+        ssh_access=SetAccountSshAccessUseCase(
+            settings=settings, ssh_access_factory=ssh_access_factory
+        ),
         api=api,
         change_password=change_password,
         snapshot=snapshot,

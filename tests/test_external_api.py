@@ -58,6 +58,19 @@ class FakeHub:
             if owner_id == self.users.get(username) and token_id != keep_id:
                 self.revoke(token_id)
 
+    async def user(self, username):
+        """定期同期用に、同じHub IDのユーザーを返す。
+
+        Args:
+            username: 対象のテストユーザー名。
+
+        Returns:
+            保存したHub IDを持つユーザー。
+        """
+        return SimpleNamespace(
+            name=username, id=self.users.get(username, 11), api_tokens=[]
+        )
+
 
 class FakeCF:
     def __init__(self):
@@ -117,6 +130,7 @@ async def credentials(tmp_path):
         "hub_user_id": user.id,
     }
     user = SimpleNamespace(name="alice", id=11, api_tokens=[])
+    await service.hub_credentials.execute(user)
     await service.issue_credentials.execute(user)
     return service, user, hub, cf
 
@@ -152,6 +166,72 @@ async def test_initial_sync_is_idempotent_and_does_not_publish_anything(credenti
         service.issue_credentials.execute(user), service.issue_credentials.execute(user)
     )
     assert cf.issued == 1 and hub.counter == 1 and not cf.apps
+
+
+async def test_sync_prepares_hub_without_issuing_service_tokens(tmp_path):
+    """初期準備と旧自動発行待ちの移行は、Service Tokenを新規作成しない。"""
+    hub, cf = FakeHub(), FakeCF()
+    service = make_external_api(
+        EncryptedRecordStore(tmp_path / "state"),
+        cf,
+        hub,
+        ExternalApiSettings(public_host="portal.test"),
+    )
+    service.queries.credential_identity = lambda user: {
+        "uid": 1001,
+        "hub_user_id": user.id,
+    }
+    service.synchronize.users_snapshot = lambda: [{"username": "alice"}]
+    service.store.put(
+        "credentials",
+        "alice",
+        {"uid": 1001, "hub_user_id": 11, "enabled": True, "state": "issuing"},
+    )
+
+    await service.synchronize.execute()
+    await service.synchronize.execute()
+
+    record = service.store.get("credentials", "alice")
+    assert record["state"] == "unissued" and record["hub_state"] == "ready"
+    assert hub.counter == 1 and cf.issued == 0
+
+
+async def test_tokens_revoke_independently_and_do_not_resurrect(credentials):
+    """本人の個別失効は他のトークンを変えず、定期同期でも復活させない。"""
+    service, user, hub, cf = credentials
+    service.synchronize.users_snapshot = lambda: [{"username": user.name}]
+    old = service.queries.credential_record(user)
+
+    await service.hub_credentials.execute(user, "revoke")
+    await service.synchronize.execute()
+    record = service.queries.credential_record(user)
+    assert (
+        record["client_secret"] == old["client_secret"]
+        and record["hub_state"] == "revoked"
+    )
+    assert "hub_token" not in record and hub.counter == 1
+
+    await service.hub_credentials.execute(user, "rotate")
+    hub_token = service.queries.credential_record(user)["hub_token"]
+    await service.issue_credentials.revoke_service(user)
+    await service.synchronize.execute()
+    record = service.queries.credential_record(user)
+    assert record["hub_token"] == hub_token and record["state"] == "unissued"
+    assert cf.issued == 1 and "client_secret" not in record
+
+    await service.disable_user.execute(user.name)
+    await service.enable_credentials.execute(user)
+    assert service.queries.credential_record(user)["state"] == "unissued"
+    assert cf.issued == 1
+
+
+def test_legacy_service_token_flag_does_not_override_api_flag(monkeypatch):
+    """旧発行フラグが残っていても自作API全体のフラグだけを読む。"""
+    monkeypatch.setenv("HPC_EXTERNAL_API_ENABLED", "true")
+    monkeypatch.setenv("HPC_API_SERVICE_TOKEN_ENABLED", "false")
+    config = ExternalApiSettings.from_env()
+    assert config.enabled
+    assert not hasattr(config, "service_tokens_enabled")
 
 
 async def test_api_page_exposes_only_state_and_public_url(credentials, monkeypatch):
@@ -227,7 +307,7 @@ async def test_interrupted_hub_rotation_finishes_revocation(credentials, new_sav
         record.update(hub.issue(user))
     record.update(state="rotating_jupyterhub", revoke_pending=[old_id])
     service.store.put("credentials", user.name, record)
-    await service.issue_credentials.execute(user)
+    await service.hub_credentials.execute(user)
     assert old_id not in hub.tokens
     assert hub.valid(service.queries.credential_record(user), user)
 
@@ -254,6 +334,7 @@ async def test_recreated_hub_identity_gets_fresh_credentials(credentials):
     recreated = SimpleNamespace(name=user.name, id=99, api_tokens=[])
     with pytest.raises(ValueError):
         service.queries.credential_record(recreated)
+    await service.hub_credentials.execute(recreated)
     await service.issue_credentials.execute(recreated)
     assert old["hub_token_id"] not in hub.tokens
     assert service.queries.credential_record(recreated)["hub_user_id"] == 99
@@ -309,6 +390,9 @@ class FakeGuard:
     async def check(self, target):
         if self.fail:
             raise ValueError("guard failed")
+
+    async def reconcile(self):
+        """外部コマンドを呼ばずに同期の完了を再現する。"""
 
 
 @pytest.fixture
@@ -1146,5 +1230,14 @@ async def test_guard_keeps_port_protected_after_selected_worker_exits(
 
 def make_external_api(store, cloudflare, hub, config):
     return build_external_api_usecases(
-        store, cloudflare, hub, config, None, None, None, pwd, api_relay, lambda: []
+        store,
+        cloudflare,
+        hub,
+        config,
+        None,
+        FakeGuard(),
+        None,
+        pwd,
+        api_relay,
+        lambda: [],
     )

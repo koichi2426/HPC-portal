@@ -94,7 +94,7 @@
       ストレージ使用量はホームディレクトリ内の実使用量で、容量の上限ではありません。sudo可のユーザーはサーバー全体を管理できるため、必要なユーザーだけに付与してください。sudoグループの変更は次回ログインから確実に反映され、ログイン済みセッションや実行中アプリは終了しません。
     </div>
     <div style="overflow-x:auto;">
-      <table class="gx10-admin-table" aria-label="Linux ユーザー一覧" data-external-api-enabled="{{ 'true' if hpc_external_api_enabled else 'false' }}">
+      <table class="gx10-admin-table" aria-label="Linux ユーザー一覧" data-external-api-enabled="{{ 'true' if hpc_external_api_enabled else 'false' }}" data-ssh-access-enabled="{{ 'true' if hpc_ssh_access_enabled else 'false' }}">
         <thead>
           <tr>
             <th>ユーザー名</th>
@@ -105,6 +105,7 @@
             <th title="設定されたsudoグループへの所属状態">システム権限</th>
             <th>LLM API</th>
             {% if hpc_external_api_enabled %}<th>自作API公開</th>{% endif %}
+            {% if hpc_ssh_access_enabled %}<th>SSH公開</th>{% endif %}
             <th class="hpc-user-actions-heading">操作</th>
           </tr>
         </thead>
@@ -141,14 +142,21 @@
             <td class="hpc-external-api-cell">
               {% set access = u.external_api_enabled if u.external_api_enabled is defined else none %}
               {% set state = u.external_api_state | default('unknown') %}
-              {% set pending = state in ['rotating_cloudflare', 'rotating_jupyterhub', 'revoking'] %}
+              {% set pending = state in ['rotating_cloudflare', 'rotating_jupyterhub', 'revoking_cloudflare', 'revoking'] %}
               {% if access is not none %}
               <span class="hpc-api-status-badge {{ 'is-enabled' if access else 'is-disabled' }}">{{ '有効' if access else '無効' }}</span>
               {% else %}
               <span class="hpc-api-status-badge is-unknown">確認不可</span>
               {% endif %}
-              {% set state_label = {'issuing': '準備中', 'rotating_cloudflare': '更新中', 'rotating_jupyterhub': '更新中', 'revoking': '停止処理中', 'unknown': '設定エラー'}.get(state, '') %}
+              {% set state_label = {'unissued': '未発行', 'revoking_cloudflare': '失効中', 'issuing': '準備中', 'rotating_cloudflare': '更新中', 'rotating_jupyterhub': '更新中', 'revoking': '停止処理中', 'unknown': '設定エラー'}.get(state, '') %}
               {% if state_label %}<span class="hpc-api-state-note hpc-muted">{{ state_label }}</span>{% endif %}
+            </td>
+            {% endif %}
+            {% if hpc_ssh_access_enabled %}
+            <td class="hpc-external-api-cell">
+              {% set ssh_allowed = u.ssh_access_enabled | default(none) %}
+              <span class="hpc-api-status-badge {{ 'is-unknown' if ssh_allowed is none else 'is-enabled' if ssh_allowed else 'is-disabled' }}">{{ '確認不可' if ssh_allowed is none else '有効' if ssh_allowed else '無効' }}</span>
+              <span class="hpc-api-state-note hpc-muted">{{ {'unissued': '未発行', 'issuing': '準備中', 'rotating': '更新中', 'revoking': '失効中'}.get(u.ssh_access_state | default('unknown'), '') }}</span>
             </td>
             {% endif %}
             <td class="hpc-user-actions-cell">
@@ -172,7 +180,10 @@
                         {% if pending %}disabled title="処理中です"{% endif %}>自作API公開{{ '無効化' if access else '有効化' }}</button>
                 {% endif %}
                 {% endif %}
-                <div class="hpc-user-action-divider" role="separator"></div>
+                {% if hpc_ssh_access_enabled and not u.protected and u.ssh_access_enabled is defined and u.ssh_access_enabled is not none %}
+              <button type="button" role="menuitem" class="hpc-user-action-item hpc-ssh-access-btn" data-username="{{ u.username }}" data-action="{{ 'ssh_access_disable' if u.ssh_access_enabled else 'ssh_access_enable' }}" {% if u.ssh_access_state == 'revoking' %}disabled{% endif %}>SSH公開{{ '無効化' if u.ssh_access_enabled else '有効化' }}</button>
+              {% endif %}
+              <div class="hpc-user-action-divider" role="separator"></div>
                 {% if u.sudo_enabled %}
                 <button type="button" role="menuitem" class="hpc-user-action-item is-warning hpc-sudo-access-btn" data-username="{{ u.username }}" data-action="sudo_disable"{% if u.protected %} disabled title="保護ユーザーのsudo権限は解除できません"{% endif %}>sudo無効化</button>
                 {% else %}

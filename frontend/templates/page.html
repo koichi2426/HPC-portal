@@ -17,6 +17,9 @@
     <a class="nav-link" href="{{ base_url }}api-publications">自作API公開</a>
   </li>
   {% endif %}
+  {% if hpc_ssh_access_enabled %}
+  <li class="nav-item"><a class="nav-link" href="{{ base_url }}ssh-access">SSH / SFTP</a></li>
+  {% endif %}
   <li class="nav-item">
     <a class="nav-link" href="{{ base_url }}llm-api">LLM API</a>
   </li>

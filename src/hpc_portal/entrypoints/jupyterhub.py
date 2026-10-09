@@ -25,6 +25,7 @@ from hpc_portal.infrastructure.config.settings import (
     JUPYTERHUB_PORT,
     OPENWEBUI_LITELLM_BASE_URL,
 )
+from hpc_portal.infrastructure.config.ssh_access_settings import SshAccessSettings
 from hpc_portal.infrastructure.filesystem.static_asset_versions import (
     HPC_STATIC_VERSIONS,
 )
@@ -176,4 +177,6 @@ def configure_jupyterhub(c):
         c.JupyterHub.load_roles = [
             {"name": "user", "scopes": ["self", "custom:external-api:invoke!user"]}
         ]
-    start_background_tasks(external.enabled)
+    ssh = SshAccessSettings.from_env()
+    c.JupyterHub.template_vars["hpc_ssh_access_enabled"] = ssh.enabled
+    start_background_tasks(external.enabled or ssh.enabled)

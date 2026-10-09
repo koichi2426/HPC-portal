@@ -40,6 +40,10 @@
   gap: 8px;
 }
 
+.hpc-api-page .hpc-api-copy-field {
+  grid-template-columns: minmax(0, 1fr) repeat(3, 4.5rem);
+}
+
 .hpc-api-copy-field input {
   width: 100%;
   min-width: 0;
@@ -106,10 +110,8 @@
 
 .hpc-api-url {
   display: block;
-  max-width: 310px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   font-size: 12px;
 }
 
@@ -189,5 +191,15 @@
   .hpc-api-port-table td {
     padding: 8px 6px;
     font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .hpc-api-page .hpc-api-copy-field {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .hpc-api-page .hpc-api-copy-field input {
+    grid-column: 1 / -1;
   }
 }

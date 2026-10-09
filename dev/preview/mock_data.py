@@ -93,7 +93,9 @@ def account_row(name, uid, *, admin=False, display_name=""):
         "api_access": "enabled",
         "api_access_message": "",
         "external_api_enabled": True,
-        "external_api_state": "ready",
+        "external_api_state": "unissued",
+        "ssh_access_enabled": True,
+        "ssh_access_state": "unissued",
         "storage_used_bytes": 3 * 1024**3,
         "storage_used_label": "3.0 GB",
         "storage_message": "",
@@ -126,6 +128,7 @@ class MockState:
         self.publications = {name: {} for name in self.users}
         self.tokens = {name: {} for name in self.users}
         self.credentials = {name: self._credentials(name) for name in self.users}
+        self.ssh_credentials = {}
         self.models = [] if scenario == "empty" else ["qwen3:8b", "gemma3:4b"]
         self.ollama = {
             "running": scenario != "empty",
@@ -407,6 +410,9 @@ class MockState:
             "client_id": f"mock-{username}.access",
             "client_secret": f"mock-cloudflare-{self.next_id()}",
             "jupyterhub_token": f"mock-jupyterhub-{self.next_id()}",
+            "enabled": True,
+            "service_state": "unissued",
+            "hub_state": "ready",
             "expires": "無期限",
             "updated_at": time.time(),
             "base_url": "https://portal.example.com",
@@ -414,23 +420,75 @@ class MockState:
 
     def credential_payload(self, username, action):
         record = self.credentials[username]
-        if action == "rotate_cloudflare":
+        if action in {"issue", "rotate_cloudflare"}:
+            record["service_state"] = "ready"
             record.update(
                 client_id=f"mock-{username}-{self.next_id()}.access",
                 client_secret=f"mock-cloudflare-{self.next_id()}",
                 updated_at=time.time(),
             )
         elif action == "rotate_jupyterhub":
+            record["hub_state"] = "ready"
             record.update(
                 jupyterhub_token=f"mock-jupyterhub-{self.next_id()}",
                 updated_at=time.time(),
             )
+        elif action == "revoke_cloudflare":
+            record.update(service_state="unissued", client_id="", client_secret="")
+        elif action == "revoke_jupyterhub":
+            record.update(hub_state="revoked", jupyterhub_token="")
+        record["enabled"] = self.accounts[username]["external_api_enabled"]
+        self.accounts[username]["external_api_state"] = record["service_state"]
         return {
             **record,
+            "client_id": record["client_id"]
+            if record["service_state"] == "ready"
+            else "",
+            "client_secret": record["client_secret"]
+            if record["service_state"] == "ready"
+            else "",
             "apis": {
                 name: row["url"] for name, row in self.publications[username].items()
             },
         }
+
+    def ssh_payload(self, username, action):
+        """本人のSSH発行・再発行・失効をモック内で再現する。
+
+        Args:
+            username: 操作するモックユーザー。
+            action: 発行・表示などの操作名。
+
+        Returns:
+            実際の秘密値を含まないSSH設定。
+        """
+        record = self.ssh_credentials.setdefault(
+            username,
+            {
+                "hostname": "ssh.example.com",
+                "username": username,
+                "port": 22,
+                "enabled": True,
+                "state": "unissued",
+                "client_id": "",
+                "client_secret": "",
+            },
+        )
+        record["enabled"] = self.accounts[username]["ssh_access_enabled"]
+        if action in {"issue", "rotate"}:
+            if not record["enabled"]:
+                raise ValueError("管理者がSSH公開を停止しています")
+            record.update(
+                state="ready",
+                client_id=f"mock-ssh-{username}",
+                client_secret=f"mock-secret-{self.next_id()}",
+            )
+        elif action == "revoke":
+            record.update(state="unissued", client_id="", client_secret="")
+        elif action not in {"reveal", "download"}:
+            raise ValueError("操作が不正です")
+        self.accounts[username]["ssh_access_state"] = record["state"]
+        return dict(record)
 
     def account_action(self, current, data):
         action, name = data["action"], data.get("username", "")
@@ -471,6 +529,7 @@ class MockState:
                 self.credentials,
             ):
                 del records[name]
+            self.ssh_credentials.pop(name, None)
         elif action == "display_name":
             row["display_name"] = data.get("display_name", "")
         elif action == "password_regenerate":
@@ -482,8 +541,29 @@ class MockState:
         elif action in {"external_api_enable", "external_api_disable"}:
             row["external_api_enabled"] = action == "external_api_enable"
             row["external_api_state"] = (
-                "ready" if row["external_api_enabled"] else "disabled"
+                "unissued" if row["external_api_enabled"] else "disabled"
             )
+            enabled = row["external_api_enabled"]
+            self.credentials[name].update(
+                enabled=enabled,
+                service_state=row["external_api_state"],
+                client_id="",
+                client_secret="",
+                hub_state="ready" if enabled else "revoked",
+                jupyterhub_token=f"mock-jupyterhub-{self.next_id()}" if enabled else "",
+            )
+        elif action in {"ssh_access_enable", "ssh_access_disable"}:
+            row["ssh_access_enabled"] = action == "ssh_access_enable"
+            row["ssh_access_state"] = (
+                "unissued" if row["ssh_access_enabled"] else "disabled"
+            )
+            if name in self.ssh_credentials:
+                self.ssh_credentials[name].update(
+                    enabled=row["ssh_access_enabled"],
+                    state=row["ssh_access_state"],
+                    client_id="",
+                    client_secret="",
+                )
         else:
             raise ValueError("操作が不正です")
         return {"ok": True}

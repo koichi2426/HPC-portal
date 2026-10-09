@@ -20,7 +20,7 @@ from hpc_portal.infrastructure.linux import user_account_gateway as users
             True,
             "rotating_cloudflare",
         ),
-        (None, True, "issuing"),
+        (None, True, "unissued"),
     ],
 )
 async def test_account_list_separates_api_permission_from_credential_state(

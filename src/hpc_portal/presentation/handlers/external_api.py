@@ -75,26 +75,58 @@ class ExternalApiPage(BrowserHandler):
 class ExternalApiCredentials(BrowserHandler):
     @web.authenticated
     async def post(self):
-        """本人の接続情報を表示・ダウンロード・サービス別に再発行する。"""
+        """本人のService Token発行と、両トークンの個別再発行・失効を行う。"""
         try:
             op = Operation.model_validate_json(self.request.body)
             usecase = self.api_usecases()
             if op.action in {"reveal", "download"}:
-                record = usecase.queries.credential_record(self.current_user)
+                try:
+                    record = usecase.queries.credential_record(self.current_user)
+                except ValueError:
+                    if usecase.store.get("credentials", self.current_user.name):
+                        raise
+                    record = {
+                        "enabled": True,
+                        "state": "unissued",
+                        "hub_state": "unissued",
+                    }
+            elif op.action == "issue":
+                record = await usecase.issue_credentials.execute(self.current_user)
+            elif op.action == "revoke_cloudflare":
+                record = await usecase.issue_credentials.revoke_service(
+                    self.current_user
+                )
+            elif op.action == "revoke_jupyterhub":
+                record = await usecase.hub_credentials.execute(
+                    self.current_user, "revoke"
+                )
             elif op.action in {"rotate_cloudflare", "rotate_jupyterhub"}:
                 record = await usecase.rotate_credentials.execute(
                     self.current_user, op.action.removeprefix("rotate_")
                 )
             else:
                 raise ValueError("操作が不正です")
-            if not record.get("enabled") or record.get("state") != "ready":
-                raise ValueError("接続情報は発行待ちまたは利用停止中です")
+            if op.action != "reveal" and not record.get("enabled"):
+                raise ValueError("接続情報は管理者が利用を停止しています")
+            service_ready = record.get("enabled") and record.get("state") == "ready"
+            hub_ready = (
+                record.get("enabled") and record.get("hub_state", "ready") == "ready"
+            )
+            if op.action == "download" and not (service_ready and hub_ready):
+                raise ValueError("APIの両トークンが必要です")
             payload = {
                 "version": 1,
                 "username": self.current_user.name,
-                "client_id": record["client_id"],
-                "client_secret": record["client_secret"],
-                "jupyterhub_token": record["hub_token"],
+                "client_id": record.get("client_id", "") if service_ready else "",
+                "client_secret": record.get("client_secret", "")
+                if service_ready
+                else "",
+                "jupyterhub_token": record.get("hub_token", "") if hub_ready else "",
+                "enabled": record.get("enabled", True),
+                "service_state": record.get("state", "unissued"),
+                "hub_state": record.get(
+                    "hub_state", "ready" if record.get("hub_token") else "unissued"
+                ),
                 "expires": "無期限",
                 "updated_at": record.get("updated_at"),
                 "base_url": f"https://{usecase.config.public_host}",
@@ -122,15 +154,26 @@ class ApiPublicationsPage(BrowserHandler):
         """秘密値を画面へ渡さず、トークンの利用状態とAPI管理画面を表示する。"""
         config = ExternalApiSettings.from_env()
         available, state = False, "未設定"
+        enabled, service_issued, hub_ready = False, False, False
         if config.enabled:
             try:
                 record = self.api_usecases().queries.credential_record(
                     self.current_user
                 )
-                state_key = record.get("state", "issuing")
-                available = bool(record.get("enabled")) and state_key == "ready"
+                state_key = record.get("state", "unissued")
+                enabled = bool(record.get("enabled"))
+                service_issued = state_key == "ready"
+                hub_ready = (
+                    record.get(
+                        "hub_state", "ready" if record.get("hub_token") else "unissued"
+                    )
+                    == "ready"
+                )
+                available = enabled and service_issued and hub_ready
                 state = {
                     "ready": "利用可能" if available else "利用停止中",
+                    "unissued": "Service Token未発行",
+                    "revoking_cloudflare": "Service Token失効中",
                     "issuing": "発行準備中",
                     "disabled": "利用停止中",
                     "revoking": "停止処理中",
@@ -138,7 +181,8 @@ class ApiPublicationsPage(BrowserHandler):
                     "rotating_jupyterhub": "JupyterHub更新中",
                 }.get(state_key, "確認が必要")
             except (ValueError, web.HTTPError):
-                state = "準備中"
+                state = "未発行"
+                enabled = True
 
         # URLのプレビューに必要な公開情報だけを渡し、トークンは操作時に取得する。
         public_url_prefix = (
@@ -150,6 +194,9 @@ class ApiPublicationsPage(BrowserHandler):
                 "api_publications.html",
                 configured=config.enabled,
                 api_available=available,
+                credential_enabled=enabled,
+                service_issued=service_issued,
+                hub_ready=hub_ready,
                 credential_state=state,
                 public_url_prefix=public_url_prefix,
             )

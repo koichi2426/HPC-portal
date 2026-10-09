@@ -7,18 +7,20 @@
   var sortDirection = "asc";
   function apiCredentialStateLabel(state) {
     return {
+      unissued: "未発行",
       issuing: "準備中",
+      revoking_cloudflare: "失効中",
       rotating_cloudflare: "更新中",
       rotating_jupyterhub: "更新中",
       revoking: "停止処理中",
       unknown: "設定エラー"
     }[state] || "";
   }
-  function appendExternalApiCell(row, user) {
+  function appendExternalApiCell(row, user, ssh) {
     var cell = document.createElement("td");
     cell.className = "hpc-external-api-cell";
-    var enabled = user.external_api_enabled;
-    var state = user.external_api_state || "unknown";
+    var enabled = ssh ? user.ssh_access_enabled : user.external_api_enabled;
+    var state = (ssh ? user.ssh_access_state : user.external_api_state) || "unknown";
     var status = document.createElement("span");
     status.className = "hpc-api-status-badge is-" + (enabled == null ? "unknown" : enabled ? "enabled" : "disabled");
     status.textContent = enabled == null ? "確認不可" : enabled ? "有効" : "無効";
@@ -313,22 +315,24 @@
           .finally(function () { btn.disabled = false; });
       };
     });
-    document.querySelectorAll(".hpc-external-access-btn").forEach(function (btn) {
+    document.querySelectorAll(".hpc-external-access-btn, .hpc-ssh-access-btn").forEach(function (btn) {
       btn.onclick = async function () {
         var name = btn.dataset.username, action = btn.dataset.action;
         closeUserActionMenus();
-        var enabling = action === "external_api_enable";
+        var ssh = action.indexOf("ssh_access_") === 0;
+        var service = ssh ? "SSH公開" : "自作API公開";
+        var enabling = action === "external_api_enable" || action === "ssh_access_enable";
         var actionLabel = enabling ? "有効化" : "無効化";
         var confirmText = enabling
-          ? name + " の自作API公開を有効化しますか？新しい認証情報を発行します。"
-          : name + " の自作API公開を無効化しますか？\n公開を停止し、トークンを失効させます。アプリやSlurmジョブは停止しません。";
+          ? name + " の" + service + "を有効化しますか？Service Tokenは本人が必要なときに発行します。"
+          : name + " の" + service + "を無効化しますか？対象のトークンを失効させます。";
         if (!confirm(confirmText)) return;
         btn.disabled = true;
         try {
           await postAction({action: action, username: name});
-          showMsg(document.getElementById("list-msg"), name + " の自作API公開を" + actionLabel + "しました", true);
+          showMsg(document.getElementById("list-msg"), name + " の" + service + "を" + actionLabel + "しました", true);
           try { await reloadUsers(); }
-          catch (error) { showWarn(document.getElementById("list-msg"), "自作API公開は" + actionLabel + "しましたが、一覧を再読み込みできませんでした: " + error.message); }
+          catch (error) { showWarn(document.getElementById("list-msg"), service + "は" + actionLabel + "しましたが、一覧を再読み込みできませんでした: " + error.message); }
         }
         catch (error) { showMsg(document.getElementById("list-msg"), error.message, false); }
         finally { btn.disabled = false; }
@@ -447,6 +451,7 @@
           if (tbody.closest("table").dataset.externalApiEnabled === "true") {
             appendExternalApiCell(tr, u);
           }
+          if (tbody.closest("table").dataset.sshAccessEnabled === "true") appendExternalApiCell(tr, u, true);
 
           var operationCell = document.createElement("td");
           operationCell.className = "hpc-user-actions-cell";
@@ -489,8 +494,12 @@
             }
             if (tbody.closest("table").dataset.externalApiEnabled === "true" && u.external_api_enabled != null) {
               var externalEnabled = u.external_api_enabled;
-              var externalPending = ["rotating_cloudflare", "rotating_jupyterhub", "revoking"].indexOf(u.external_api_state) >= 0;
+              var externalPending = ["rotating_cloudflare", "rotating_jupyterhub", "revoking_cloudflare", "revoking"].indexOf(u.external_api_state) >= 0;
               appendActionItem("自作API公開" + (externalEnabled ? "無効化" : "有効化"), "hpc-external-access-btn", externalEnabled ? "external_api_disable" : "external_api_enable", "", externalPending, externalPending ? "処理中です" : "");
+            }
+            if (tbody.closest("table").dataset.sshAccessEnabled === "true" && u.ssh_access_enabled != null) {
+              var sshPending = u.ssh_access_state === "revoking";
+              appendActionItem("SSH公開" + (u.ssh_access_enabled ? "無効化" : "有効化"), "hpc-ssh-access-btn", u.ssh_access_enabled ? "ssh_access_disable" : "ssh_access_enable", "", sshPending, sshPending ? "処理中です" : "");
             }
           }
           var sudoDivider = document.createElement("div");

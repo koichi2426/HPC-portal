@@ -84,7 +84,7 @@ class CreateAccountUseCase:
             settings: 保護対象ユーザー・初期sudo権限・LLM公開URLの設定。
             accounts: Linuxユーザーの照合・作成・変更を行う接続先。
             issue_llm_key: 外部からLLMを呼び出すキーを発行する操作。
-            provision_external_api: 外部APIの認証情報を準備する操作。
+            provision_external_api: 自作API専用Hubトークンを自動で準備する操作。
         """
         self.settings = settings
         self.accounts = accounts
@@ -197,6 +197,7 @@ class DeleteAccountUseCase:
         revoke_llm_access: RevokeLlmAccessUseCase,
         delete_external_api_records: DeleteAccountApiRecordsUseCase,
         disable_external_api: DisableAccountApiUseCase,
+        ssh_access_factory=None,
     ):
         """この操作に必要な接続先と処理の依存を保持する。
 
@@ -206,12 +207,14 @@ class DeleteAccountUseCase:
             revoke_llm_access: 対象ユーザーのLLMキーを無効化する操作。
             delete_external_api_records: 失効済みユーザーの外部API登録を削除する操作。
             disable_external_api: 対象ユーザーの外部APIを停止・失効させる操作。
+            ssh_access_factory: SSH資格情報の削除操作を取得する関数。
         """
         self.settings = settings
         self.accounts = accounts
         self.revoke_llm_access = revoke_llm_access
         self.delete_external_api_records = delete_external_api_records
         self.disable_external_api = disable_external_api
+        self.ssh_access_factory = ssh_access_factory
 
     async def execute(self, actor, request):
         """削除可否を確認し、外部APIを失効させてからLinuxユーザーを削除する。
@@ -233,6 +236,9 @@ class DeleteAccountUseCase:
         # 同名ユーザーを再作成しても、以前の接続情報が使われないよう先に失効する。
         try:
             await self.disable_external_api.execute(username)
+            ssh = self.ssh_access_factory() if self.ssh_access_factory else None
+            if ssh:
+                await ssh.delete_user(username)
         except Exception:
             raise UseCaseError(
                 "外部 API の失効処理が未完了です。再試行してください", "unavailable"
@@ -242,6 +248,8 @@ class DeleteAccountUseCase:
             raise UseCaseError(err)
 
         await self.delete_external_api_records.execute(username)
+        if ssh:
+            await ssh.forget_user(username)
         key_warning = await asyncio.to_thread(self.revoke_llm_access.execute, username)
 
         body = {"ok": True}
@@ -348,7 +356,7 @@ class SetAccountApiAccessUseCase:
         Args:
             settings: 保護対象ユーザー・初期sudo権限・LLM公開URLの設定。
             disable_external_api: 対象ユーザーの外部APIを停止・失効させる操作。
-            enable_external_api: 外部APIの認証情報を再び発行する操作。
+            enable_external_api: 利用許可を戻し、Hubトークンを準備する操作。
         """
         self.settings = settings
         self.disable_external_api = disable_external_api
@@ -502,6 +510,7 @@ class ListAccountsUseCase:
         llm_client: LlmClient,
         get_llm_access_state: GetLlmAccessStateUseCase,
         external_api_factory: Callable[[], ExternalApiUseCases | None],
+        ssh_access_factory=None,
     ):
         """この操作に必要な接続先と処理の依存を保持する。
 
@@ -510,11 +519,13 @@ class ListAccountsUseCase:
             llm_client: LiteLLM管理APIへ接続するクライアント。
             get_llm_access_state: 対象ユーザーのLLM利用状態を取得する操作。
             external_api_factory: 外部APIの共有usecaseを返す関数。機能無効時はNoneを返す。
+            ssh_access_factory: SSH公開の共有操作を取得する関数。
         """
         self.accounts = accounts
         self.llm_client = llm_client
         self.get_llm_access_state = get_llm_access_state
         self.external_api_factory = external_api_factory
+        self.ssh_access_factory = ssh_access_factory
 
     async def execute(self):
         """Linuxユーザー一覧に、LLM・外部APIの状態とホーム使用量を付ける。
@@ -562,7 +573,7 @@ class ListAccountsUseCase:
                 if external:
                     record = external.store.get("credentials", row["username"])
                     updated["external_api_state"] = (record or {}).get(
-                        "state", "issuing"
+                        "state", "unissued"
                     )
                     # 利用許可と発行状態を分け、更新中のトークンも無効と誤表示しない。
                     updated["external_api_enabled"] = (record or {}).get(
@@ -571,6 +582,15 @@ class ListAccountsUseCase:
             except Exception:
                 updated["external_api_state"] = "unknown"
                 updated["external_api_enabled"] = None
+            try:
+                ssh = self.ssh_access_factory() if self.ssh_access_factory else None
+                if ssh:
+                    record = ssh.store.get("ssh_credentials", row["username"]) or {}
+                    updated["ssh_access_enabled"] = record.get("enabled", True)
+                    updated["ssh_access_state"] = record.get("state", "unissued")
+            except Exception:
+                updated["ssh_access_enabled"] = None
+                updated["ssh_access_state"] = "unknown"
             return updated
 
         return list(await asyncio.gather(*(enrich(row) for row in rows)))
@@ -590,14 +610,14 @@ class ProvisionAccountApiUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self, username):
-        """外部API公開が有効な場合、対象ユーザーの接続情報を準備する。
+        """外部API有効時にHubトークンを準備し、Service Tokenは発行しない。
 
         Args:
             username: 対象のLinuxユーザー名。
         """
         usecase = self.external_api_factory()
         if usecase:
-            await usecase.issue_credentials.execute(
+            await usecase.hub_credentials.execute(
                 await usecase.hub_tokens.user(username)
             )
 
@@ -640,7 +660,7 @@ class EnableAccountApiUseCase:
         self.external_api_factory = external_api_factory
 
     async def execute(self, username):
-        """外部API公開が有効な場合、失効済みの接続情報を新しく発行する。
+        """外部APIの利用を再び許可し、Hubトークンだけを自動で準備する。
 
         Args:
             username: 対象のLinuxユーザー名。
@@ -674,3 +694,45 @@ class DeleteAccountApiRecordsUseCase:
         usecase = self.external_api_factory()
         if usecase:
             await usecase.delete_user_records.execute(username)
+
+
+class SetAccountSshAccessUseCase:
+    def __init__(self, *, settings, ssh_access_factory):
+        """保護対象の設定とSSH利用許可の操作を保持する。
+
+        Args:
+            settings: 変更できない保護ユーザーの設定。
+            ssh_access_factory: SSH公開の共有操作を取得する関数。
+        """
+        self.settings = settings
+        self.ssh_access_factory = ssh_access_factory
+
+    async def execute(self, actor, request):
+        """保護対象を確認し、Cloudflare経由のSSH利用許可を変更する。
+
+        Args:
+            actor: 操作した管理者のユーザー名。
+            request: 検証済みの操作と対象ユーザー。
+
+        Returns:
+            操作完了を示す成功状態。
+
+        Raises:
+            UseCaseError: 保護対象への操作、または失効・設定変更に失敗した場合。
+        """
+        Account(
+            request.username, request.username in self.settings.protected_users
+        ).require_access_changeable()
+        try:
+            ssh = self.ssh_access_factory()
+            if ssh is None:
+                raise ValueError("SSH公開は未設定です")
+            await ssh.set_allowed(
+                request.username, request.action == "ssh_access_enable"
+            )
+        except Exception:
+            raise UseCaseError(
+                "SSH公開の変更が未完了です。再試行してください", "unavailable"
+            ) from None
+        log_user_admin_success(request.action, actor, request.username)
+        return {"ok": True}

@@ -129,6 +129,8 @@ class HpcAdminUsersApiHandler(BaseHandler):
                     "sudo_disable": dependencies.users.sudo,
                     "external_api_enable": dependencies.users.external_api,
                     "external_api_disable": dependencies.users.external_api,
+                    "ssh_access_enable": dependencies.users.ssh_access,
+                    "ssh_access_disable": dependencies.users.ssh_access,
                     "api_enable": dependencies.users.api,
                     "api_disable": dependencies.users.api,
                 }

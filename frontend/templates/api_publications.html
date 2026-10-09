@@ -7,7 +7,7 @@
   </div>
 
   {% if configured %}
-  <section class="gx10-admin-card" id="api-tokens" data-api-credentials aria-labelledby="api-tokens-title">
+  <section class="gx10-admin-card" id="api-tokens" data-api-credentials data-credential-enabled="{{ 'true' if credential_enabled else 'false' }}" aria-labelledby="api-tokens-title">
     <div class="hpc-row-between">
       <div class="hpc-api-section-heading">
         <h3 class="hpc-section-title" id="api-tokens-title">APIトークン</h3>
@@ -22,8 +22,12 @@
           <div class="hpc-api-copy-field">
             <input id="credential-{{ key }}" class="form-control" data-credential-value="{{ key }}" type="{{ 'password' if key in ['client_secret', 'jupyterhub_token'] else 'text' }}" readonly autocomplete="off" spellcheck="false" placeholder="{{ '取得中…' if api_available else '—' }}">
             <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-copy-credential="{{ key }}" aria-label="{{ label }}をコピー" disabled>コピー</button>
-            {% if key in ['client_secret', 'jupyterhub_token'] %}
-            <button type="button" class="gx10-admin-btn gx10-admin-btn-warn" data-credential-action="{{ 'rotate_cloudflare' if key == 'client_secret' else 'rotate_jupyterhub' }}" data-api-operation aria-label="{{ 'Cloudflare Service Token' if key == 'client_secret' else 'JupyterHub API Token' }}を再発行" {% if not api_available %}disabled{% endif %}>再発行</button>
+            {% if key == 'client_secret' %}
+            <button type="button" class="gx10-admin-btn gx10-admin-btn-warn" data-credential-action="{{ 'rotate_cloudflare' if service_issued else 'issue' }}" data-credential-kind="cloudflare" {% if not credential_enabled %}disabled{% endif %}>{{ '再発行' if service_issued else '発行' }}</button>
+            <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-credential-action="revoke_cloudflare" {% if not service_issued %}disabled{% endif %}>失効</button>
+            {% elif key == 'jupyterhub_token' %}
+            <button type="button" class="gx10-admin-btn gx10-admin-btn-warn" data-credential-action="rotate_jupyterhub" {% if not credential_enabled %}disabled{% endif %}>再発行</button>
+            <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-credential-action="revoke_jupyterhub" {% if not hub_ready %}disabled{% endif %}>失効</button>
             {% endif %}
           </div>
         </div>
@@ -35,6 +39,7 @@
         <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-download-config data-api-operation {% if not api_available %}disabled{% endif %}>設定をダウンロード</button>
       </div>
     </div>
+    <p class="hpc-muted">JupyterHubトークンは自動発行されます。Cloudflare Service Tokenは必要なときに発行してください。各トークンの再発行・失効は独立しています。</p>
     <p class="hpc-api-message" data-credential-message role="status" aria-live="polite" hidden></p>
   </section>
 

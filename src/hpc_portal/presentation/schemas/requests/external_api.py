@@ -57,6 +57,9 @@ class Registration(BaseModel):
 class Operation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
+        "issue",
+        "revoke_cloudflare",
+        "revoke_jupyterhub",
         "reveal",
         "download",
         "rotate_cloudflare",

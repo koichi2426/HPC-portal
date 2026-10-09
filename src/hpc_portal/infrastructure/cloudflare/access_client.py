@@ -1,90 +1,27 @@
 """Cloudflare Accessを管理し、エラー本文を画面やログへ流さない。"""
 
-import aiohttp
+import asyncio
+
+from hpc_portal.infrastructure.cloudflare.api_client import (
+    CloudflareApiClient,
+    CloudflareError,
+)
 
 
-class CloudflareError(RuntimeError):
-    """秘密値を含む応答本文を出さずに通知する、Access管理操作の失敗。"""
-
-    pass
-
-
-class CloudflareAccessClient:
-    def __init__(self, config):
+class CloudflareAccessClient(CloudflareApiClient):
+    def __init__(self, config, *, token_lock=None):
         """Cloudflare管理APIへ接続する設定を保持する。
 
         Args:
             config: CloudflareのアカウントID・管理キー・公開ドメインの設定。
+            token_lock: 用途をまたぐ発行上限の確認と作成を直列化するロック。
         """
+        super().__init__(config.api_token)
         self.config = config
+        self.token_lock = token_lock or asyncio.Lock()
         self.base = (
             f"https://api.cloudflare.com/client/v4/accounts/{config.account_id}/access"
         )
-
-    async def request(self, method, path, data=None, *, allow_missing=False):
-        """Cloudflare管理APIへ接続し、エラー本文を公開せず結果だけを返す。
-
-        Args:
-            method: 使用するHTTPメソッド。
-            path: アカウント配下の管理APIの相対パス。
-            data: 送信するJSONデータ。
-            allow_missing: 404応答を未作成として許容する場合はTrue。
-
-        Returns:
-            Cloudflare応答のresult。404を許容した場合はNone。
-
-        Raises:
-            CloudflareError: 管理APIへの接続・更新に失敗した場合、または管理対象を一意に確認できない場合。
-        """
-        # 認証キーを別の接続先へ送らないよう、管理APIのリダイレクトは追わない。
-        try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                async with session.request(
-                    method,
-                    self.base + path,
-                    json=data,
-                    headers={"Authorization": "Bearer " + self.config.api_token},
-                    allow_redirects=False,
-                ) as response:
-                    if response.status == 404 and allow_missing:
-                        return None
-                    if response.status >= 300:
-                        raise CloudflareError(
-                            f"Cloudflare の設定に失敗しました (HTTP {response.status})"
-                        )
-
-                    body = await response.json()
-                    if not body.get("success"):
-                        raise CloudflareError(
-                            "Cloudflare が設定変更を受け付けませんでした"
-                        )
-                    return body.get("result")
-        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
-            raise CloudflareError(
-                "Cloudflare の応答を確認できません。再試行してください"
-            ) from exc
-
-    async def listing(self, path):
-        """ページ単位の管理API応答をまとめて一覧を取得する。
-
-        Args:
-            path: アカウント配下の管理APIの相対パス。
-
-        Returns:
-            全ページのレコード一覧。
-
-        Raises:
-            CloudflareError: 管理APIへの接続・更新に失敗した場合、または管理対象を一意に確認できない場合。
-        """
-        rows = []
-        for page in range(1, 1001):
-            batch = await self.request("GET", f"{path}?page={page}&per_page=100")
-            rows.extend(batch)
-            if len(batch) < 100:
-                return rows
-        raise CloudflareError("Cloudflare の一覧を取得できません")
 
     async def issue(self, name):
         """管理名に対応するService Tokenを発行し、未確認の発行は再発行で回復する。
@@ -98,20 +35,21 @@ class CloudflareAccessClient:
         Raises:
             CloudflareError: 管理APIへの接続・更新に失敗した場合、または管理対象を一意に確認できない場合。
         """
-        rows = await self.listing("/service_tokens")
-        matches = [row for row in rows if row.get("name") == name]
-        if len(matches) > 1:
-            raise CloudflareError("重複した管理トークンを確認してください")
-        if matches:
-            # 作成応答を失って秘密値が分からない場合、同名トークンを再発行して回復する。
-            return await self.rotate(matches[0]["id"])
+        async with self.token_lock:
+            rows = await self.listing("/service_tokens")
+            matches = [row for row in rows if row.get("name") == name]
+            if len(matches) > 1:
+                raise CloudflareError("重複した管理トークンを確認してください")
+            if matches:
+                # 作成応答を失って秘密値が分からない場合、同名トークンを再発行して回復する。
+                return await self.rotate(matches[0]["id"])
 
-        if len(rows) >= self.config.token_limit:
-            raise CloudflareError("Service Token の発行上限に達しています")
+            if len(rows) >= self.config.token_limit:
+                raise CloudflareError("Service Token の発行上限に達しています")
 
-        return await self.request(
-            "POST", "/service_tokens", {"name": name, "duration": "forever"}
-        )
+            return await self.request(
+                "POST", "/service_tokens", {"name": name, "duration": "forever"}
+            )
 
     async def rotate(self, token_id):
         """既存Service Tokenの秘密値を再発行する。

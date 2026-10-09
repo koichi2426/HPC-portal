@@ -72,6 +72,7 @@ class PreviewHandler(web.RequestHandler):
             "no_spawner_check": True,
             "hpc_static_versions": versions,
             "hpc_external_api_enabled": True,
+            "hpc_ssh_access_enabled": True,
             "hpc_public_scheme": "http",
             "hpc_job_dns_domain": "localhost",
             "hpc_portal_admin_users": ["admin"],
@@ -126,12 +127,25 @@ class PageHandler(PreviewHandler):
             self.render_page(
                 "api_publications.html",
                 configured=True,
-                api_available=enabled,
-                credential_state="利用可能" if enabled else "利用停止中",
+                api_available=enabled
+                and self.state.credentials[user.name].get("service_state") == "ready",
+                credential_enabled=enabled,
+                service_issued=self.state.credentials[user.name].get("service_state")
+                == "ready",
+                hub_ready=self.state.credentials[user.name].get("hub_state") == "ready",
+                credential_state=(
+                    "Service Token発行済み"
+                    if self.state.credentials[user.name].get("service_state") == "ready"
+                    else "Service Token未発行"
+                )
+                if enabled
+                else "利用停止中",
                 public_url_prefix=(
                     f"https://portal.example.com/hub/user-api/{user.name}/"
                 ),
             )
+        elif self.page == "ssh":
+            self.render_page("ssh_access.html", configured=True)
         elif self.page == "password":
             self.render_page("account_password.html")
         elif self.page == "llm_api":
@@ -343,6 +357,9 @@ class MockApiHandler(PreviewHandler):
             self.require_external_api()
             action = Operation.model_validate(data).action
             if action not in {
+                "issue",
+                "revoke_cloudflare",
+                "revoke_jupyterhub",
                 "reveal",
                 "download",
                 "rotate_cloudflare",
@@ -354,6 +371,8 @@ class MockApiHandler(PreviewHandler):
                     "Content-Disposition", 'attachment; filename="hpc-api.json"'
                 )
             return self.state.credential_payload(user.name, action)
+        if self.kind == "ssh_credentials":
+            return self.state.ssh_payload(user.name, data.get("action"))
         if self.kind == "publications":
             self.require_external_api()
             if "action" not in data:

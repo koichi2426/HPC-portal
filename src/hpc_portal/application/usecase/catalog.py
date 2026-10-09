@@ -29,6 +29,7 @@ from hpc_portal.application.usecase.account_management_usecase import (
     ResetAccountPasswordUseCase,
     SetAccountApiAccessUseCase,
     SetAccountLlmAccessUseCase,
+    SetAccountSshAccessUseCase,
     SetAccountSudoUseCase,
 )
 from hpc_portal.application.usecase.api_credentials_usecase import (
@@ -54,6 +55,9 @@ from hpc_portal.application.usecase.api_publication_usecase import (
 )
 from hpc_portal.application.usecase.api_synchronization_usecase import (
     SynchronizeUserApisUseCase,
+)
+from hpc_portal.application.usecase.hub_credentials_usecase import (
+    ManageHubCredentialsUseCase,
 )
 from hpc_portal.application.usecase.inference_runtime_usecase import (
     CheckInferenceUpdateUseCase,
@@ -129,6 +133,7 @@ class ExternalApiUseCases:
     relay: HttpRelay
     listeners: ListenerInventory
     issue_credentials: IssueApiCredentialsUseCase
+    hub_credentials: ManageHubCredentialsUseCase
     rotate_credentials: RotateApiCredentialsUseCase
     revoke_credentials: RevokeApiCredentialsUseCase
     enable_credentials: EnableApiCredentialsUseCase
@@ -156,6 +161,7 @@ class AccountUseCases:
     password_regenerate: ResetAccountPasswordUseCase
     sudo: SetAccountSudoUseCase
     external_api: SetAccountApiAccessUseCase
+    ssh_access: SetAccountSshAccessUseCase
     api: SetAccountLlmAccessUseCase
     change_password: ChangeAccountPasswordUseCase
     snapshot: ListAccountsUseCase

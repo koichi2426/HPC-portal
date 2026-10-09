@@ -1,6 +1,10 @@
 # Secrets
 ansible/inventory/group_vars/all/secret.yml
 ansible/inventory/group_vars/all/nfs_mounts.yml
+ansible/inventory/group_vars/all/optional_features.yml
+# 移行前の任意機能設定もGitへ追加しない。
+ansible/inventory/group_vars/all/ssh_access.yml
+ansible/inventory/group_vars/all/external_api.yml
 ansible/inventory/*.ini
 !ansible/inventory/production.ini.example
 
@@ -24,3 +28,6 @@ htmlcov/
 
 # Local manuals (not published to GitHub)
 /docs/
+
+# ローカルのエージェント向け指示
+/AGENTS.md

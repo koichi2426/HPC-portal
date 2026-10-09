@@ -36,6 +36,7 @@ class SynchronizeUserApisUseCase:
         port_guard: PortGuard,
         disable_user: DisableUserApisUseCase,
         issue_credentials: IssueApiCredentialsUseCase,
+        hub_credentials,
         refresh_publication: RefreshApiPublicationUseCase,
     ):
         """この操作に必要な接続先と処理の依存を保持する。
@@ -47,7 +48,8 @@ class SynchronizeUserApisUseCase:
             hub_tokens: JupyterHubのユーザー取得と専用トークン管理を行う接続先。
             port_guard: 公開先ポートへの直接接続を制限・確認する接続先。
             disable_user: 対象ユーザーの公開停止と認証情報の失効を行う操作。
-            issue_credentials: 両サービスのトークンを揃える操作。
+            issue_credentials: 依頼済みService Tokenの発行を復旧する操作。
+            hub_credentials: 各ユーザーのHubトークンを自動で準備する操作。
             refresh_publication: 公開先の希望状態と実際の状態を同期する操作。
         """
         self.sync_lock = sync_lock
@@ -57,6 +59,7 @@ class SynchronizeUserApisUseCase:
         self.port_guard = port_guard
         self.disable_user = disable_user
         self.issue_credentials = issue_credentials
+        self.hub_credentials = hub_credentials
         self.refresh_publication = refresh_publication
 
     async def execute(self):
@@ -80,9 +83,12 @@ class SynchronizeUserApisUseCase:
             # 個別の失敗は次回へ持ち越し、他ユーザーの同期は続ける。
             for row in rows:
                 try:
-                    await self.issue_credentials.execute(
-                        await self.hub_tokens.user(row["username"])
-                    )
+                    user = await self.hub_tokens.user(row["username"])
+                    record = await self.hub_credentials.execute(user)
+                    if record.get("state") in {"issuing", "rotating_cloudflare"}:
+                        await self.issue_credentials.execute(user)
+                    elif record.get("state") == "revoking_cloudflare":
+                        await self.issue_credentials.revoke_service(user)
                 except Exception:
                     log.warning("External API issuance pending for %s", row["username"])
 
