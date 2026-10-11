@@ -16,6 +16,7 @@ HPC_PORTAL_JS_FILES = (
     "llm-api.js",
     "external-api.js",
     "api-publications.js",
+    "ssh-access.js",
     "password.js",
     "spawn-form.js",
 )
