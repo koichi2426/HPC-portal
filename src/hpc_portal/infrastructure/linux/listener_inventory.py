@@ -12,6 +12,10 @@ from hpc_portal.infrastructure.linux.process_display_name import (
     resolve_process_display_name,
 )
 
+# ポータルが起動したJupyterLab本体のプロセス名。OSの名前は15文字で切れる。
+# 公開しても本体の認証で拒否されて使えないため、公開候補から外す。
+PORTAL_SERVER_PROCESS_NAMES = frozenset({"batchspawner-si", "jupyterhub-sing"})
+
 
 def candidate_id(row):
     """PIDやポートが再利用されても、別の待受プロセスを同じ候補として扱わない。
@@ -135,6 +139,8 @@ class LinuxListenerInventory:
             try:
                 before = process_snapshot(connection.pid)
                 if before["uid"] != uid or before["netns"] != host_ns:
+                    continue
+                if before["display_name"] in PORTAL_SERVER_PROCESS_NAMES:
                     continue
                 link = os.readlink(f"/proc/{connection.pid}/fd/{connection.fd}")
                 if not link.startswith("socket:["):
