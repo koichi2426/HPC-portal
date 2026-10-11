@@ -488,24 +488,36 @@ class ListApiPortsUseCase:
         *,
         accounts: UserAccountGateway,
         listeners: ListenerInventory,
+        store: RecordStore,
     ):
         """この操作に必要な接続先と処理の依存を保持する。
 
         Args:
             accounts: Linuxユーザーの照合・作成・変更を行う接続先。
             listeners: 待受候補の取得とプロセスの同一性確認を行う接続先。
+            store: 認証情報・公開設定・ポート保護のレコード保存先。
         """
         self.accounts = accounts
         self.listeners = listeners
+        self.store = store
 
     async def execute(self, user):
-        """本人の待受プロセスと、その時点で利用できる空きポート候補を取得する。
+        """本人の待受プロセスと、その時点で利用できる空きポート範囲を取得する。
 
         Args:
             user: 操作対象のJupyterHubユーザー。
 
         Returns:
-            確認時刻・空きポート候補・本人の待受プロセス一覧。
+            確認時刻・空きポート範囲・本人の待受プロセス一覧。
         """
         entry = self.accounts.getpwnam(user.name)
-        return await asyncio.to_thread(self.listeners.ports, entry.pw_uid)
+
+        # アプリが停止中でも、登録済みのポートは他の利用者へ案内しない。
+        registered = set()
+        for key in self.store.names("publications"):
+            record = self.store.get("publications", key) or {}
+            port = (record.get("target") or {}).get("port")
+            if port is not None:
+                registered.add(port)
+
+        return await asyncio.to_thread(self.listeners.ports, entry.pw_uid, registered)

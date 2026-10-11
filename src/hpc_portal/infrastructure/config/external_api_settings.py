@@ -32,7 +32,6 @@ class ExternalApiSettings:
         8890,
         11434,
     )
-    candidate_count: int = 24
     max_apps: int = 50
     body_limit: int = 64 * 1024 * 1024
     timeout: int = 60

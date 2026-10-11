@@ -11,6 +11,8 @@
     var candidates = [];
     var apps = [];
     var portsLoaded = false;
+    var portsExpanded = false;
+    var freeRanges = [];
     var appsLoaded = false;
     var loadingPorts = false;
     var loadingApps = false;
@@ -81,31 +83,33 @@
       return button;
     }
 
-    // 確認できた連番だけをまとめ、使用中の番号をまたぐ範囲を作らない。
-    function renderPorts(ports) {
-      var numbers = Array.from(new Set(ports)).sort(function (a, b) { return a - b; });
-      var ranges = [];
-      numbers.forEach(function (port) {
-        var last = ranges[ranges.length - 1];
-        if (last && port === last[1] + 1 && last[1] - last[0] < 15) last[1] = port;
-        else ranges.push([port, port]);
-      });
-
+    // 使用中の番号で区切られた空き範囲を3列で並べ、5行を超える分は折りたたむ。
+    function renderPorts(ranges) {
+      var columns = 3, visibleRows = 5;
+      freeRanges = ranges;
       var list = root.querySelector("[data-free-ports]");
+      var toggle = root.querySelector("[data-ports-toggle]");
+      var rows = Math.ceil(ranges.length / columns);
+      toggle.hidden = rows <= visibleRows;
       if (!ranges.length) {
-        emptyRow(list, 3, "空きポート候補はありません");
+        emptyRow(list, columns, "空きポート候補はありません");
         return;
       }
+
       list.replaceChildren();
-      for (var index = 0; index < ranges.length; index += 3) {
+      for (var index = 0; index < rows; index += 1) {
         var row = el("tr");
-        for (var column = 0; column < 3; column += 1) {
-          var range = ranges[index + column];
+        row.hidden = !portsExpanded && index >= visibleRows;
+        for (var column = 0; column < columns; column += 1) {
+          var range = ranges[index * columns + column];
           var text = range ? (range[0] === range[1] ? String(range[0]) : range[0] + "–" + range[1]) : "";
           row.appendChild(el("td", text));
         }
         list.appendChild(row);
       }
+      toggle.textContent = portsExpanded ? "折りたたむ" :
+        "残り" + (ranges.length - columns * visibleRows) + "件を表示";
+      toggle.setAttribute("aria-expanded", String(portsExpanded));
     }
 
     function renderCandidates() {
@@ -166,7 +170,7 @@
         if (document.hidden || (!force && isInteracting("candidate"))) return false;
         candidates = data.listeners;
         portsLoaded = true;
-        renderPorts(data.free);
+        renderPorts(data.free_ranges);
         renderCandidates();
         updated("ports", data.checked_at);
         message("ports", "");
@@ -446,6 +450,10 @@
       if (portsLoaded) renderCandidates();
     });
     root.querySelector("[data-refresh-ports]").addEventListener("click", function () { refreshPorts(true); });
+    root.querySelector("[data-ports-toggle]").addEventListener("click", function () {
+      portsExpanded = !portsExpanded;
+      renderPorts(freeRanges);
+    });
     root.querySelector("[data-refresh-publications]").addEventListener("click", function () { refreshApps(true); });
     document.addEventListener("click", function (event) {
       if (openMenu && !openMenu.contains(event.target) && event.target !== menuTrigger) closeMenu(false);

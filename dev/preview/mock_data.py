@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from hpc_portal.domain.jobs.execution_policy import ExecutionPolicy
 from hpc_portal.domain.jobs.settings import JobSettings, runtime_from_hours_choice
+from hpc_portal.infrastructure.linux.listener_inventory import free_port_ranges
 from hpc_portal.presentation.job_allocation import allocation_summary
 from hpc_portal.presentation.job_form_renderer import JobFormSettings
 from hpc_portal.presentation.schemas.responses.resources import HpcResourceSnapshot
@@ -368,11 +369,14 @@ class MockState:
                 },
             ]
         )
+        reserved = [8000, 8001, 8888]
+        # 折りたたみ表示を確認できるよう、他の利用者の使用中ポートを散らして置く。
+        used = [row["port"] for row in listeners] + list(range(3100, 8000, 250))
         return {
             "listeners": listeners,
-            "free": [3001, 3002, 3003, 8081],
+            "free_ranges": free_port_ranges(3000, 9000, used + reserved),
             "range": [3000, 9000],
-            "reserved": [8000, 8001, 8888],
+            "reserved": reserved,
             "checked_at": time.time(),
         }
 

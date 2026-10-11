@@ -26,6 +26,27 @@ def candidate_id(row):
     return hashlib.sha256(repr(identity).encode()).hexdigest()
 
 
+def free_port_ranges(start, end, blocked):
+    """使用できない番号を切れ目にして、範囲内の空き番号を連続範囲にまとめる。
+
+    Args:
+        start: 範囲の開始番号。
+        end: 範囲の終了番号。
+        blocked: 使用中・予約済み・登録済みのポート番号。
+
+    Returns:
+        [開始, 終了]の一覧。
+    """
+    ranges = []
+    for port in sorted({p for p in blocked if start <= p <= end}):
+        if start < port:
+            ranges.append([start, port - 1])
+        start = port + 1
+    if start <= end:
+        ranges.append([start, end])
+    return ranges
+
+
 def process_snapshot(pid, proc_root=Path("/proc")):
     """秘密値を含む引数・環境変数を読まず、プロセスの所有者と実行情報を取得する。
 
@@ -223,14 +244,15 @@ class LinuxListenerInventory:
         except (psutil.Error, OSError, KeyError):
             raise ValueError("接続先が終了または変更されています") from None
 
-    def ports(self, uid):
-        """使用中・予約済みポートを除き、bind可能な候補を返す。予約は行わない。
+    def ports(self, uid, registered=()):
+        """使用中・予約済み・登録済みポートを切れ目にした空き範囲を返す。予約は行わない。
 
         Args:
             uid: 照合するLinuxユーザーのUID。
+            registered: API公開に登録済みのポート番号。
 
         Returns:
-            確認時刻・候補範囲・予約ポート・空き候補・本人の待受一覧。
+            確認時刻・候補範囲・予約ポート・空き範囲・本人の待受一覧。
 
         Raises:
             ValueError: 非特権ポートの開始番号を取得できない場合。
@@ -243,24 +265,17 @@ class LinuxListenerInventory:
             )
         except (OSError, ValueError):
             raise ValueError("ポートの権限設定を確認できません") from None
-        candidates = []
-        for port in range(
-            max(self.config.port_start, threshold), self.config.port_end + 1
-        ):
-            if port in used or port in self.config.reserved_ports:
-                continue
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-                    probe.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-            candidates.append(port)
-            if len(candidates) >= self.config.candidate_count:
-                break
+
+        # 範囲全体へのbindは重いため、ホスト全体のソケット一覧だけで判定する。
+        free = free_port_ranges(
+            max(self.config.port_start, threshold),
+            self.config.port_end,
+            used | set(self.config.reserved_ports) | set(registered),
+        )
         return {
             "checked_at": time.time(),
             "range": [self.config.port_start, self.config.port_end],
             "reserved": list(self.config.reserved_ports),
-            "free": candidates,
+            "free_ranges": free,
             "listeners": rows,
         }

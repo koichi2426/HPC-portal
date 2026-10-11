@@ -206,14 +206,15 @@ class ListenerInventory(Protocol):
         """
         ...
 
-    def ports(self, uid: int) -> dict:
-        """使用中・予約済みポートを除き、bind可能な候補を返す。予約は行わない。
+    def ports(self, uid: int, registered=()) -> dict:
+        """使用中・予約済み・登録済みポートを切れ目にした空き範囲を返す。予約は行わない。
 
         Args:
             uid: 照合するLinuxユーザーのUID。
+            registered: API公開に登録済みのポート番号。
 
         Returns:
-            確認時刻・候補範囲・予約ポート・空き候補・本人の待受一覧。
+            確認時刻・候補範囲・予約ポート・空き範囲・本人の待受一覧。
 
         Raises:
             ValueError: 非特権ポートの開始番号を取得できない場合。

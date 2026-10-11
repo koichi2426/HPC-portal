@@ -58,6 +58,7 @@
     <table class="hpc-api-port-table" aria-label="空きポート候補">
       <tbody data-free-ports><tr><td colspan="3" class="hpc-empty">{{ '確認中…' if api_available else '—' }}</td></tr></tbody>
     </table>
+    <button type="button" class="gx10-admin-btn gx10-admin-btn-muted hpc-api-ports-toggle" data-ports-toggle aria-expanded="false" hidden></button>
     <p class="hpc-api-message" data-ports-message role="status" aria-live="polite" hidden></p>
   </section>
 

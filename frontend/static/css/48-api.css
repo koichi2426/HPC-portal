@@ -84,6 +84,10 @@
   color: var(--hpc-muted);
 }
 
+.hpc-api-ports-toggle {
+  margin-top: 10px;
+}
+
 .hpc-api-search {
   width: min(100%, 310px);
 }

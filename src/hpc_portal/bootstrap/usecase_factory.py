@@ -269,7 +269,9 @@ def build_api_usecases(
     remove_remote_publication = RemoveRemoteApiPublicationUseCase(
         cloudflare=cloudflare, config=config, store=store, queries=queries
     )
-    list_ports = ListApiPortsUseCase(accounts=accounts, listeners=listeners)
+    list_ports = ListApiPortsUseCase(
+        accounts=accounts, listeners=listeners, store=store
+    )
     authorize_request = AuthorizeApiInvocationUseCase(
         queries=queries,
         credential_repository=credential_repository,
