@@ -11,7 +11,7 @@ PORT         ?= 8001
 PB           := $(PLAYBOOK) -i $(INV)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup check-optional-config dev test lint format check-local check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
+.PHONY: help setup check-legacy-layout check-optional-config dev test lint format check-local check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
 	common nfs-mounts slurm postgres litellm ollama jupyterhub apptainer searxng cloudflared \
 	search-mcp status gpu cuda services processes
 
@@ -21,13 +21,29 @@ help: ## ターゲット一覧
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@printf '\n例: make deploy   make jupyterhub   make status\n\n'
 
+# 移動前の配置に設定が残ったままsetupすると、本番と異なる秘密値で上書きするおそれがある。
+check-legacy-layout:
+	@legacy=""; \
+	for f in inventory/*.ini group_vars/all/secret.yml group_vars/all/nfs_mounts.yml; do \
+		if [ -e "$$f" ]; then legacy="$$legacy $$f"; fi; \
+	done; \
+	if [ -n "$$legacy" ]; then \
+		echo "エラー: 旧配置の設定ファイルが残っています。ansible/inventory/ へ移してから再実行してください"; \
+		for f in $$legacy; do \
+			case "$$f" in inventory/*) dest="ansible/$$f" ;; *) dest="ansible/inventory/$$f" ;; esac; \
+			if [ -e "$$dest" ]; then echo "  $$f: $$dest と内容を確認し、旧ファイルを削除"; \
+			else echo "  mv $$f $$dest"; fi; \
+		done; \
+		exit 1; \
+	fi
+
 check-optional-config:
 	@if [ -e ansible/inventory/group_vars/all/external_api.yml ] || [ -e ansible/inventory/group_vars/all/ssh_access.yml ]; then \
 		echo "エラー: 旧設定をoptional_features.ymlへ統合し、旧ファイルを除いてください"; \
 		exit 1; \
 	fi
 
-setup: check-optional-config ## インベントリと設定ファイルを初期化（設定済みの値は維持）
+setup: check-legacy-layout check-optional-config ## インベントリと設定ファイルを初期化（設定済みの値は維持）
 	@test -f $(INV) || cp ansible/inventory/production.ini.example $(INV)
 	@test -f ansible/inventory/group_vars/all/secret.yml || cp ansible/inventory/group_vars/all/secret.yml.example ansible/inventory/group_vars/all/secret.yml
 	@test -f ansible/inventory/group_vars/all/nfs_mounts.yml || cp ansible/inventory/group_vars/all/nfs_mounts.yml.example ansible/inventory/group_vars/all/nfs_mounts.yml
@@ -50,7 +66,7 @@ format: ## Pythonの書式を統一
 
 check-local: lint test ## 静的検証・書式・テストをまとめて実行
 
-check-inv: check-optional-config
+check-inv: check-legacy-layout check-optional-config
 	@test -f $(INV) || { echo "エラー: $(INV) がありません。make setup を実行してください"; exit 1; }
 	@test -f ansible/inventory/group_vars/all/secret.yml || { echo "エラー: ansible/inventory/group_vars/all/secret.yml がありません。make setup を実行してください"; exit 1; }
 	@python3 scripts/setup_secrets.py --check ansible/inventory/group_vars/all/secret.yml
