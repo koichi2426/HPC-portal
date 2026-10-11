@@ -465,8 +465,10 @@ case "$cmd" in
     if [ "${GPUS:-0}" -gt 0 ]; then
       gres_args+=(--gres="gpu:$GPUS")
     fi
+    # JOBIDが振り直されても重ならないよう、投入日時をログ名へ入れる。
     sbatch_output="$(sudo -u "$SERVICE_USER" sbatch \
       --parsable \
+      --output="/var/log/hpc-ollama/shared-ollama-$(date +%Y%m%d-%H%M)-%j.log" \
       --cpus-per-task="$cpus" \
       --mem="$memory" \
       ${gres_args[@]+"${gres_args[@]}"} \

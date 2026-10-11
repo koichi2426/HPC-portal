@@ -45,7 +45,7 @@ def build_batch_script():
 #SBATCH --mem={js} memory {je}
 {js} runtime_line {je}
 #SBATCH --chdir={js} homedir {je}
-#SBATCH --output={js} homedir {je}/{JOB_LOG_DIR}/jupyterhub-slurm-%j.log
+#SBATCH --output={js} homedir {je}/{JOB_LOG_DIR}/jupyterhub-slurm-{js} log_stamp {je}-%j.log
 #SBATCH --open-mode=append
 {js} gres_line {je}
 

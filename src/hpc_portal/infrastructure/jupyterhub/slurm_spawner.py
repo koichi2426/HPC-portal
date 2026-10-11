@@ -287,6 +287,9 @@ class HPCSlurmSpawner(SlurmSpawner):
                 self.job_id = self._hpc_job_id
             return getattr(self, "_hpc_submit_out", "") or ""
         await self.ensure_job_log_dir()
+        # JOBIDが振り直されても重ならないよう、投入日時をログ名へ入れる。
+        # 利用者が送ったuser_optionsで変えられないよう、投入直前に上書きする。
+        self.user_options["log_stamp"] = time.strftime("%Y%m%d-%H%M")
         self.set_progress("Slurmへ起動ジョブを投入しています")
         out = await super().submit_batch_script()
         self._hpc_job_submitted = True
