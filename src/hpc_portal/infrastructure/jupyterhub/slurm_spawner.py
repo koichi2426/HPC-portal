@@ -1,6 +1,8 @@
 """Slurm上でJupyterLabとOpen WebUIを起動するSpawnerを提供する。"""
 
 import asyncio
+import os
+import pwd
 import re
 import subprocess
 import time
@@ -24,6 +26,7 @@ from hpc_portal.infrastructure.jupyterhub.route_manager import (
     spawner_target_host,
     wait_chp_target,
 )
+from hpc_portal.infrastructure.slurm.batch_script_builder import JOB_LOG_DIR
 
 # 待機理由の再取得間隔（秒）
 _HPC_PENDING_REASON_INTERVAL = 15.0
@@ -243,6 +246,36 @@ class HPCSlurmSpawner(SlurmSpawner):
                     timeout=5,
                 )
 
+    async def ensure_job_log_dir(self):
+        """Slurmが出力先を開く前に、本人の権限でジョブログの保存先を作る。
+
+        Raises:
+            RuntimeError: 保存先を作成できない場合。
+        """
+        path = os.path.join(pwd.getpwnam(self.user.name).pw_dir, JOB_LOG_DIR)
+        # rootで作るとリンク先を書き換えるおそれがあるため、本人の権限で作る。
+        proc = await asyncio.create_subprocess_exec(
+            "sudo",
+            "-n",
+            "-u",
+            self.user.name,
+            "mkdir",
+            "-p",
+            "-m",
+            "0700",
+            path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode != 0:
+            self.log.warning(
+                "HPC: job log directory unavailable for %s: %s",
+                self.user.name,
+                err.decode(errors="replace").strip(),
+            )
+            raise RuntimeError("ジョブログの保存先を作成できません")
+
     async def submit_batch_script(self):
         """Slurmジョブを一度だけ投入して初期CHPルートを登録する。
 
@@ -253,6 +286,7 @@ class HPCSlurmSpawner(SlurmSpawner):
             if getattr(self, "_hpc_job_id", ""):
                 self.job_id = self._hpc_job_id
             return getattr(self, "_hpc_submit_out", "") or ""
+        await self.ensure_job_log_dir()
         self.set_progress("Slurmへ起動ジョブを投入しています")
         out = await super().submit_batch_script()
         self._hpc_job_submitted = True

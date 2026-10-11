@@ -1,0 +1,45 @@
+#!/bin/bash
+# 上限を超えたジョブログを、末尾だけ残して同じファイルのまま切り詰める。
+# 実行中のジョブが書き続けられるよう、ファイルの削除や差し替えは行わない。
+set -euo pipefail
+
+LIMIT_BYTES={{ log_limits_max_bytes }}
+KEEP_BYTES={{ log_limits_keep_bytes }}
+MIN_UID={{ log_limits_min_uid }}
+OLLAMA_USER="{{ ollama_service_user }}"
+OLLAMA_LOG_DIR=/var/log/hpc-ollama
+
+# 所有者の権限で呼ばれ、指定フォルダ直下の通常ファイルだけを切り詰める。
+cap_dir() {
+  local dir="$1" pattern="$2" file tmp
+  find -P "$dir" -maxdepth 1 -type f -name "$pattern" -size "+${LIMIT_BYTES}c" -print0 |
+    while IFS= read -r -d '' file; do
+      tmp="$(mktemp "$dir/.hpc-log-cap.XXXXXX")"
+      tail -c "$KEEP_BYTES" -- "$file" >"$tmp"
+      truncate -s 0 -- "$file"
+      {
+        printf '[hpc] %s ログが上限を超えたため、先頭を切り詰めました\n' "$(date '+%F %T')"
+        cat -- "$tmp"
+      } >>"$file"
+      rm -f -- "$tmp"
+    done
+}
+
+if [ "${1:-}" = "_cap" ]; then
+  cap_dir "$2" "$3"
+  exit 0
+fi
+
+# rootのまま利用者のファイルを書き換えず、リンク経由でほかのファイルへ及ばないようにする。
+getent passwd | while IFS=: read -r name _ uid _ _ home _; do
+  if [ "$uid" -lt "$MIN_UID" ] || [ "$uid" -ge 65534 ] || [ ! -d "$home/.hpc-logs" ]; then
+    continue
+  fi
+  runuser -u "$name" -- "$0" _cap "$home/.hpc-logs" '*.log' ||
+    echo "warning: failed to cap job logs for $name" >&2
+done
+
+if [ -d "$OLLAMA_LOG_DIR" ]; then
+  runuser -u "$OLLAMA_USER" -- "$0" _cap "$OLLAMA_LOG_DIR" 'shared-ollama-*.log' ||
+    echo "warning: failed to cap shared Ollama logs" >&2
+fi

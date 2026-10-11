@@ -1,0 +1,8 @@
+[Unit]
+Description=Cap HPC job log sizes periodically
+
+[Timer]
+OnCalendar={{ log_limits_schedule }}
+
+[Install]
+WantedBy=timers.target

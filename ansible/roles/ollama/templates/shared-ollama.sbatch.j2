@@ -3,6 +3,7 @@
 #SBATCH --partition={{ ollama_slurm_partition }}
 #SBATCH --time={{ ollama_slurm_time }}
 #SBATCH --output=/var/log/hpc-ollama/shared-ollama-%j.log
+#SBATCH --open-mode=append
 
 set -euo pipefail
 

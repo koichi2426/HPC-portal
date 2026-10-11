@@ -19,6 +19,8 @@
       tags: [search_mcp, searxng, litellm]
     - role: ollama
       tags: [ollama]
+    - role: log_limits
+      tags: [log_limits]
     - role: litellm
       tags: [litellm]
     - role: optional_features

@@ -1,0 +1,32 @@
+---
+- name: ジョブログ上限スクリプトを配置
+  ansible.builtin.template:
+    src: hpc-log-cap.j2
+    dest: /usr/local/sbin/hpc-log-cap
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: ジョブログ上限のsystemdユニットを配置
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - hpc-log-cap.service
+    - hpc-log-cap.timer
+  notify: ジョブログ上限タイマーを再起動
+
+- name: systemdをリロード
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: ジョブログ上限タイマーを有効化して起動
+  ansible.builtin.systemd:
+    name: hpc-log-cap.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
