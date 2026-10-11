@@ -1,6 +1,9 @@
 """アプリ起動フォームの生成と入力値変換を提供する。"""
 
+from tornado import web
+
 from hpc_portal.bootstrap.container import get_container
+from hpc_portal.domain.errors import UseCaseError
 from hpc_portal.infrastructure.config.settings import (
     HPC_JOB_DNS_DOMAIN,
     HPC_JUPYTER_UBUNTU_VERSION,
@@ -88,34 +91,34 @@ def make_options_form(spawner):
 
 
 def apply_user_options(spawner, user_options):
-    """user_optionsをSpawnerの要求リソースと起動設定へ反映する。
+    """起動直前にuser_optionsを検証し直し、Spawnerの要求リソースと起動設定へ反映する。
+
+    フォームを通らないAPIからの起動でも、利用者の指定項目だけから
+    #SBATCH行などをサーバー側で組み立て直す。
 
     Args:
         spawner: 設定対象のSpawner。
-        user_options: options_from_formが生成した設定辞書。
+        user_options: フォーム・APIから渡された、または前回保存された設定辞書。
+
+    Raises:
+        web.HTTPError: 指定が不正、または空きリソースを超える場合。
     """
-    spawner.req_nprocs = str(user_options.get("nprocs", "2"))
-    spawner.req_memory = str(user_options.get("memory", "4G"))
-    spawner.req_runtime = str(user_options.get("runtime", "02:00:00"))
-    spawner.user_options["nprocs"] = str(user_options.get("nprocs", "2"))
-    spawner.user_options["memory"] = str(user_options.get("memory", "4G"))
-    spawner.user_options["runtime"] = str(user_options.get("runtime", "02:00:00"))
-    spawner.user_options["gpu"] = str(user_options.get("gpu", "0"))
-    app_choice = str(user_options.get("app_choice", "ubuntu-cli"))
-    spawner.user_options["app_choice"] = app_choice
-    spawner.user_options["job_name"] = (
-        "jhub-openwebui" if app_choice == "open-webui" else "jhub-app"
-    )
-    if app_choice == "open-webui":
-        spawner.user_options["openwebui_version"] = str(
-            user_options.get("openwebui_version", HPC_OPENWEBUI_VERSION)
-        )
+    try:
+        options = get_container().jobs.options_from_form.revalidate(user_options)
+    except UseCaseError as exc:
+        raise web.HTTPError(400, str(exc)) from exc
+
+    # 送られた値は使わず、組み立て直した設定だけを起動と保存に使う。
+    spawner.user_options = options
+    orm_spawner = getattr(spawner, "orm_spawner", None)
+    if orm_spawner is not None:
+        orm_spawner.user_options = dict(options)
+    spawner.req_nprocs = options["nprocs"]
+    spawner.req_memory = options["memory"]
+    spawner.req_runtime = options["runtime"]
+    if options["app_choice"] == "open-webui":
         # BatchSpawner の service_url が :0 になると pending から進めないため、
         # server_name ベースで Hub 側ポートを事前確定する
         seed = str(getattr(spawner, "name", "") or "")
         h = sum(ord(c) for c in seed) % 20000
         spawner.port = 20000 + h
-    else:
-        spawner.user_options["ubuntu_version"] = str(
-            user_options.get("ubuntu_version", HPC_JUPYTER_UBUNTU_VERSION)
-        )

@@ -3,14 +3,41 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING
 
 from hpc_portal.application.ports.job_management_ports import CommandRunner, UserJobs
 from hpc_portal.application.ports.llm_gateway_ports import LlmManagementGateway
 from hpc_portal.application.ports.resource_monitoring_ports import ResourceInventory
+from hpc_portal.domain.errors import UseCaseError
 from hpc_portal.domain.jobs.execution_policy import ExecutionPolicy
 from hpc_portal.domain.jobs.execution_request import ExecutionRequest
 from hpc_portal.domain.jobs.settings import JobSettings, runtime_from_hours_choice
+
+# Spawnerで起動するアプリ。共有Ollamaは起動フォームから別画面へ移る。
+SPAWNABLE_APPS = ("ubuntu-cli", "open-webui")
+# 利用者が指定できる項目。#SBATCH行などは受け取らず、サーバー側で組み立てる。
+USER_CHOICE_KEYS = ("app_choice", "nprocs", "memory", "hours", "gpu")
+
+
+def positive_int_text(value, label):
+    """利用者の指定を、#SBATCH行へ埋め込める正の整数表記に揃える。
+
+    Args:
+        value: 利用者が指定した数値。
+        label: エラー表示に使う項目名。
+
+    Returns:
+        先頭のゼロを除いた正の整数の文字列。
+
+    Raises:
+        UseCaseError: 正の整数でない場合。
+    """
+    raw = str(value).strip()
+    if not re.fullmatch(r"[0-9]+", raw) or int(raw) < 1:
+        raise UseCaseError(f"{label}は1以上の整数で指定してください")
+    return str(int(raw))
+
 
 if TYPE_CHECKING:
     from hpc_portal.application.usecase.llm_access_usecase import (
@@ -45,23 +72,79 @@ class PrepareJobUseCase:
 
         Returns:
             検証・正規化済みのuser_options。
+
+        Raises:
+            UseCaseError: アプリ・CPU・メモリの指定が不正、または空きを超える場合。
         """
-        app_choice = str(formdata.get("app_choice", ["ubuntu-cli"])[0])
-        recommendations = self.policy.app_resource_recommendations()
-        recommendation = recommendations.get(app_choice, recommendations["ubuntu-cli"])
-        h = formdata.get("hours", [recommendation["hours"]])[0]
-        runtime, runtime_line = runtime_from_hours_choice(h)
+        fields = {
+            "app_choice": "app_choice",
+            "nprocs": "cpu",
+            "memory": "mem",
+            "hours": "hours",
+            "gpu": "gpu",
+        }
+        return self.prepare(
+            {
+                key: formdata[name][0]
+                for key, name in fields.items()
+                if formdata.get(name)
+            }
+        )
+
+    def revalidate(self, user_options):
+        """APIや保存済みの値も含め、起動直前のuser_optionsを検証し直す。
+
+        Args:
+            user_options: フォーム・APIから渡された、または前回保存された設定。
+
+        Returns:
+            利用者の指定項目だけから組み立て直したuser_options。
+
+        Raises:
+            UseCaseError: アプリ・CPU・メモリの指定が不正、または空きを超える場合。
+        """
+        return self.prepare(
+            {key: user_options[key] for key in USER_CHOICE_KEYS if key in user_options}
+        )
+
+    def prepare(self, choices):
+        """利用者の指定を検証し、#SBATCH行を含む起動設定をサーバー側で組み立てる。
+
+        Args:
+            choices: app_choice・nprocs・memory・hours・gpuのうち指定された項目。
+
+        Returns:
+            検証・正規化済みのuser_options。
+
+        Raises:
+            UseCaseError: アプリ・CPU・メモリの指定が不正、または空きを超える場合。
+        """
+        app_choice = str(choices.get("app_choice") or "ubuntu-cli")
+        if app_choice not in SPAWNABLE_APPS:
+            raise UseCaseError("起動できないアプリが指定されています")
+        recommendation = self.policy.app_resource_recommendations()[app_choice]
+        nprocs = positive_int_text(choices.get("nprocs", recommendation["cpu"]), "vCPU")
+        memory_gb = positive_int_text(
+            str(choices.get("memory", recommendation["memory"]))
+            .strip()
+            .upper()
+            .removesuffix("G"),
+            "RAM",
+        )
+        memory = f"{memory_gb}G"
+        runtime, runtime_line = runtime_from_hours_choice(
+            choices.get("hours", recommendation["hours"])
+        )
+        hours = (
+            "unlimited" if runtime == "UNLIMITED" else str(int(runtime.split(":")[0]))
+        )
         try:
-            g = int(formdata.get("gpu", [recommendation["gpu"]])[0] or 0)
-        except ValueError:
+            g = int(choices.get("gpu", recommendation["gpu"]) or 0)
+        except (TypeError, ValueError):
             g = 0
         g = 1 if g > 0 else 0
-        memory = str(formdata.get("mem", [recommendation["memory"]])[0]).strip()
-        if not memory.upper().endswith("G"):
-            memory = f"{memory}G"
-        nprocs = str(formdata.get("cpu", [recommendation["cpu"]])[0])
 
-        # フォームの表記を揃えてから、実際の空きリソースに対して要求を検証する。
+        # 表記を揃えてから、実際の空きリソースに対して要求を検証する。
         execution = ExecutionRequest(app_choice, nprocs, memory, runtime, g > 0)
         execution.require_resources(self.policy, self.resources.slurm_free_resources())
 
@@ -69,6 +152,7 @@ class PrepareJobUseCase:
             "nprocs": nprocs,
             "memory": memory,
             "runtime": runtime,
+            "hours": hours,
             "runtime_line": runtime_line,
             "gres_line": "",
             "gpu_visibility_line": "" if g > 0 else 'export CUDA_VISIBLE_DEVICES=""',
