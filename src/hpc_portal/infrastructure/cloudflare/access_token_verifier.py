@@ -80,7 +80,7 @@ class AccessVerifier:
         Args:
             assertion: Cloudflare Accessが発行したJWT。
             app: 検証対象のAccessアプリのaudを含むAPI公開レコード。
-            credentials: 本人のService TokenのClient IDを含む認証情報レコード。
+            credentials: 本人のService TokenのClient IDと、最後に再発行した時刻を含む認証情報レコード。
 
         Raises:
             ValueError: JWTの署名・期限・発行元・aud・トークン所有者を確認できない場合。
@@ -104,6 +104,9 @@ class AccessVerifier:
                 str(claims["common_name"]).encode(), credentials["client_id"].encode()
             ):
                 raise ValueError("Access identity mismatch")
+            # 再発行でClient IDは変わらないため、再発行前に作られたJWTを発行時刻で拒否する。
+            if claims["iat"] < int(credentials.get("service_valid_from", 0)):
+                raise ValueError("Access assertion predates the current service token")
         except (jwt.PyJWTError, KeyError, TypeError) as exc:
             # 署名・期限・aud・発行元のどれで失敗したかを、例外の種類で残す。
             raise ValueError(

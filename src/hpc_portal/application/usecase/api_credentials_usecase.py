@@ -96,6 +96,8 @@ class IssueApiCredentialsUseCase:
                 )
                 self.store.put("credentials", user.name, record)
             if record.get("state") == "rotating_cloudflare":
+                # 再発行前の秘密値で作られたAccess JWTを拒否する基準時刻。
+                record["service_valid_from"] = time.time()
                 token = await self.cloudflare.rotate(record["cf_token_id"])
                 record.update(client_secret=token["client_secret"])
                 record["state"] = "issuing"
@@ -194,6 +196,8 @@ class RotateApiCredentialsUseCase:
             # 再発行中は旧トークンによる呼び出しも拒否する。
             self.credential_repository.save_credentials(credentials)
 
+            # 再発行前の秘密値で作られたAccess JWTを拒否する基準時刻。
+            record["service_valid_from"] = time.time()
             token = await self.cloudflare.rotate(record["cf_token_id"])
             record["client_secret"] = token["client_secret"]
 

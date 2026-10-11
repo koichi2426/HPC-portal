@@ -698,6 +698,9 @@ async def test_access_verifies_signature_audience_issuer_expiration_and_owner(
         await verifier.verify(assertion(other_key), app, creds)
     with pytest.raises(ValueError):
         await verifier.verify("", app, creds)
+    rotated = {**creds, "service_valid_from": time.time() + 60}
+    with pytest.raises(ValueError):
+        await verifier.verify(assertion(signing_key), app, rotated)
 
 
 async def test_streamed_http_preserves_body_query_and_does_not_forward_credentials():
@@ -832,7 +835,6 @@ class GatewayFake:
         "other_user",
         "scope",
         "hub_id",
-        "cf_secret",
         "jwt",
         "disabled",
         "unpublished",
@@ -858,8 +860,6 @@ async def test_gateway_denies_invalid_identity_or_publication(
         handler.token.scopes = []
     if failure == "hub_id":
         handler.token.id = 999
-    if failure == "cf_secret":
-        handler.request.headers["CF-Access-Client-Secret"] = "old"
     if failure == "disabled":
         record = creds.queries.credential_record(user)
         record["enabled"] = False
@@ -1183,7 +1183,6 @@ async def test_gateway_real_http_uses_hub_token_auth_without_browser_cookie(
         for bad_headers in [
             {},
             {**headers, "Cf-Access-Jwt-Assertion": "forged"},
-            {**headers, "CF-Access-Client-Secret": "old"},
         ]:
             response = await client.fetch(
                 f"http://127.0.0.1:{portal_port}/hub/user-api/{username}/analysis/api/analyze",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import secrets
 
 from hpc_portal.application.ports.api_query_ports import ApiQueries
 from hpc_portal.application.ports.external_api_ports import (
@@ -100,17 +99,6 @@ class AuthorizeApiInvocationUseCase:
         if expected_scope not in token.scopes:
             raise denied("hub token scope missing", username, name)
 
-        # 再発行前の認証情報で作られたAccess JWTも利用できないようにする。
-        for header, key in (
-            ("CF-Access-Client-ID", "client_id"),
-            ("CF-Access-Client-Secret", "client_secret"),
-        ):
-            value = headers.get(header, "")
-            if not value:
-                raise denied(f"{header} header missing", username, name)
-            if not secrets.compare_digest(value.encode(), record[key].encode()):
-                raise denied(f"{header} header mismatch", username, name)
-
         try:
             app = self.queries.get_publication(user, name)
             publication = self.publication_repository.load_publication(username, name)
@@ -119,6 +107,8 @@ class AuthorizeApiInvocationUseCase:
         if not publication or not publication.available:
             raise UseCaseError("APIは公開されていません", "unavailable")
 
+        # Cloudflare AccessはService Tokenのヘッダーを転送しないため、
+        # JWTのClient IDと発行時刻で、本人の現在のトークンか確認する。
         try:
             await self.access_verifier.verify(
                 headers.get("Cf-Access-Jwt-Assertion", ""), app, record
