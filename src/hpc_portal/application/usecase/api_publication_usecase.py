@@ -369,6 +369,26 @@ class RefreshApiPublicationUseCase:
         self.publish_registration = publish_registration
         self.remove_remote_publication = remove_remote_publication
 
+    def restarted_target(self, target):
+        """登録時のアプリを本人が起動し直した場合だけ、新しい待受を返す。
+
+        他の利用者や、別の作業フォルダから起動したアプリへ通信が届かないよう、
+        同じ利用者・同じポート・同じ作業フォルダの待受が一意に見つかる場合に限る。
+
+        Args:
+            target: 登録時の所有者・ポート・作業フォルダを含む接続先情報。
+
+        Returns:
+            付け直し先の待受情報。条件に合う待受が無い場合はNone。
+        """
+        try:
+            current = self.listeners.choose(target["uid"], port=target["port"])
+        except ValueError:
+            return None
+        if not target.get("workdir") or current["workdir"] != target["workdir"]:
+            return None
+        return current
+
     async def execute(self, record):
         """希望状態と現在の認証・待受状態を照合し、公開設定や削除を再試行する。
 
@@ -403,10 +423,19 @@ class RefreshApiPublicationUseCase:
                 publication.stop(delete=True)
             else:
                 try:
-                    # 同じポートを別プロセスが使っていても、自動で公開先を付け替えない。
                     await asyncio.to_thread(self.listeners.validate, record["target"])
                 except ValueError:
-                    publication.disconnect()
+                    restarted = await asyncio.to_thread(
+                        self.restarted_target, record["target"]
+                    )
+                    if restarted is None:
+                        publication.disconnect()
+                    else:
+                        # 本人が同じ場所で起動し直したアプリへ、同じURLを付け直す。
+                        record["target"] = restarted
+                        return await self.publish_registration.execute(
+                            record, credential
+                        )
                 else:
                     if (
                         publication.needs_configuration

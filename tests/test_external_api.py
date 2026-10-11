@@ -508,10 +508,16 @@ async def test_same_port_reused_by_new_process_does_not_receive_requests(publica
     first = await registry.publish_api.execute(
         user, Registration(name="analysis", port=23000)
     )
-    inventory.row = target(pid=92)
+    inventory.row = {**target(pid=92), "workdir": "/home/alice/other"}
     await registry.refresh_publication.execute(first)
     assert registry.queries.get_publication(user, "analysis")["state"] == "disconnected"
     assert registry.queries.get_publication(user, "analysis")["target"]["pid"] == 91
+
+    # 本人が同じ作業フォルダで起動し直した場合だけ、同じURLを付け直す。
+    inventory.row = target(pid=93)
+    await registry.refresh_publication.execute(first)
+    assert registry.queries.get_publication(user, "analysis")["state"] == "published"
+    assert registry.queries.get_publication(user, "analysis")["target"]["pid"] == 93
 
 
 async def test_unpublish_and_delete_do_not_stop_user_process_and_recover_remote_failure(
