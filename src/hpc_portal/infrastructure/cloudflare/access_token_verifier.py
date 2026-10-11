@@ -50,7 +50,9 @@ class AccessVerifier:
                         allow_redirects=False,
                     ) as response:
                         if response.status != 200:
-                            raise ValueError("Access signing keys are unavailable")
+                            raise ValueError(
+                                f"Access signing keys are unavailable ({response.status})"
+                            )
 
                         raw = bytearray()
                         async for chunk in response.content.iter_chunked(8192):
@@ -102,5 +104,8 @@ class AccessVerifier:
                 str(claims["common_name"]).encode(), credentials["client_id"].encode()
             ):
                 raise ValueError("Access identity mismatch")
-        except (jwt.PyJWTError, KeyError, TypeError):
-            raise ValueError("Access assertion is invalid") from None
+        except (jwt.PyJWTError, KeyError, TypeError) as exc:
+            # 署名・期限・aud・発行元のどれで失敗したかを、例外の種類で残す。
+            raise ValueError(
+                f"Access assertion is invalid ({type(exc).__name__})"
+            ) from None

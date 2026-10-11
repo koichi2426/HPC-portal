@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 
 from hpc_portal.application.ports.api_query_ports import ApiQueries
@@ -15,6 +16,23 @@ from hpc_portal.domain.external_api.repositories import (
     ApiCredentialRepository,
     ApiPublicationRepository,
 )
+
+log = logging.getLogger("jupyterhub.external-api")
+
+
+def denied(reason, username, name):
+    """拒否理由を秘密値なしで記録し、呼び出し元へ返す共通エラーを作る。
+
+    Args:
+        reason: どの確認で拒否したかを示す短い説明。
+        username: 呼び出し先のLinuxユーザー名。
+        name: 呼び出し先のAPI名。
+
+    Returns:
+        403として扱うUseCaseError。
+    """
+    log.warning("External API request denied for %s/%s: %s", username, name, reason)
+    return UseCaseError("APIへのアクセスが許可されていません", "forbidden")
 
 
 class AuthorizeApiInvocationUseCase:
@@ -64,35 +82,34 @@ class AuthorizeApiInvocationUseCase:
             ValueError: 公開先ポートの保護状態を確認できない場合。
         """
         if not token or not token.user or (not user) or (user.name != username):
-            raise UseCaseError("APIへのアクセスが許可されていません", "forbidden")
+            raise denied("hub token owner mismatch", username, name)
 
         try:
             record = self.queries.credential_record(user)
             credentials = self.credential_repository.load_credentials(username)
         except (ValueError, KeyError):
-            raise UseCaseError(
-                "APIへのアクセスが許可されていません", "forbidden"
-            ) from None
+            raise denied("credentials not found", username, name) from None
         # 通常のHubトークンではなく、本人のAPI専用に発行したトークンへ限定する。
         expected_scope = f"custom:external-api:invoke!user={username}"
-        if (
-            not credentials
-            or not credentials.available
-            or record.get("hub_state") in {"revoked", "rotating"}
-            or token.id != record.get("hub_token_id")
-            or expected_scope not in token.scopes
-        ):
-            raise UseCaseError("APIへのアクセスが許可されていません", "forbidden")
+        if not credentials or not credentials.available:
+            raise denied("credentials unavailable", username, name)
+        if record.get("hub_state") in {"revoked", "rotating"}:
+            raise denied("hub token revoked or rotating", username, name)
+        if token.id != record.get("hub_token_id"):
+            raise denied("hub token is not the issued API token", username, name)
+        if expected_scope not in token.scopes:
+            raise denied("hub token scope missing", username, name)
 
         # 再発行前の認証情報で作られたAccess JWTも利用できないようにする。
         for header, key in (
             ("CF-Access-Client-ID", "client_id"),
             ("CF-Access-Client-Secret", "client_secret"),
         ):
-            if not secrets.compare_digest(
-                headers.get(header, "").encode(), record[key].encode()
-            ):
-                raise UseCaseError("APIへのアクセスが許可されていません", "forbidden")
+            value = headers.get(header, "")
+            if not value:
+                raise denied(f"{header} header missing", username, name)
+            if not secrets.compare_digest(value.encode(), record[key].encode()):
+                raise denied(f"{header} header mismatch", username, name)
 
         try:
             app = self.queries.get_publication(user, name)
@@ -106,10 +123,8 @@ class AuthorizeApiInvocationUseCase:
             await self.access_verifier.verify(
                 headers.get("Cf-Access-Jwt-Assertion", ""), app, record
             )
-        except ValueError:
-            raise UseCaseError(
-                "APIへのアクセスが許可されていません", "forbidden"
-            ) from None
+        except ValueError as exc:
+            raise denied(str(exc), username, name) from None
 
         if body_size > self.config.body_limit:
             raise UseCaseError("リクエスト本文が大きすぎます", "too_large")
