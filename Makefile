@@ -8,7 +8,8 @@ INV          ?= ansible/inventory/production.ini
 PLAYBOOK     ?= ansible-playbook
 ANSIBLE      ?= ansible
 PORT         ?= 8001
-PB           := $(PLAYBOOK) -i $(INV)
+# ALLOW_CHANGE=1 のときだけ、秘密値やドメインを稼働中の設定から変えることを許可する。
+PB           := $(PLAYBOOK) -i $(INV)$(if $(filter 1,$(ALLOW_CHANGE)), -e hpc_allow_config_change=true)
 ANSIBLE_ARGS := -i $(INV)
 
 .PHONY: help setup check-legacy-layout check-optional-config dev test lint format check-local check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
@@ -58,11 +59,11 @@ test: ## ローカルでpytestを実行（実機接続なし）
 	uv run pytest
 
 lint: ## Pythonの静的検証と書式を確認（実機接続なし）
-	uv run ruff check src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/jupyterhub/files
-	uv run ruff format --check src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/jupyterhub/files
+	uv run ruff check src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/preflight/filter_plugins ansible/roles/jupyterhub/files
+	uv run ruff format --check src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/preflight/filter_plugins ansible/roles/jupyterhub/files
 
 format: ## Pythonの書式を統一
-	uv run ruff format src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/jupyterhub/files
+	uv run ruff format src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/preflight/filter_plugins ansible/roles/jupyterhub/files
 
 check-local: lint test ## 静的検証・書式・テストをまとめて実行
 

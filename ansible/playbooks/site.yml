@@ -3,6 +3,8 @@
   hosts: gx10
   become: true
   roles:
+    - role: preflight
+      tags: [always]
     - role: common
       tags: [common]
     - role: nfs_mounts

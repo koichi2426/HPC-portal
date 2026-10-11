@@ -6,6 +6,7 @@
     hpc_force_service_restarts: true
     hpc_defer_slurm_config_apply: true
   roles:
+    - preflight
     - common
     - nfs_mounts
     - slurm

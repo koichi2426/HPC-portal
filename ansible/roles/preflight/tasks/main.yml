@@ -1,0 +1,54 @@
+---
+- name: 公開ドメインが設定されているか確認
+  ansible.builtin.assert:
+    that:
+      - hpc_base_domain is defined
+      - hpc_base_domain | string | length > 0
+      - not (hpc_base_domain | string is match('^(.*\.)?example\.(com|net|org)$'))
+    fail_msg: >-
+      hpc_base_domain が未設定、または雛形の example.com のままです。
+      ansible/inventory/production.ini に実際のドメインを設定してください。
+    quiet: true
+
+- name: 稼働中の設定ファイルを読み取る
+  ansible.builtin.slurp:
+    src: "{{ item.value }}"
+  loop: "{{ hpc_preflight_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: hpc_preflight_deployed
+  failed_when: false
+  no_log: true
+
+# 初回のデプロイや未使用の機能でファイルが無い値は照合しない。
+- name: 環境を表す値を稼働中の設定と照合
+  ansible.builtin.set_fact:
+    hpc_preflight_drift: "{{ hpc_preflight_deployed.results | hpc_config_drift(hpc_preflight_expected) }}"
+  vars:
+    hpc_preflight_expected:
+      litellm_master_key: "{{ litellm_master_key | default('') }}"
+      litellm_salt_key: "{{ litellm_salt_key | default('') }}"
+      litellm_ui_username: "{{ litellm_ui_username | default('') }}"
+      litellm_ui_password: "{{ litellm_ui_password | default('') }}"
+      litellm_database_password: "{{ litellm_database_password | default('') }}"
+      cloudflared_token: "{{ cloudflared_token | default('') }}"
+      searxng_secret_key: "{{ searxng_secret_key | default('') }}"
+      search_mcp_auth_token: "{{ search_mcp_auth_token | default('') }}"
+      hpc_cloudflare_account_id: "{{ hpc_cloudflare_account_id | default('') }}"
+      hpc_cloudflare_api_token: "{{ hpc_cloudflare_api_token | default('') }}"
+      jupyterhub_public_domain: "{{ jupyterhub_public_domain }}"
+      jupyterhub_job_dns_domain: "{{ jupyterhub_job_dns_domain }}"
+      hpc_llm_public_base_url: "{{ hpc_llm_public_base_url }}"
+      hpc_llm_admin_url: "{{ hpc_llm_admin_url }}"
+      hpc_portal_admin_users: "{{ hpc_portal_admin_users | default([ansible_user]) }}"
+  no_log: true
+
+- name: 稼働中の設定と異なる値があれば止める
+  ansible.builtin.fail:
+    msg: >-
+      HPCで稼働中の設定と、ローカルの次の値が異なります: {{ hpc_preflight_drift | join(', ') }}。
+      別の環境の設定や、make setupで作り直した値を使っていないか確認してください。
+      意図した変更の場合だけ、make deploy ALLOW_CHANGE=1 で実行します。
+  when:
+    - hpc_preflight_drift | length > 0
+    - not (hpc_allow_config_change | bool)
