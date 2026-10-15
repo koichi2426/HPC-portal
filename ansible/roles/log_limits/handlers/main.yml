@@ -1,0 +1,7 @@
+---
+- name: ジョブログ上限タイマーを再起動
+  ansible.builtin.systemd:
+    name: hpc-log-cap.timer
+    state: restarted
+    daemon_reload: true
+  when: not ansible_check_mode

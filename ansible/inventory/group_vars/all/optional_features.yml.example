@@ -1,0 +1,13 @@
+---
+# nullは導入済み設定を維持し、未導入なら無効。falseは明示的に無効化する。
+# SSH/SFTP用Service Tokenの発行（Tunnel経路は別途設定）
+hpc_ssh_access_enabled: null
+# 自作APIの公開・呼び出しとAPI用Service Tokenの発行
+hpc_external_api_enabled: null
+# Cloudflare AccessのチームURL。例: https://your-team.cloudflareaccess.com
+hpc_external_api_access_issuer: ""
+hpc_external_api_state_dir: /var/lib/jupyterhub/external-api-v2
+hpc_external_api_token_limit: 50
+hpc_external_api_port_start: 20000
+hpc_external_api_port_end: 29999
+hpc_external_api_reserved_ports: [22, 80, 443, 4000, 5432, 8000, 8001, 8081, 8888, 8890, 11434]

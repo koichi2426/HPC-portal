@@ -1,0 +1,8 @@
+[Unit]
+Description=Cap HPC job log sizes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hpc-log-cap
+Nice=10
+IOSchedulingClass=idle

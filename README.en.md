@@ -171,11 +171,11 @@ Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and
    # Ubuntu
    sudo apt update && sudo apt install ansible -y
    ```
-2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `inventory/production.ini`.
+2. **Create the runtime user on the target host**: The playbooks do **not** create a Unix account. Create a user on the server whose login name matches **`ansible_user`** in `ansible/inventory/production.ini`.
 
    - Slurm-launched app data lives under that home directory. Shared Ollama models live in `/srv/ollama/models`
    - **SSH public-key login** from your control machine
-   - **Passwordless sudo** is required (`site.yml` uses `become: true`)
+   - **Passwordless sudo** is required (`ansible/playbooks/site.yml` uses `become: true`)
 
    ```bash
    # On the server (Ubuntu). Use the same name as ansible_user in production.ini
@@ -191,9 +191,9 @@ Open WebUI uses LiteLLM's OpenAI-compatible `/v1/chat/completions` endpoint, and
 4. **Prepare the inventory and local configuration**:
    ```bash
    make setup
-   # inventory/production.ini contains the host and connection settings
-   # Set external values such as cloudflared_token in group_vars/all/secret.yml
-   # Define optional read-only shares in group_vars/all/nfs_mounts.yml
+   # ansible/inventory/production.ini contains the host and connection settings
+   # Set external values such as cloudflared_token in ansible/inventory/group_vars/all/secret.yml
+   # Define optional read-only shares in ansible/inventory/group_vars/all/nfs_mounts.yml
    ```
 
    `make setup` creates missing local configuration files and generates only missing secrets. It never replaces configured values. The three files containing environment-specific values are excluded from Git.
@@ -210,11 +210,12 @@ See [Makefile](./Makefile). Run `make help` for the full list.
 | `make deploy-restart` | Stop all jobs and restart related services, with `restart` confirmation |
 | `make ping` | Connectivity check |
 | `make check` | Dry run (`--check --diff`) |
+| `make dev` | Start the UI preview with mock data at http://localhost:8001, without connecting to the target host |
 | `make test` | Run pytest locally without connecting to the target host |
 | `make smoke` | Run read-only checks against services, APIs, and deployed assets |
 | `make nfs-mounts` | Apply only the read-only NAS/NFS configuration |
 
-Override inventory: `make deploy INV=inventory/staging.ini`
+Override inventory: `make deploy INV=ansible/inventory/staging.ini`
 
 ##### Component updates
 
@@ -245,11 +246,11 @@ Override inventory: `make deploy INV=inventory/staging.ini`
 | Command | Description |
 |---------|-------------|
 | `make cleanup` | Cleanup services and config while keeping model/DB data |
-| `make cleanup-purge-data` | Delete model/DB data too, with confirmation |
+| `make cleanup-purge-data` | Delete model/DB data too, with Japanese confirmation |
 
 #### Read-only NAS mounts
 
-Optional NFS shares can be exposed read-only to all HPC users under `/mnt/nas/`. Keep the real configuration only in the Git-ignored `group_vars/all/nfs_mounts.yml`.
+Optional NFS shares can be exposed read-only to all HPC users under `/mnt/nas/`. Keep the real configuration only in the Git-ignored `ansible/inventory/group_vars/all/nfs_mounts.yml`.
 
 - Enable: set `state: present`, then run `make nfs-mounts`
 - Disable: set `state: absent`, then run `make nfs-mounts`
@@ -300,7 +301,7 @@ This creates a Python 3.12 `.venv` and synchronizes development dependencies.
 make test
 ```
 
-This runs locally without connecting to the target host and checks Python input validation, authorization, and control flow.
+This runs locally without connecting to the target host and checks authentication, authorization, token revocation, deletion and shutdown targets, persisted state recovery, and startup. UI wording and display details are checked manually.
 
 ##### Smoke test (after deployment)
 
@@ -316,7 +317,7 @@ This connects to the target host in read-only mode and checks major functionalit
 make cleanup
 ```
 
-`make cleanup` removes services and configuration but keeps data such as `/srv/ollama/models` and the LiteLLM database. Use the explicit purge target only when you want to delete model and DB data as well.
+`make cleanup` removes services and configuration but keeps data such as `/srv/ollama/models` and the LiteLLM database. Use the explicit purge target only when you want to delete model and DB data as well, and enter `削除する` at the confirmation prompt.
 
 ```bash
 make cleanup-purge-data
@@ -329,10 +330,30 @@ Start with `make status`, `make gpu`, `make services`, or `make processes`.
 <details>
 <summary>Run ansible commands directly</summary>
 
+Use the group name from `ansible/inventory/production.ini` in place of `gx10` if it differs.
+
 ```bash
-ansible -i inventory/production.ini gx10 -m ping
-ansible-playbook -i inventory/production.ini site.yml --tags jupyterhub
-ansible-playbook -i inventory/production.ini site.yml --check --diff
+# Connectivity check
+ansible -i ansible/inventory/production.ini gx10 -m ping
+
+# Slurm jobs and node allocation
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "squeue; scontrol show node \$(hostname -s) -o"
+
+# GPU / VRAM
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "nvidia-smi -L; nvidia-smi --query-gpu=memory.total,memory.used --format=csv"
+
+# JupyterHub, Slurm, LiteLLM, and shared Ollama status (-b enables root privileges)
+ansible -i ansible/inventory/production.ini gx10 -b -m shell -a "systemctl is-active jupyterhub slurmctld slurmd cloudflared litellm postgresql || true; squeue; /usr/local/sbin/hpc-ollama status || true; journalctl -u jupyterhub -n 30 --no-pager"
+
+# Remaining processes (replace YOUR_USER with ansible_user)
+ansible -i ansible/inventory/production.ini gx10 -m shell -a "pgrep -au YOUR_USER -f 'open_webui|ollama|apptainer|jupyter' || true; pgrep -au hpc-ollama -f 'ollama|apptainer|curl' || true"
+
+# Deploy selected components
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags jupyterhub
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --tags slurm
+
+# Dry run
+ansible-playbook -i ansible/inventory/production.ini ansible/playbooks/site.yml --check --diff
 ```
 
 </details>

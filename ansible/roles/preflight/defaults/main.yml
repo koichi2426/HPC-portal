@@ -1,0 +1,10 @@
+---
+# 環境を表す値を照合する、HPCで稼働中の設定ファイル。
+hpc_preflight_files:
+  litellm: /etc/litellm/litellm.env
+  jupyterhub: /etc/jupyterhub/jupyterhub.env
+  cloudflared: /etc/systemd/system/cloudflared.service
+  search_mcp: /etc/hpc-search-mcp/hpc-search-mcp.env
+  searxng: /etc/searxng/settings.yml
+# 秘密値やドメインを意図して変えるときだけtrueにする（make deploy ALLOW_CHANGE=1）。
+hpc_allow_config_change: false

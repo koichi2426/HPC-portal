@@ -1,0 +1,320 @@
+"""外部接続とusecaseを組み立て、Hub内で共有する。"""
+
+import asyncio
+from dataclasses import dataclass, field
+
+from jupyterhub.app import JupyterHub
+
+from hpc_portal.application.usecase.catalog import (
+    AccountUseCases,
+    ExternalApiUseCases,
+    InferenceUseCases,
+    JobUseCases,
+    LlmUseCases,
+)
+from hpc_portal.application.usecase.resource_query_usecase import ResourceQueryUseCase
+from hpc_portal.application.usecase.ssh_access_usecase import SshAccessUseCase
+from hpc_portal.bootstrap.usecase_factory import (
+    build_accounts_usecases,
+    build_api_usecases,
+    build_jobs_usecases,
+    build_llm_usecases,
+    build_ollama_usecases,
+)
+from hpc_portal.domain.accounts.settings import UserManagementSettings
+from hpc_portal.domain.jobs.execution_policy import ExecutionPolicy
+from hpc_portal.domain.jobs.settings import JobSettings
+from hpc_portal.domain.llm.runtime_policy import OllamaResourcePolicy
+from hpc_portal.infrastructure.cloudflare.access_client import CloudflareAccessClient
+from hpc_portal.infrastructure.cloudflare.access_token_verifier import AccessVerifier
+from hpc_portal.infrastructure.config import settings
+from hpc_portal.infrastructure.config.external_api_settings import ExternalApiSettings
+from hpc_portal.infrastructure.config.ssh_access_settings import SshAccessSettings
+from hpc_portal.infrastructure.http import api_relay
+from hpc_portal.infrastructure.http.api_health_checker import ApiHealthChecker
+from hpc_portal.infrastructure.jupyterhub.token_gateway import HubTokenGateway
+from hpc_portal.infrastructure.jupyterhub.user_jobs import HubUserJobs
+from hpc_portal.infrastructure.linux.command_runner import LinuxCommandRunner
+from hpc_portal.infrastructure.linux.listener_inventory import LinuxListenerInventory
+from hpc_portal.infrastructure.linux.port_guard import NftablesPortGuard
+from hpc_portal.infrastructure.linux.resource_inventory import LinuxResourceInventory
+from hpc_portal.infrastructure.linux.user_account_gateway import LinuxUserAccountGateway
+from hpc_portal.infrastructure.litellm.api_client import LiteLlmClient
+from hpc_portal.infrastructure.litellm.management_gateway import (
+    LiteLlmManagementGateway,
+)
+from hpc_portal.infrastructure.ollama.ollama_client import OllamaClient
+from hpc_portal.infrastructure.openwebui.api_key_store import OpenWebuiKeyStore
+from hpc_portal.infrastructure.persistence.api_aggregate_repository import (
+    ApiAggregateRepository,
+)
+from hpc_portal.infrastructure.persistence.api_record_queries import ApiRecordQueries
+from hpc_portal.infrastructure.persistence.encrypted_record_store import (
+    EncryptedRecordStore,
+)
+
+
+@dataclass
+class PortalContainer:
+    """画面・Spawner・定期処理が共有するusecaseと排他制御。"""
+
+    users: AccountUseCases
+    jobs: JobUseCases
+    llm: LlmUseCases
+    ollama: InferenceUseCases
+    resources: ResourceQueryUseCase
+    openwebui_key_locks: dict = field(default_factory=dict)
+    external_api: ExternalApiUseCases | None = None
+    ssh_access: SshAccessUseCase | None = None
+    cloudflare_token_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def get_external_api(self) -> ExternalApiUseCases | None:
+        """外部APIが有効な場合だけ共有する操作を取得する。
+
+        Returns:
+            外部APIの共有usecase。機能無効時はNone。
+
+        Raises:
+            ValueError: 外部APIの専用設定や保存先の条件が不正な場合。
+        """
+        config = ExternalApiSettings.from_env()
+        if not config.enabled:
+            return None
+
+        # 設定を使う段階で保存先を準備し、以後は同じクライアントとロックを共有する。
+        if self.external_api is None:
+            config.validate()
+            store = EncryptedRecordStore(config.state_dir)
+            inventory = LinuxListenerInventory(config)
+            accounts = self.users.accounts
+            self.external_api = build_external_api_usecases(
+                store,
+                CloudflareAccessClient(config, token_lock=self.cloudflare_token_lock),
+                HubTokenGateway(JupyterHub.instance()),
+                config,
+                inventory,
+                NftablesPortGuard(store, inventory),
+                AccessVerifier(config),
+                accounts,
+                api_relay,
+                accounts.linux_users_snapshot,
+            )
+
+        return self.external_api
+
+    def get_ssh_access(self) -> SshAccessUseCase | None:
+        """HTTP APIの有効状態に依存せず、SSH公開の共有操作を取得する。
+
+        Returns:
+            SSH用の操作。機能無効時はNone。
+
+        Raises:
+            ValueError: SSHの設定または暗号化保存先が不正な場合。
+        """
+        config = SshAccessSettings.from_env()
+        if not config.enabled:
+            return None
+        if self.ssh_access is None:
+            config.validate()
+            self.ssh_access = SshAccessUseCase(
+                config=config,
+                store=EncryptedRecordStore(config.state_dir),
+                cloudflare=CloudflareAccessClient(
+                    config, token_lock=self.cloudflare_token_lock
+                ),
+                accounts=self.users.accounts,
+                hub_users=HubTokenGateway(JupyterHub.instance()),
+            )
+        return self.ssh_access
+
+
+_container: PortalContainer | None = None
+
+
+def build_container() -> PortalContainer:
+    """通信を開始せずに実装を生成し、機能ごとのusecaseを組み合わせる。
+
+    Returns:
+        クライアント・usecase・排他制御を保持するcontainer。
+    """
+    accounts = LinuxUserAccountGateway()
+    commands = LinuxCommandRunner()
+    inventory = LinuxResourceInventory()
+    ollama_client = OllamaClient(commands, OllamaResourcePolicy(settings), settings)
+    llm_client = LiteLlmClient(
+        settings.HPC_LITELLM_INTERNAL_BASE_URL, settings.HPC_LITELLM_MASTER_KEY
+    )
+    key_store = OpenWebuiKeyStore(
+        settings.OPENWEBUI_LITELLM_KEY_DIR, settings.HPC_PORTAL_PROTECTED_USERS
+    )
+    llm_gateway = LiteLlmManagementGateway(
+        llm_client, ollama_client, key_store, accounts, settings.HPC_OLLAMA_API_BASE
+    )
+
+    # 共通クライアントを先に揃え、機能ごとのfactoryへ必要な依存を明示して渡す。
+    llm = build_llm_usecases(
+        client=llm_client,
+        model_inventory=ollama_client,
+        key_store=key_store,
+        accounts=accounts,
+        ollama_base_url=settings.HPC_OLLAMA_API_BASE,
+        gateway=llm_gateway,
+    )
+
+    job_settings = JobSettings(
+        settings.HPC_OPENWEBUI_VERSION,
+        settings.HPC_JUPYTER_UBUNTU_VERSION,
+        settings.HPC_OLLAMA_DEFAULT_CPUS,
+        settings.HPC_OLLAMA_DEFAULT_MEMORY,
+    )
+    user_settings = UserManagementSettings(
+        settings.HPC_PORTAL_GRANT_SUDO,
+        frozenset(settings.HPC_PORTAL_PROTECTED_USERS),
+        settings.HPC_LITELLM_PUBLIC_BASE_URL,
+    )
+
+    jobs = build_jobs_usecases(
+        resources=inventory,
+        commands=commands,
+        user_jobs=HubUserJobs(JupyterHub.instance),
+        settings=job_settings,
+        policy=ExecutionPolicy(job_settings),
+        gateway=llm_gateway,
+        ensure_openwebui_key=llm.get_openwebui_key,
+    )
+
+    def external_api_factory() -> ExternalApiUseCases | None:
+        # アカウント操作時に呼ぶため、containerの組み立て完了前には実行されない。
+        """組み立てたcontainer自身の外部API操作を取得する。
+
+        Returns:
+            外部APIの共有usecase。機能無効時はNone。
+        """
+        return container.get_external_api()
+
+    def ssh_access_factory():
+        """このcontainerに所属するSSH操作を取得する。
+
+        Returns:
+            SSH機能の共有操作、または無効時はNone。
+        """
+        return container.get_ssh_access()
+
+    users = build_accounts_usecases(
+        accounts=accounts,
+        settings=user_settings,
+        external_api_factory=external_api_factory,
+        ssh_access_factory=ssh_access_factory,
+        issue_llm_key=llm.generate_key,
+        revoke_llm_access=llm.delete_user_keys,
+        set_llm_access=llm.admin_set_api_access,
+        stop_openwebui_jobs=jobs.stop_user_openwebui_servers,
+        llm_client=llm_client,
+        get_llm_access_state=llm.user_external_api_state,
+    )
+    container = PortalContainer(
+        users=users,
+        jobs=jobs,
+        llm=llm,
+        ollama=build_ollama_usecases(
+            backend=ollama_client,
+            register_model=llm.register_ollama_model,
+            synchronize_models=llm.sync_ollama_models,
+            unregister_model=llm.delete_ollama_model,
+            gateway=llm_gateway,
+        ),
+        resources=ResourceQueryUseCase(inventory, settings.HPC_GPU_COUNT),
+    )
+    return container
+
+
+def get_container() -> PortalContainer:
+    """Hubの設定が複製されても、同じクライアントとロックを返す。
+
+    Returns:
+        クライアント・usecase・排他制御を保持するcontainer。
+    """
+    global _container
+    if _container is None:
+        _container = build_container()
+
+    return _container
+
+
+def get_external_api() -> ExternalApiUseCases | None:
+    """外部APIが有効な場合だけ共有する操作を取得する。
+
+    Returns:
+        外部APIの共有usecase。機能無効時はNone。
+
+    Raises:
+        ValueError: 外部APIの専用設定や保存先の条件が不正な場合。
+    """
+    config = ExternalApiSettings.from_env()
+    if not config.enabled:
+        return None
+
+    return get_container().get_external_api()
+
+
+def get_ssh_access() -> SshAccessUseCase | None:
+    """SSH公開が有効なときだけcontainerの共有操作を取得する。
+
+    Returns:
+        SSH公開の操作。機能無効時はNone。
+    """
+    if not SshAccessSettings.from_env().enabled:
+        return None
+    return get_container().get_ssh_access()
+
+
+def build_external_api_usecases(
+    store,
+    cloudflare,
+    hub,
+    config,
+    inventory,
+    guard,
+    access,
+    accounts,
+    relay,
+    users_snapshot,
+) -> ExternalApiUseCases:
+    """保存・監視・認証の実装を、外部APIのusecaseへ接続する。
+
+    Args:
+        store: 認証情報・公開設定・ポート保護のレコード保存先。
+        cloudflare: Cloudflare Accessのトークンと公開先を管理する接続先。
+        hub: JupyterHubの専用トークン管理を行う接続先。
+        config: 接続先・認証・公開条件などの設定。
+        inventory: 公開対象の待受プロセスが登録時と同一か確認する接続先。
+        guard: 公開先ポートの保護状態を設定・確認する接続先。
+        access: Cloudflare Access JWTを検証する接続先。
+        accounts: Linuxユーザーの照合・作成・変更を行う接続先。
+        relay: プロセスの同一性を確認してHTTPを転送する接続先。
+        users_snapshot: 現在のLinuxユーザー一覧を返す関数。
+
+    Returns:
+        認証情報・公開先・同期の操作をまとめたオブジェクト。
+    """
+    repository = ApiAggregateRepository(store)
+    # 状態更新と読み取りが同じ所有者情報を扱うよう、repositoryを共用する。
+    queries = ApiRecordQueries(store, accounts, repository, repository)
+    health = ApiHealthChecker(guard, inventory, relay)
+
+    return build_api_usecases(
+        store=store,
+        cloudflare=cloudflare,
+        hub_tokens=hub,
+        config=config,
+        listeners=inventory,
+        port_guard=guard,
+        access_verifier=access,
+        accounts=accounts,
+        relay=relay,
+        users_snapshot=users_snapshot,
+        credential_repository=repository,
+        publication_repository=repository,
+        queries=queries,
+        health=health,
+    )

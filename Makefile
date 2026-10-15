@@ -4,13 +4,15 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-INV          ?= inventory/production.ini
+INV          ?= ansible/inventory/production.ini
 PLAYBOOK     ?= ansible-playbook
 ANSIBLE      ?= ansible
-PB           := $(PLAYBOOK) -i $(INV)
+PORT         ?= 8001
+# ALLOW_CHANGE=1 のときだけ、秘密値やドメインを稼働中の設定から変えることを許可する。
+PB           := $(PLAYBOOK) -i $(INV)$(if $(filter 1,$(ALLOW_CHANGE)), -e hpc_allow_config_change=true)
 ANSIBLE_ARGS := -i $(INV)
 
-.PHONY: help setup test check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
+.PHONY: help setup check-legacy-layout check-optional-config dev test lint format check-local check ping smoke deploy deploy-restart cleanup cleanup-purge-data \
 	common nfs-mounts slurm postgres litellm ollama jupyterhub apptainer searxng cloudflared \
 	search-mcp status gpu cuda services processes
 
@@ -20,32 +22,67 @@ help: ## ターゲット一覧
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@printf '\n例: make deploy   make jupyterhub   make status\n\n'
 
-setup: ## インベントリ・secret・NFS設定を初期化（設定済みの値は維持）
-	@test -f $(INV) || cp inventory/production.ini.example $(INV)
-	@test -f group_vars/all/secret.yml || cp group_vars/all/secret.yml.example group_vars/all/secret.yml
-	@test -f group_vars/all/nfs_mounts.yml || cp group_vars/all/nfs_mounts.yml.example group_vars/all/nfs_mounts.yml
-	@python3 scripts/setup_secrets.py group_vars/all/secret.yml
-	@echo "OK: $(INV)、group_vars/all/secret.yml、group_vars/all/nfs_mounts.yml を確認してください"
+# 移動前の配置に設定が残ったままsetupすると、本番と異なる秘密値で上書きするおそれがある。
+check-legacy-layout:
+	@legacy=""; \
+	for f in inventory/*.ini group_vars/all/secret.yml group_vars/all/nfs_mounts.yml; do \
+		if [ -e "$$f" ]; then legacy="$$legacy $$f"; fi; \
+	done; \
+	if [ -n "$$legacy" ]; then \
+		echo "エラー: 旧配置の設定ファイルが残っています。ansible/inventory/ へ移してから再実行してください"; \
+		for f in $$legacy; do \
+			case "$$f" in inventory/*) dest="ansible/$$f" ;; *) dest="ansible/inventory/$$f" ;; esac; \
+			if [ -e "$$dest" ]; then echo "  $$f: $$dest と内容を確認し、旧ファイルを削除"; \
+			else echo "  mv $$f $$dest"; fi; \
+		done; \
+		exit 1; \
+	fi
+
+check-optional-config:
+	@if [ -e ansible/inventory/group_vars/all/external_api.yml ] || [ -e ansible/inventory/group_vars/all/ssh_access.yml ]; then \
+		echo "エラー: 旧設定をoptional_features.ymlへ統合し、旧ファイルを除いてください"; \
+		exit 1; \
+	fi
+
+setup: check-legacy-layout check-optional-config ## インベントリと設定ファイルを初期化（設定済みの値は維持）
+	@test -f $(INV) || cp ansible/inventory/production.ini.example $(INV)
+	@test -f ansible/inventory/group_vars/all/secret.yml || cp ansible/inventory/group_vars/all/secret.yml.example ansible/inventory/group_vars/all/secret.yml
+	@test -f ansible/inventory/group_vars/all/nfs_mounts.yml || cp ansible/inventory/group_vars/all/nfs_mounts.yml.example ansible/inventory/group_vars/all/nfs_mounts.yml
+	@test -f ansible/inventory/group_vars/all/optional_features.yml || cp ansible/inventory/group_vars/all/optional_features.yml.example ansible/inventory/group_vars/all/optional_features.yml
+	@python3 scripts/setup_secrets.py ansible/inventory/group_vars/all/secret.yml
+	@echo "OK: $(INV) と ansible/inventory/group_vars/all/ の設定を確認してください"
+
+dev: ## モックデータで画面確認サーバーを起動（localhost:8001 / PORTで変更可能）
+	PYTHONPATH=src uv run python -m dev.preview.server --port $(PORT)
 
 test: ## ローカルでpytestを実行（実機接続なし）
 	uv run pytest
 
-check-inv:
+lint: ## Pythonの静的検証と書式を確認（実機接続なし）
+	uv run ruff check src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/preflight/filter_plugins ansible/roles/jupyterhub/files
+	uv run ruff format --check src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/preflight/filter_plugins ansible/roles/jupyterhub/files
+
+format: ## Pythonの書式を統一
+	uv run ruff format src tests scripts dev ansible/roles/optional_features/filter_plugins ansible/roles/preflight/filter_plugins ansible/roles/jupyterhub/files
+
+check-local: lint test ## 静的検証・書式・テストをまとめて実行
+
+check-inv: check-legacy-layout check-optional-config
 	@test -f $(INV) || { echo "エラー: $(INV) がありません。make setup を実行してください"; exit 1; }
-	@test -f group_vars/all/secret.yml || { echo "エラー: group_vars/all/secret.yml がありません。make setup を実行してください"; exit 1; }
-	@python3 scripts/setup_secrets.py --check group_vars/all/secret.yml
+	@test -f ansible/inventory/group_vars/all/secret.yml || { echo "エラー: ansible/inventory/group_vars/all/secret.yml がありません。make setup を実行してください"; exit 1; }
+	@python3 scripts/setup_secrets.py --check ansible/inventory/group_vars/all/secret.yml
 
 check: check-inv ## 変更内容のドライラン（--check --diff）
-	$(PB) site.yml --check --diff
+	$(PB) ansible/playbooks/site.yml --check --diff
 
 ping: check-inv ## 接続確認
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m ping
 
 smoke: check-inv ## 実機の主要機能を読み取り専用で確認
-	$(PB) smoke.yml
+	$(PB) ansible/playbooks/smoke.yml
 
 deploy: check-inv ## ジョブを維持して差分デプロイ
-	$(PB) site.yml
+	$(PB) ansible/playbooks/site.yml
 
 deploy-restart: check-inv ## ジョブ停止・サービス再起動を伴う全体デプロイ
 	@printf '実行中ジョブを停止し、関連サービスを再起動します。続行するには「restart」と入力してください: '; \
@@ -54,10 +91,10 @@ deploy-restart: check-inv ## ジョブ停止・サービス再起動を伴う全
 		echo "中止しました"; \
 		exit 1; \
 	fi
-	$(PB) site_restart.yml
+	$(PB) ansible/playbooks/site_restart.yml
 
 cleanup: check-inv ## 環境クリーンアップ (cleanup.yml)
-	$(PB) cleanup.yml
+	$(PB) ansible/playbooks/cleanup.yml
 
 cleanup-purge-data: check-inv ## モデル・DBを含む完全削除（要確認）
 	@printf 'モデル・DBを含むデータを完全削除します。続行するには「削除する」と入力してください: '; \
@@ -66,41 +103,41 @@ cleanup-purge-data: check-inv ## モデル・DBを含む完全削除（要確認
 		echo "中止しました"; \
 		exit 1; \
 	fi
-	$(PB) cleanup.yml
-	$(PB) cleanup_purge_data.yml
+	$(PB) ansible/playbooks/cleanup.yml
+	$(PB) ansible/playbooks/cleanup_purge_data.yml
 
 common: check-inv ## common ロールのみ
-	$(PB) site.yml --tags common
+	$(PB) ansible/playbooks/site.yml --tags common
 
 nfs-mounts: check-inv ## NASの読み取り専用NFS設定のみ
-	$(PB) site.yml --tags nfs_mounts
+	$(PB) ansible/playbooks/site.yml --tags nfs_mounts
 
 slurm: check-inv ## slurm ロールのみ
-	$(PB) site.yml --tags slurm
+	$(PB) ansible/playbooks/site.yml --tags slurm
 
 postgres: check-inv ## postgres ロールのみ
-	$(PB) site.yml --tags postgres
+	$(PB) ansible/playbooks/site.yml --tags postgres
 
 litellm: check-inv ## LiteLLM / PostgreSQL ロールのみ
-	$(PB) site.yml --tags litellm
+	$(PB) ansible/playbooks/site.yml --tags litellm
 
 ollama: check-inv ## shared Ollama ロールのみ
-	$(PB) site.yml --tags ollama
+	$(PB) ansible/playbooks/site.yml --tags ollama
 
 jupyterhub: check-inv ## jupyterhub ロールのみ
-	$(PB) site.yml --tags jupyterhub
+	$(PB) ansible/playbooks/site.yml --tags jupyterhub
 
 apptainer: check-inv ## apptainer ロールのみ
-	$(PB) site.yml --tags apptainer
+	$(PB) ansible/playbooks/site.yml --tags apptainer
 
 searxng: check-inv ## SearXNGとOpen WebUI検索設定を差分反映
-	$(PB) site.yml --tags apptainer,searxng,search_mcp,litellm,jupyterhub
+	$(PB) ansible/playbooks/site.yml --tags apptainer,searxng,search_mcp,litellm,jupyterhub
 
 search-mcp: check-inv ## LLM APIのWeb検索MCPを差分反映
-	$(PB) site.yml --tags search_mcp,litellm
+	$(PB) ansible/playbooks/site.yml --tags search_mcp,litellm
 
 cloudflared: check-inv ## cloudflared ロールのみ
-	$(PB) site.yml --tags cloudflared
+	$(PB) ansible/playbooks/site.yml --tags cloudflared
 
 status: check-inv ## Slurm ジョブ・ディスク空き
 	$(ANSIBLE) $(ANSIBLE_ARGS) gx10 -m shell -a "squeue; echo '---'; df -h /"

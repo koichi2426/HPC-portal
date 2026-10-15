@@ -9,6 +9,8 @@ import secrets
 import tempfile
 from pathlib import Path
 
+# 外部で発行・決定する値。自動生成せず、雛形のままデプロイしないよう確認だけ行う。
+EXTERNAL_SECRETS = ("cloudflared_token", "litellm_ui_password")
 
 SECRET_GENERATORS = {
     "litellm_master_key": lambda: f"sk-{secrets.token_hex(32)}",
@@ -33,10 +35,9 @@ def _is_unset(value: str) -> bool:
         自動生成の対象ならTrue。
     """
 
-    normalized = value.strip().strip('"\'').strip()
+    normalized = value.strip().strip("\"'").strip()
     return (
-        normalized.lower() in {"", "null", "~"}
-        or "REPLACE_WITH_" in normalized.upper()
+        normalized.lower() in {"", "null", "~"} or "REPLACE_WITH_" in normalized.upper()
     )
 
 
@@ -68,9 +69,7 @@ def _replace_missing_values(content: str) -> tuple[str, list[str]]:
 
         value = SECRET_GENERATORS[key]()
         newline = match["newline"] or ""
-        output.append(
-            f'{match["indent"]}{key}{match["separator"]}"{value}"{newline}'
-        )
+        output.append(f'{match["indent"]}{key}{match["separator"]}"{value}"{newline}')
         generated.append(key)
 
     missing = [key for key in SECRET_GENERATORS if key not in found]
@@ -112,11 +111,12 @@ def _write_atomically(path: Path, content: str) -> None:
             temporary_path.unlink()
 
 
-def find_missing(path: Path) -> list[str]:
+def find_missing(path: Path, keys=tuple(SECRET_GENERATORS)) -> list[str]:
     """未設定または雛形のままの秘密キーを一覧化する（書き込みは行わない）。
 
     Args:
         path: secret.ymlのパス。
+        keys: 確認するキー名。省略時は自動生成する秘密値。
 
     Returns:
         未設定のキー名の一覧。
@@ -134,14 +134,10 @@ def find_missing(path: Path) -> list[str]:
     found: dict[str, str] = {}
     for line in content.splitlines():
         match = SECRET_LINE_PATTERN.match(line)
-        if match is not None and match["key"] in SECRET_GENERATORS:
+        if match is not None and match["key"] in keys:
             found[match["key"]] = match["value"]
 
-    return [
-        key
-        for key in SECRET_GENERATORS
-        if key not in found or _is_unset(found[key])
-    ]
+    return [key for key in keys if key not in found or _is_unset(found[key])]
 
 
 def ensure_secrets(path: Path) -> list[str]:
@@ -190,9 +186,14 @@ def main() -> int:
 
     if args.check:
         missing = find_missing(args.path)
+        external = find_missing(args.path, EXTERNAL_SECRETS)
         if missing:
             print("未設定の秘密値: " + ", ".join(missing))
             print("make setup を実行して秘密値を生成してください。")
+        if external:
+            print("未設定の外部発行値: " + ", ".join(external))
+            print(f"{args.path} に実際の値を設定してください。")
+        if missing or external:
             return 1
         print("秘密値は設定済みです")
         return 0

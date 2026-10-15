@@ -1,0 +1,9 @@
+---
+# この大きさを超えたジョブログは、末尾だけを残して切り詰める。
+log_limits_max_bytes: 104857600
+# 切り詰めた後に残す末尾の大きさ。
+log_limits_keep_bytes: 10485760
+# systemd timerのOnCalendar形式で、確認する間隔を指定する。
+log_limits_schedule: "*:0/10"
+# この値以上のUIDを、~/.hpc-logsを確認する利用者として扱う。
+log_limits_min_uid: 1000

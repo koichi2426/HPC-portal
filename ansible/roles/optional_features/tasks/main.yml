@@ -1,0 +1,36 @@
+---
+- name: 導入済みのJupyterHub環境ファイルを確認
+  ansible.builtin.stat:
+    path: /etc/jupyterhub/jupyterhub.env
+  register: hpc_previous_env_file
+
+- name: 導入済みの任意機能設定を読み取る
+  ansible.builtin.slurp:
+    src: /etc/jupyterhub/jupyterhub.env
+  register: hpc_previous_env
+  when: hpc_previous_env_file.stat.exists
+  no_log: true
+
+- name: 任意機能の設定不足と明示的な無効化を判定
+  ansible.builtin.set_fact:
+    hpc_optional_configuration: >-
+      {{ (hpc_previous_env.content | default('') | b64decode)
+         | hpc_optional_features(hpc_optional_inventory) }}
+  vars:
+    hpc_optional_inventory:
+      hpc_external_api_enabled: "{{ hpc_external_api_enabled | default(none) }}"
+      hpc_external_api_access_issuer: "{{ hpc_external_api_access_issuer | default('') }}"
+      hpc_external_api_state_dir: "{{ hpc_external_api_state_dir | default(none) }}"
+      hpc_external_api_token_limit: "{{ hpc_external_api_token_limit | default(none) }}"
+      hpc_external_api_port_start: "{{ hpc_external_api_port_start | default(none) }}"
+      hpc_external_api_port_end: "{{ hpc_external_api_port_end | default(none) }}"
+      hpc_external_api_reserved_ports: "{{ hpc_external_api_reserved_ports | default(none) }}"
+      hpc_ssh_access_enabled: "{{ hpc_ssh_access_enabled | default(none) }}"
+      hpc_ssh_public_host: "{{ hpc_ssh_public_host | default('') }}"
+      hpc_cloudflare_account_id: "{{ hpc_cloudflare_account_id | default('') }}"
+      hpc_cloudflare_api_token: "{{ hpc_cloudflare_api_token | default('') }}"
+  no_log: true
+
+- name: 案内に使用する任意機能の状態を保存
+  ansible.builtin.set_fact:
+    hpc_optional_states: "{{ hpc_optional_configuration.states }}"

@@ -1,0 +1,46 @@
+{% extends "page.html" %}
+
+{% block main %}
+<div class="hpc-page hpc-api-page" data-ssh-page>
+  <div class="hpc-page-header"><h2 class="hpc-page-title">SSH / SFTP</h2></div>
+  {% if configured %}
+  <section class="gx10-admin-card" aria-labelledby="ssh-token-title">
+    <div class="hpc-api-section-heading">
+      <h3 class="hpc-section-title" id="ssh-token-title">SSH / SFTP用Service Token</h3>
+      <span class="hpc-api-status-badge is-unissued" data-ssh-state>確認中…</span>
+    </div>
+    <div class="hpc-api-credential-grid">
+      {% for key, label in [('hostname', '接続先ホスト'), ('username', 'ユーザー名'), ('client_id', 'Client ID'), ('client_secret', 'Client Secret')] %}
+      <div>
+        <label class="gx10-admin-label" for="ssh-{{ key }}">{{ label }}</label>
+        <div class="hpc-api-copy-field">
+          <input class="form-control" id="ssh-{{ key }}" data-ssh-value="{{ key }}" type="{{ 'password' if key == 'client_secret' else 'text' }}" readonly autocomplete="off" placeholder="—">
+          <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-ssh-copy="{{ key }}" disabled>コピー</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="hpc-api-toolbar hpc-api-credential-actions">
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-primary" data-ssh-issue disabled>発行</button>
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-ssh-action="revoke" disabled>失効</button>
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-ssh-action="download" disabled>設定をダウンロード</button>
+      <button type="button" class="gx10-admin-btn gx10-admin-btn-muted" data-ssh-action="reveal">再読み込み</button>
+    </div>
+    <p class="hpc-api-message" data-ssh-message role="status" aria-live="polite" hidden></p>
+  </section>
+  <section class="gx10-admin-card">
+    <h3 class="hpc-section-title">接続に必要なもの</h3>
+    <p>利用者PCにcloudflaredを導入し、このService Tokenと本人のSSH鍵で接続します。SSHとSFTPは同じ接続設定を使用します。</p>
+    <p>公開鍵は既存のVPN経由SSHで <code>~/.ssh/authorized_keys</code> に登録してください。秘密鍵は利用者PCで管理します。</p>
+  </section>
+  {% else %}
+  <p class="hpc-empty">SSH / SFTP公開は未設定です。</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="/hub/hpc-js/core.js?v={{ hpc_static_versions['js/core.js'] }}"></script>
+<script src="/hub/hpc-js/ssh-access.js?v={{ hpc_static_versions['js/ssh-access.js'] }}"></script>
+{{ super() }}
+{% endblock %}

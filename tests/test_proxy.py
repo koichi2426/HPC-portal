@@ -2,7 +2,9 @@
 
 import pytest
 
-from hpc_portal.proxy import _hpc_running_job_route_target
+from hpc_portal.infrastructure.jupyterhub.configurable_http_proxy import (
+    running_job_route_target,
+)
 
 
 class _FakeSpawner:
@@ -39,7 +41,7 @@ async def test_running_slurm_job_restores_target_without_ready_server():
     """ready前でも実行中ジョブと保存済みポートから転送先を復元する。"""
     spawner = _FakeSpawner()
 
-    target = await _hpc_running_job_route_target(spawner)
+    target = await running_job_route_target(spawner)
 
     assert target == "http://127.0.0.1:20067"
 
@@ -55,4 +57,4 @@ async def test_running_slurm_job_restores_target_without_ready_server():
 )
 async def test_stopped_or_incomplete_job_does_not_restore_target(spawner):
     """停止済みまたは接続情報不足のジョブをルートへ戻さない。"""
-    assert await _hpc_running_job_route_target(spawner) == ""
+    assert await running_job_route_target(spawner) == ""

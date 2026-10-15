@@ -1,0 +1,228 @@
+---
+- name: apt ロック解放待ち
+  ansible.builtin.import_tasks: ../../common/tasks/wait_for_apt.yml
+
+- name: apt keyring ディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# キーサーバーはHEADを拒否するため、チェックモードでもGETで読み取りだけ行う。
+- name: Apptainer PPA signing key をGETで取得
+  ansible.builtin.uri:
+    url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF6B0F5193D4F3301EF491FF0AFE36534FC6218AE"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: apptainer_ppa_key_response
+  check_mode: false
+  changed_when: false
+
+- name: Apptainer PPA signing key を配置
+  ansible.builtin.copy:
+    content: "{{ apptainer_ppa_key_response.content }}"
+    dest: /etc/apt/keyrings/apptainer-ppa.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apptainer PPA を signed-by 付きで配置
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/apptainer-ppa.asc] https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu {{ ansible_distribution_release }} main"
+    filename: apptainer-ppa
+    state: present
+
+- name: Apptainerをインストール
+  ansible.builtin.package:
+    name: apptainer
+    state: present
+
+- name: コンテナ定義とイメージの配置ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/apptainer
+    - /opt/images
+    - "{{ ollama_apptainer_image_dir }}"
+
+- name: Apptainer定義ファイルを配置
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/opt/apptainer/{{ item.src }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: ubuntu-22.04-ttyd.def }
+  register: apptainer_def_copy
+
+- name: JupyterLab Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: jupyter-cpu.def.j2
+    dest: /opt/apptainer/jupyter-cpu.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: apptainer_jupyter_def_template
+
+- name: Open WebUI Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: openwebui.def.j2
+    dest: /opt/apptainer/openwebui.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: apptainer_openwebui_def_template
+
+- name: Ollama Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: ollama.def.j2
+    dest: /opt/apptainer/ollama.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: ollama_def_template
+
+- name: SearXNG Apptainer定義ファイルを配置
+  ansible.builtin.template:
+    src: searxng.def.j2
+    dest: /opt/apptainer/searxng.def
+    owner: root
+    group: root
+    mode: "0644"
+  register: searxng_def_template
+
+- name: 既存SIFの有無を確認
+  ansible.builtin.stat:
+    path: "{{ item.image }}"
+  loop:
+    - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
+    - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
+    - { src: searxng.def, image: /opt/images/searxng.sif, def: /opt/apptainer/searxng.def }
+  register: apptainer_image_stat
+
+- name: SIFイメージをビルド（定義更新時は再作成）
+  ansible.builtin.shell: |
+    set -euo pipefail
+    temporary_image="{{ item.image }}.new"
+    trap 'rm -f "$temporary_image"' EXIT
+    apptainer build --force "$temporary_image" "{{ item.def }}"
+    mv -f "$temporary_image" "{{ item.image }}"
+    trap - EXIT
+  args:
+    executable: /bin/bash
+  changed_when: true
+  loop:
+    - { src: jupyter-cpu.def, image: /opt/images/jupyter-cpu.sif, def: /opt/apptainer/jupyter-cpu.def }
+    - { src: openwebui.def, image: /opt/images/openwebui.sif, def: /opt/apptainer/openwebui.def }
+    - { src: searxng.def, image: /opt/images/searxng.sif, def: /opt/apptainer/searxng.def }
+  when: >
+    (apptainer_def_copy.results
+      | selectattr('item.src', 'equalto', item.src)
+      | map(attribute='changed')
+      | first
+      | default(false))
+    or
+    (item.src == 'jupyter-cpu.def' and apptainer_jupyter_def_template.changed)
+    or
+    (item.src == 'openwebui.def' and
+      apptainer_openwebui_def_template.changed)
+    or
+    (item.src == 'searxng.def' and searxng_def_template.changed)
+    or
+    not
+    (apptainer_image_stat.results
+      | selectattr('item.image', 'equalto', item.image)
+      | map(attribute='stat.exists')
+      | first
+      | default(false))
+
+- name: 選択中Ollamaイメージの有無を確認
+  ansible.builtin.stat:
+    path: "{{ ollama_apptainer_image }}"
+  register: selected_ollama_image
+
+- name: 旧Ollamaイメージの有無を確認
+  ansible.builtin.stat:
+    path: /opt/images/ollama.sif
+  register: legacy_ollama_image
+
+- name: Ollama基準イメージの有無を確認
+  ansible.builtin.stat:
+    path: "{{ ollama_apptainer_image_dir }}/ollama-{{ ollama_version }}.sif"
+  register: bootstrap_ollama_image
+
+- name: 旧Ollamaイメージをバージョン別配置へ移行
+  ansible.builtin.command:
+    argv:
+      - mv
+      - /opt/images/ollama.sif
+      - "{{ ollama_apptainer_image_dir }}/ollama-{{ ollama_version }}.sif"
+  when:
+    - not selected_ollama_image.stat.exists
+    - legacy_ollama_image.stat.exists
+    - not bootstrap_ollama_image.stat.exists
+
+- name: Ollama基準イメージをビルド
+  ansible.builtin.shell: |
+    set -euo pipefail
+    image="{{ ollama_apptainer_image_dir }}/ollama-{{ ollama_version }}.sif"
+    temporary_image="${image}.new"
+    trap 'rm -f "$temporary_image"' EXIT
+    apptainer build --force "$temporary_image" /opt/apptainer/ollama.def
+    mv -f "$temporary_image" "$image"
+    trap - EXIT
+  args:
+    executable: /bin/bash
+  when:
+    - not selected_ollama_image.stat.exists
+    - not bootstrap_ollama_image.stat.exists
+    - not legacy_ollama_image.stat.exists
+
+- name: 初回のみOllama基準イメージを選択
+  ansible.builtin.file:
+    src: "{{ ollama_apptainer_image_dir }}/ollama-{{ ollama_version }}.sif"
+    dest: "{{ ollama_apptainer_image }}"
+    state: link
+    owner: root
+    group: root
+  when: not selected_ollama_image.stat.exists
+
+- name: 移行後の旧Ollamaイメージを削除
+  ansible.builtin.file:
+    path: /opt/images/ollama.sif
+    state: absent
+  when:
+    - legacy_ollama_image.stat.exists
+    - selected_ollama_image.stat.lnk_source | default('') != '/opt/images/ollama.sif'
+
+- name: コンテナ内のsingleuser実行コマンドを確認
+  ansible.builtin.command: "apptainer exec {{ item.image }} which {{ item.cmd }}"
+  loop:
+    - { image: /opt/images/jupyter-cpu.sif, cmd: batchspawner-singleuser }
+    - { image: /opt/images/jupyter-cpu.sif, cmd: jupyterhub-singleuser }
+    - { image: "{{ ollama_apptainer_image }}", cmd: ollama }
+    - { image: /opt/images/openwebui.sif, cmd: python3 }
+    - { image: /opt/images/openwebui.sif, cmd: uvicorn }
+    - { image: /opt/images/searxng.sif, cmd: /usr/local/searxng/.venv/bin/granian }
+  changed_when: false
+
+- name: SearXNG Pythonモジュールを読み込めることを確認
+  ansible.builtin.command:
+    argv:
+      - apptainer
+      - exec
+      - --pwd
+      - /usr/local/searxng
+      - "{{ searxng_apptainer_image }}"
+      - /usr/local/searxng/.venv/bin/python
+      - -c
+      - import searx
+  changed_when: false
